@@ -32,15 +32,6 @@ type ExclusionReason = typ.Literal[
 _MINIMUM_GROUP = 2
 """A repeated attempt needs at least two rows to be a duplicate or a conflict."""
 
-EXCLUSION_REASONS: tuple[ExclusionReason, ...] = (
-    "unknown_outcome",
-    "no_admission_time",
-    "no_availability_time",
-    "admission_after_availability",
-    "duplicate_attempt",
-    "conflicting_attempt",
-)
-
 
 _MINIMUM_GROUP = 2
 """A repeated attempt needs at least two rows to be a duplicate or a conflict."""
@@ -74,31 +65,49 @@ class TimingAudit:
     duplicates: int
     conflicts: int
 
-    def exclusions(self) -> dict[str, int]:
-        """Count each scoring exclusion reason.
 
-        Returns
-        -------
-        dict[str, int]
-            A count per reason, with absent reasons omitted. Every event is
-            either scored or counted exactly once.
-        """
-        counts: dict[str, int] = {}
-        for reason in self.reasons:
-            if reason is not None:
-                counts[reason] = counts.get(reason, 0) + 1
-        return dict(sorted(counts.items()))
+def exclusions(verdict: TimingAudit) -> dict[str, int]:
+    """Count the scoring exclusion reasons of one audit.
 
-    def scored(self) -> int:
-        """Return how many events may be scored.
+    Parameters
+    ----------
+    verdict : TimingAudit
+        The per-event verdicts.
 
-        Returns
-        -------
-        int
-            The number of events with a trustworthy decision, a trustworthy
-            availability time and a hit or miss label.
-        """
-        return sum(reason is None for reason in self.reasons)
+    Returns
+    -------
+    dict[str, int]
+        A count per reason, with absent reasons omitted. Every event is either
+        scored or counted exactly once.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH, Event
+    >>> exclusions(audit((Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1),)))
+    {'no_availability_time': 1}
+    """
+    counts: dict[str, int] = {}
+    for reason in verdict.reasons:
+        if reason is not None:
+            counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def scored(verdict: TimingAudit) -> int:
+    """Return how many events one audit allows to be scored.
+
+    Parameters
+    ----------
+    verdict : TimingAudit
+        The per-event verdicts.
+
+    Returns
+    -------
+    int
+        The number of events with a trustworthy decision, a trustworthy
+        availability time and a hit or miss label.
+    """
+    return sum(reason is None for reason in verdict.reasons)
 
 
 def audit(events: cabc.Sequence[Event]) -> TimingAudit:
@@ -120,7 +129,7 @@ def audit(events: cabc.Sequence[Event]) -> TimingAudit:
 
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> verdict = audit((Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1),))
-    >>> verdict.usable, verdict.exclusions()
+    >>> verdict.usable, exclusions(verdict)
     ((False,), {'no_availability_time': 1})
     """
     stream = tuple(events)
@@ -139,6 +148,9 @@ def audit(events: cabc.Sequence[Event]) -> TimingAudit:
         duplicates=duplicates,
         conflicts=conflicts,
     )
+
+
+__all__ = ["TimingAudit", "audit", "exclusions", "scored"]
 
 
 def _attempts(stream: cabc.Sequence[Event]) -> dict[tuple[str, str], list[int]]:

@@ -17,6 +17,8 @@ from buildlimits.predict.accounting import Diagnostics, HistoryLoss
 from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
 from buildlimits.predict.events import admission_moment, unverified_label
 from buildlimits.predict.timing import audit as timing_audit
+from buildlimits.predict.timing import exclusions as timing_exclusions
+from buildlimits.predict.timing import scored as timing_scored
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -208,7 +210,7 @@ class Snapshot:
         unverified = sum(
             1 for event in self.events if unverified_label(event) is not None
         )
-        audit = timing_audit(self.events)
+        verdict = timing_audit(self.events)
         return SnapshotStats(
             events=total,
             labelled=labelled,
@@ -221,10 +223,10 @@ class Snapshot:
             admission_missing=total - len(recorded),
             admission_unusable=len(recorded) - usable,
             unverified_label_time=unverified,
-            scored=audit.scored(),
-            excluded=audit.exclusions(),
-            duplicates=audit.duplicates,
-            conflicts=audit.conflicts,
+            scored=timing_scored(verdict),
+            excluded=timing_exclusions(verdict),
+            duplicates=verdict.duplicates,
+            conflicts=verdict.conflicts,
             gaps=self.gaps,
         )
 

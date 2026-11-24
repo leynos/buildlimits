@@ -31,7 +31,7 @@ from buildlimits.predict.history import (
     prediction_moments,
     released_labels,
 )
-from buildlimits.predict.timing import audit
+from buildlimits.predict.timing import audit, exclusions, scored
 
 
 def test_a_decision_before_a_label_became_available_cannot_learn_it() -> None:
@@ -288,8 +288,8 @@ def test_an_unknown_outcome_is_predictable_but_never_scored() -> None:
 
     assert len(walk.moments) == 4, "every event has a trustworthy moment pair"
     assert walk.labelled == 0, "an unknown outcome is not a label"
-    assert walk.timing.scored() == 0, "and it never enters the scored population"
-    assert walk.timing.exclusions() == {"unknown_outcome": 4}, "the reason is exact"
+    assert scored(walk.timing) == 0, "and it never enters the scored population"
+    assert exclusions(walk.timing) == {"unknown_outcome": 4}, "the reason is exact"
 
 
 def test_a_clock_step_never_releases_a_label_early() -> None:
