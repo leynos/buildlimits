@@ -38,7 +38,7 @@ def test_disabled_bounds_are_named_as_disabled() -> None:
     ), "disabled bounds are named, and an unbounded cap says so"
 
 
-def test_an_unparseable_bound_keeps_a_readable_fallback() -> None:
+def test_an_unparsable_bound_keeps_a_readable_fallback() -> None:
     """A byte bound that is not an integer still renders a description."""
     limits = _LIMITS | {"max_bytes": "unknown"}
 
