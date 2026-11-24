@@ -152,23 +152,22 @@ def prediction_moments(
     grouped: dict[dt.datetime, list[int]] = {}
     for index, event in enumerate(events):
         moment = admission_moment(event)
-        if moment is None:
-            continue
-        if _is_answerable(event, is_usable=flags[index], moment=moment):
+        if moment is not None and _is_answerable(event, is_usable=flags[index]):
             grouped.setdefault(moment, []).append(index)
     return tuple(tuple(indices) for _, indices in sorted(grouped.items()))
 
 
-def _is_answerable(
-    event: Event, *, is_usable: bool, moment: dt.datetime | None
-) -> bool:
-    """Report whether one event supplies a prediction moment.
+def _is_answerable(event: Event, *, is_usable: bool) -> bool:
+    """Report whether one event supplies all of a prediction's evidence.
+
+    The admission moment is checked by the caller, because the caller is what
+    groups by it; this answers only the remaining question of whether the row
+    is trustworthy and has a label time to release against.
 
     Returns
     -------
     bool
-        Whether the event is usable and carries both moments a prediction
-        needs.
+        Whether the event is usable and carries a label-availability time.
     """
     return is_usable and label_moment(event) is not None
 
