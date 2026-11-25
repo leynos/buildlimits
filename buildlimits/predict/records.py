@@ -98,6 +98,7 @@ def event_of(record: OutcomeRecord) -> Event:
         completed_at=record.completed_at,
         attempt=record.attempt,
         supervisor_generation=record.supervisor_generation,
+        generation_digest=record.generation_digest,
     )
 
 

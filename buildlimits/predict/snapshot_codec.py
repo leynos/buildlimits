@@ -32,8 +32,8 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 5
-SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, SNAPSHOT_VERSION})
+SNAPSHOT_VERSION = 6
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5, SNAPSHOT_VERSION})
 _TIMING_EVENT_FIELDS = frozenset({
     "completed_at",
     "attempt",
@@ -50,6 +50,7 @@ _EVENT_FIELDS = (
         "label_observed_verified",
     })
     | _TIMING_EVENT_FIELDS
+    | {"generation_digest"}
 )
 # A version 1 row written before the admission field existed omits it, and a
 # version 1 or 2 row predates the label-time provenance marker. The loader
@@ -57,8 +58,10 @@ _EVENT_FIELDS = (
 # later keep the event shape exact, so a row that omits the marker cannot
 # masquerade as current-format evidence. Version 4 changed only the diagnostics
 # block, so its event rows carry the shape version 3 wrote. Version 5 adds the
-# correlation group and the completion moment.
-_V4_EVENT_FIELDS = _EVENT_FIELDS - _TIMING_EVENT_FIELDS
+# correlation group and the completion moment; version 6 adds the sccache
+# generation digest a repeated attempt must agree about.
+_V5_EVENT_FIELDS = _EVENT_FIELDS - {"generation_digest"}
+_V4_EVENT_FIELDS = _V5_EVENT_FIELDS - _TIMING_EVENT_FIELDS
 _V3_EVENT_FIELDS = _V4_EVENT_FIELDS
 _V2_EVENT_FIELDS = _V4_EVENT_FIELDS - {"label_observed_verified"}
 _V1_EVENT_FIELDS = _V2_EVENT_FIELDS - {"admitted_at"}
@@ -69,9 +72,12 @@ _ACCEPTED_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     2: frozenset({_V2_EVENT_FIELDS}),
     3: frozenset({_V3_EVENT_FIELDS}),
     4: frozenset({_V4_EVENT_FIELDS}),
+    5: frozenset({_V5_EVENT_FIELDS}),
     SNAPSHOT_VERSION: frozenset({_EVENT_FIELDS}),
 }
 _IDENTITY_LENGTH = 64
+_DIGEST_LENGTH = 64
+_LOWER_HEX = frozenset("0123456789abcdef")
 _ATTEMPT_MAX = 32
 _GENERATION_MAX = 64
 _TOKEN_CHARS = frozenset(
@@ -101,6 +107,7 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "completed_at": optional_utc_text(event.completed_at),
         "attempt": event.attempt,
         "supervisor_generation": event.supervisor_generation,
+        "generation_digest": event.generation_digest,
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
         "label_observed_verified": event.label_observed_verified,
@@ -194,6 +201,11 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
     if observed is None:
         msg = "observed_at must be a UTC timestamp"
         raise ValueError(msg)
+    attempt = _token(row.get("attempt"), maximum=_ATTEMPT_MAX)
+    generation = _token(row.get("supervisor_generation"), maximum=_GENERATION_MAX)
+    if (attempt is None) != (generation is None):
+        msg = "attempt and supervisor_generation must be stated together"
+        raise ValueError(msg)
     return Event(
         identity=identity,
         origin=typ.cast("Origin", origin),
@@ -203,11 +215,57 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         runtime_seconds=runtime_seconds,
         label_observed_verified=_verified(row.get("label_observed_verified", False)),
         completed_at=_parse_stamp(row.get("completed_at")),
-        attempt=_token(row.get("attempt"), maximum=_ATTEMPT_MAX),
-        supervisor_generation=_token(
-            row.get("supervisor_generation"), maximum=_GENERATION_MAX
-        ),
+        attempt=attempt,
+        supervisor_generation=generation,
+        generation_digest=_digest(row.get("generation_digest")),
     )
+
+
+def _digest(value: object) -> str | None:
+    """Validate one optional salted generation digest.
+
+    A malformed value is refused by :func:`_optional_text`, which names this
+    field rather than reporting a generic shape error.
+
+    Returns
+    -------
+    str | None
+        The digest, or None for an explicit null.
+    """
+    return _optional_text(
+        value,
+        name="generation_digest",
+        allowed=_LOWER_HEX,
+        length=_DIGEST_LENGTH,
+    )
+
+
+def _optional_text(
+    value: object, *, name: str, allowed: frozenset[str], length: int
+) -> str | None:
+    """Validate one optional fixed-length text field against a character set.
+
+    Returns
+    -------
+    str | None
+        The text, or None for an explicit null.
+
+    Raises
+    ------
+    TypeError
+        If the value is neither text nor null.
+    ValueError
+        If the text is the wrong length or holds a character outside ``allowed``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"{name} must be text or null"
+        raise TypeError(msg)
+    if len(value) != length or any(character not in allowed for character in value):
+        msg = f"{name} is outside its bounded shape"
+        raise ValueError(msg)
+    return value
 
 
 def _verified(value: object) -> bool:

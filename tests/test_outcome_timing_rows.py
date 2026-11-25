@@ -99,9 +99,7 @@ def _window_output(
             Ended(group_id=group_id, is_clean=True, now=1.25, observed_at=completion),
         )
     state, _ = begin_query(state, recorder, clear_gate_event(recorder, 1.5))
-    _state, output = complete_query(
-        state, recorder, text, 1.6, observed_at=observed_at or OBSERVED_AT
-    )
+    _state, output = complete_query(state, recorder, text, 1.6, observed_at=observed_at)
     return tuple(row for row in output.records if isinstance(row, OutcomeRecord))
 
 
@@ -154,6 +152,9 @@ def test_an_unpaired_poll_dates_the_row_at_the_launch_completion() -> None:
         "supplied for the poll"
     )
     assert record.completed_at == OBSERVED_AT, "its own completion is retained"
+    assert record.label_time_provenance is None, (
+        "an unpaired poll proves no reading moment, so the row is unverified"
+    )
     assert record.attempt == "g8", "the payload still names the invocation"
     assert record.supervisor_generation == "generation-a", (
         "and the generation whose clock dated it"

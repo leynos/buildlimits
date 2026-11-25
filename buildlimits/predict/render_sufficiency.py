@@ -54,6 +54,7 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
             f"{as_count(stats['identities'])} distinct identities"
         ),
         _unverified_line(stats),
+        _availability_line(stats),
         admission_line(stats),
         _scored_line(stats),
     ]
@@ -77,6 +78,28 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
         "",
     ]
     return lines
+
+
+def _availability_line(stats: cabc.Mapping[str, object]) -> str:
+    """Return the label-availability coverage bullet.
+
+    The recorded count is how many events prove when their label became known;
+    the usable count is how many of those also had their decision taken before
+    that moment, so a prediction could have released the label. The difference
+    is evidence the run could not use, and it is stated rather than folded into
+    a single percentage.
+
+    Returns
+    -------
+    str
+        The recorded, usable and missing availability counts in one line.
+    """
+    return (
+        f"- Label availability: "
+        f"{as_count(stats.get('availability_recorded'))} recorded, "
+        f"{as_count(stats.get('availability_usable'))} usable for a prediction, "
+        f"{as_count(stats.get('availability_missing'))} missing"
+    )
 
 
 def _scored_line(stats: cabc.Mapping[str, object]) -> str:

@@ -56,6 +56,7 @@ def test_an_old_format_snapshot_round_trips_without_fabricated_timing(
         "attempt",
         "supervisor_generation",
         "label_observed_verified",
+        "generation_digest",
     ):
         row.pop(absent)
     path.write_text(json.dumps(document), encoding="utf-8")
@@ -140,6 +141,26 @@ def test_a_duplicate_and_a_conflict_are_counted_apart() -> None:
     assert stats.duplicates == 1, "the exact repeat is an idempotent duplicate"
     assert stats.conflicts == 0, "no pair contradicts itself"
     assert stats.scored == 2, "the original and the distinct attempt are scored"
+
+
+def test_a_repeated_attempt_with_another_generation_is_a_conflict() -> None:
+    """Two rows naming one attempt but different sccache generations disagree.
+
+    The generation digest is part of what the row recorded, so the pair cannot
+    be an idempotent retry of one reading. Excluding it as a duplicate would
+    hide a contradiction the document really contains.
+    """
+    original = dc.replace(
+        event(0, moments=(1.0, 5.0), attempt="same"), generation_digest="a" * 64
+    )
+    retried = dc.replace(original, generation_digest="b" * 64)
+    assert original.attempt == retried.attempt, "the attempt tokens agree"
+
+    stats = snapshot((original, retried)).stats()
+
+    assert stats.duplicates == 0, "a differing generation is not an idempotent retry"
+    assert stats.conflicts == 2, "both rows are excluded as contradictory"
+    assert stats.scored == 0, "no side of the contradiction is scored"
 
 
 def test_a_duplicate_attempt_is_not_counted_as_missing_availability() -> None:

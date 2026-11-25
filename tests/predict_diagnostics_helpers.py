@@ -39,6 +39,9 @@ PROVENANCE_VERSION = 3
 CORRELATION_VERSION = 5
 """The first snapshot version whose events state the per-attempt correlation."""
 
+DIGEST_VERSION = 6
+"""The first snapshot version whose events state the sccache generation."""
+
 _CORRELATION_FIELDS = ("completed_at", "attempt", "supervisor_generation")
 """The event fields the correlation group added, dropped from older shapes."""
 
@@ -105,7 +108,9 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
     the label-time provenance marker, so the marker is dropped with the header;
     version 3 states the marker but predates the per-generation pair, so both
     maps are dropped; version 4 states those but predates the correlation
-    group, so its fields are dropped; the current version keeps everything.
+    group, so its fields are dropped; version 5 states that but predates the
+    generation digest, so it is dropped too; the current version keeps
+    everything.
 
     Returns
     -------
@@ -119,6 +124,8 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
         _drop_generation_maps(document)
     if version < CORRELATION_VERSION:
         _drop_event_fields(document, _CORRELATION_FIELDS)
+    if version < DIGEST_VERSION:
+        _drop_event_fields(document, ("generation_digest",))
     return document
 
 

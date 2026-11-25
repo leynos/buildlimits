@@ -12,7 +12,7 @@ from buildlimits.predict.encoding import (
     _identity_bucket,
     logistic_features,
 )
-from buildlimits.predict.events import EPOCH, Features
+from buildlimits.predict.events import Features
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
@@ -25,7 +25,6 @@ def _row(*, origin: Origin = GIT, age: float | None = None) -> Features:
     return Features(
         identity="a" * 64,
         origin=origin,
-        observed_at=EPOCH,
         age_seconds=age,
         load=3,
     )

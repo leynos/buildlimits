@@ -26,7 +26,7 @@ from buildlimits.predict.history import (
 )
 from buildlimits.predict.phases import Split, phases, split
 from buildlimits.predict.predictors import single_predictors, update_all
-from buildlimits.predict.timing import TimingAudit, audit
+from buildlimits.predict.timing import CORRELATION_REASONS, TimingAudit, audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -84,6 +84,11 @@ class Walk:
         verified. This is the label-coverage denominator, kept apart from the
         phase counts so a honeypot of unverified labels cannot hide behind
         ``insufficient data``.
+    usable_labelled : int
+        Labelled events that no correlation exclusion rejects. This is the
+        population the minimum-label gate counts, so a repeated or
+        contradictory append cannot inflate it into a verdict, while a row
+        withheld only for its timing still counts as a recorded label.
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
     unavailable_availability : int
@@ -105,6 +110,7 @@ class Walk:
     moments: tuple[tuple[int, ...], ...]
     timing: TimingAudit
     labelled: int
+    usable_labelled: int
     unavailable_admission: int
     unavailable_availability: int
     applied_labels: int
@@ -175,6 +181,12 @@ def walk_forward(
         moments=moments,
         timing=timing,
         labelled=sum(1 for event in stream if event.label != "unknown"),
+        usable_labelled=sum(
+            1
+            for index, event in enumerate(stream)
+            if event.label != "unknown"
+            and timing.reasons[index] not in CORRELATION_REASONS
+        ),
         unavailable_admission=len(stream) - admitted,
         unavailable_availability=sum(
             1

@@ -98,21 +98,30 @@ attempt, and nothing could tell a retried append from a contradictory one.
   keeps its own `completed_at`; the label moment never depends on reversed
   launch order.
 - A bounded `attempt` plus a per-process `supervisor_generation` identify one
-  invocation. An exact repeated append is an idempotent duplicate; a
-  contradictory pair is excluded rather than resolved.
-- The snapshot format is version 5 and carries every event field. The replay
-  releases a label only at its verified moment, never at an unproven
-  `observed_at`, and never releases, predicts or scores an unverified row.
-  Equal-time batching and the tuning/held-out split both use that moment.
+  invocation, and the row's sccache `generation_digest` is compared with them.
+  An exact repeated append is an idempotent duplicate; a pair that disagrees,
+  including about the generation, is excluded rather than resolved. The live
+  shell records each group's completion moment when it ends, so production rows
+  carry `completed_at` and not only the controlled helper.
+- The snapshot format is version 6 and carries every event field, including
+  the generation digest. The replay releases a label only at its verified
+  moment, never at an unproven `observed_at`, and never releases, predicts or
+  scores an unverified row. Equal-time batching groups the verified rows and is
+  not split by a row that has no availability; the same moment places the
+  tuning/held-out boundary. A snapshot that states half a correlation pair is
+  refused.
 - The snapshot loader refuses an admission-bearing history whose verified
-  label times decrease in append order, on save as well as load. The check is
-  made over the rows the audit accepts, so a repeated attempt cannot fake a
+  label times decrease in append order, and one whose label time precedes an
+  admission recorded earlier in the file, on save as well as load. The checks
+  are made over the rows the audit accepts, so a repeated attempt cannot fake a
   step. No monotonic absolute value is persisted; readings from unrelated boot
   epochs cannot be compared.
 - `SnapshotStats`, the dataset command and the benchmark report separately:
-  labelled records, withheld unverified labels, records with usable decision
-  timings, the scored population and the exclusions by closed reason, plus the
-  duplicate and conflict counts. The benchmark adds an
+  labelled records, withheld unverified labels, records with recorded and
+  usable availability, records with usable decision timings, the scored
+  population and the exclusions by closed reason, plus the duplicate and
+  conflict counts. The minimum-label gate counts independent labelled rows, so
+  repeated appends cannot clear it. The benchmark adds an
   `insufficient label-availability times` status beside the existing admission
   and held-out statuses.
 

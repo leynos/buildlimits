@@ -52,6 +52,7 @@ class _EvidenceCounts:
     """
 
     labelled: int
+    usable_labelled: int
     predictable: int
     unavailable_availability: int
 
@@ -189,6 +190,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     compared = compare(walk, ensembles, config)
     counts = _EvidenceCounts(
         labelled=walk.labelled,
+        usable_labelled=walk.usable_labelled,
         predictable=_predictable_count(walk),
         unavailable_availability=walk.unavailable_availability,
     )
@@ -239,15 +241,14 @@ def _status(
 ) -> str:
     """Return the status the evidence supports.
 
-    A run with too much history for ``insufficient data`` can still hold no
-    event with a usable admission time, and then nothing could be predicted at
-    all: the source simply did not record when each compilation was admitted.
-    A source that records the decision but never the moment a label became
-    available is reported separately, because the decision time alone cannot
-    prove the label was knowable before a later prediction. Both are reported
-    as themselves, not as a negative result or as a shortage of held-out
-    evidence. When predictions do exist, too few paired rows, or rows forming
-    a single block, are likewise reported separately.
+    The minimum-label gate counts independent labelled rows, so repeated
+    appends cannot clear it. A run that clears it can still hold no event with a
+    usable admission time, and then nothing could be predicted at all. A source
+    that records the decision but never the moment a label became available is
+    reported separately, because the decision time alone cannot prove the label
+    was knowable before a later prediction. When predictions do exist, too few
+    paired rows, or rows forming a single block, are likewise reported
+    separately.
 
     Returns
     -------
@@ -256,7 +257,7 @@ def _status(
         ``insufficient label-availability times`` or ``insufficient held-out
         evidence``.
     """
-    if counts.labelled < config.minimum_labelled_events:
+    if counts.usable_labelled < config.minimum_labelled_events:
         return STATUS_INSUFFICIENT
     if counts.predictable == 0:
         if counts.unavailable_availability:
@@ -332,8 +333,9 @@ def _insufficient_verdict(
     """
     if status == STATUS_INSUFFICIENT:
         return (
-            f"insufficient data: {counts.labelled} labelled events, "
-            f"{config.minimum_labelled_events} required" + _withheld_note(withheld)
+            f"insufficient data: {counts.usable_labelled} independent labelled "
+            f"events, {config.minimum_labelled_events} required"
+            + _withheld_note(withheld)
         )
     if status == STATUS_INSUFFICIENT_ADMISSION:
         return (

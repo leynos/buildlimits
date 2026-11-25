@@ -80,6 +80,11 @@ class Event:
     supervisor_generation : str | None
         The clock domain and attempt namespace the row was written in, so two
         supervisor processes never share an attempt namespace.
+    generation_digest : str | None
+        The salted sccache generation the row's reading observed. A repeated
+        attempt must agree about it: two rows naming one invocation but
+        different generations did not come from one reading, so the pair is a
+        contradiction rather than an idempotent duplicate.
     """
 
     identity: str
@@ -92,6 +97,7 @@ class Event:
     completed_at: dt.datetime | None = None
     attempt: str | None = None
     supervisor_generation: str | None = None
+    generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -104,8 +110,6 @@ class Features:
         The hashed compilation identity.
     origin : Origin
         The crate's origin class.
-    observed_at : datetime
-        When the label became known.
     age_seconds : float | None
         Seconds from this identity's previous eligible label to the moment the
         row is measured, or None when no earlier label was known then.
@@ -120,7 +124,6 @@ class Features:
 
     identity: str
     origin: Origin
-    observed_at: dt.datetime
     age_seconds: float | None
     load: int
     predicted_at: dt.datetime | None = None

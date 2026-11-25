@@ -60,13 +60,14 @@ def _usable(
 
 
 def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
-    """Group consecutive events whose labels became available together.
+    """Group the events whose labels became available at one moment.
 
     The tuning/held-out split is placed between batches rather than inside one,
     so every row the observer accepted at one reading lands in the same phase.
-    An event without verified availability forms a batch of its own: it cannot
-    share a label time it never recorded. Batches keep store order, so a
-    backward clock step separates records instead of merging them.
+    A row without a verified availability takes no part: it was never released,
+    so it belongs to no batch and cannot separate two rows that share a moment.
+    A backward clock step still separates batches, because a later row carrying
+    an earlier stamp was accepted in a different reading.
 
     Parameters
     ----------
@@ -76,38 +77,35 @@ def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
     Returns
     -------
     tuple[tuple[int, ...], ...]
-        One index tuple per distinct availability time, in stream order.
+        One index tuple per distinct availability time, in stream order. Only
+        verified events appear.
 
     Examples
     --------
     >>> from buildlimits.predict.events import EPOCH, Event
-    >>> label = EPOCH + dt.timedelta(seconds=5)
     >>> verified = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
     ...                  label_observed_verified=True)
     >>> label_batches((verified,))
     ((0,),)
+    >>> unverified = Event("b" * 64, "git", EPOCH, EPOCH, "hit", 0.1)
+    >>> label_batches((verified, unverified, verified))
+    ((0, 2),)
     """
     batches: list[tuple[int, ...]] = []
-    start = 0
-    for index in range(1, len(events) + 1):
-        if index == len(events) or not _same_availability_batch(
-            events[start], events[index]
-        ):
-            batches.append(tuple(range(start, index)))
-            start = index
+    current: list[int] = []
+    moment: dt.datetime | None = None
+    for index, event in enumerate(events):
+        available = label_moment(event)
+        if available is None:
+            continue
+        if current and available != moment:
+            batches.append(tuple(current))
+            current = []
+        current.append(index)
+        moment = available
+    if current:
+        batches.append(tuple(current))
     return tuple(batches)
-
-
-def _same_availability_batch(earlier: Event, later: Event) -> bool:
-    """Report whether two consecutive events share one verified label time.
-
-    Returns
-    -------
-    bool
-        Whether both events carry the same non-absent availability moment.
-    """
-    moment = label_moment(earlier)
-    return moment is not None and moment == label_moment(later)
 
 
 def prediction_moments(
@@ -281,7 +279,6 @@ def features(  # ruff: ignore[too-many-locals]  # one accumulator per feature di
             rows[index] = Features(
                 identity=event.identity,
                 origin=event.origin,
-                observed_at=event.observed_at,
                 age_seconds=(
                     None if not previous else (moment - previous[-1]).total_seconds()
                 ),

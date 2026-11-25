@@ -125,6 +125,72 @@ def test_a_verified_history_with_a_backward_clock_is_refused(
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
+def _pair(
+    first: tuple[dt.datetime, dt.datetime],
+    second: tuple[dt.datetime, dt.datetime],
+) -> tuple[Event, Event]:
+    """Return two events whose moments are supplied as (decision, label) pairs.
+
+    Returns
+    -------
+    tuple[Event, Event]
+        The two verified events, in append order.
+    """
+    return (
+        hand_event(0, moments=first, label="hit"),
+        hand_event(1, moments=second, label="miss"),
+    )
+
+
+def test_a_label_available_before_an_earlier_decision_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A step that leaves label times increasing can still cross a decision.
+
+    The first row records a decision at ten and a label at twenty. The second
+    row is appended later but claims its label was available at five. Label
+    times alone still increase, yet the second label precedes a decision the
+    file already recorded, which no monotonic clock can produce. Releasing it
+    would let a prediction at ten read a label whose reading returned first.
+    """
+    decision = EPOCH + dt.timedelta(seconds=10)
+    document = snapshot_to_dict(
+        _snapshot(
+            *_pair(
+                (decision, EPOCH + dt.timedelta(seconds=20)),
+                (EPOCH, EPOCH + dt.timedelta(seconds=5)),
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="cannot precede a decision"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_slow_build_appended_after_a_later_decision_is_allowed(
+    tmp_path: Path,
+) -> None:
+    """Append order is reading order, so an earlier decision may still follow.
+
+    The first row is a fast build decided at one and labelled at five. The
+    second is a slow build decided at three and labelled at twenty. Its
+    decision precedes its own label and follows nothing later than itself, so
+    the history is ordered.
+    """
+    document = snapshot_to_dict(
+        _snapshot(
+            *_pair(
+                (EPOCH + dt.timedelta(seconds=1), EPOCH + dt.timedelta(seconds=5)),
+                (EPOCH + dt.timedelta(seconds=3), EPOCH + dt.timedelta(seconds=20)),
+            )
+        )
+    )
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert len(loaded.events) == 2, "both readings are ordered by their own moments"
+
+
 def test_an_unverified_history_may_report_a_backward_clock(tmp_path: Path) -> None:
     """The step only matters where verified availability would release labels."""
     document = snapshot_to_dict(_snapshot(*_unverified()))

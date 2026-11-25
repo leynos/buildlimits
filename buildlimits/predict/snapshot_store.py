@@ -6,7 +6,6 @@ with the field that is wrong rather than surfacing as a confusing report.
 """
 
 import dataclasses as dc
-import itertools
 import json
 import math
 import os
@@ -16,8 +15,8 @@ from pathlib import Path
 
 from buildlimits.predict.dataset import Gap, Snapshot, Source
 from buildlimits.predict.diagnostics_codec import diagnostics_from_dict
-from buildlimits.predict.events import label_moment
 from buildlimits.predict.journal_codec import journal_from_dict
+from buildlimits.predict.snapshot_clock import require_ordered_clock
 from buildlimits.predict.snapshot_codec import (
     SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
@@ -27,8 +26,7 @@ from buildlimits.predict.snapshot_diagnostics_join import (
     require_diagnostics_match,
     require_event_labels_match,
 )
-from buildlimits.predict.timing import audit as timing_audit
-from buildlimits.utc_text import utc_moment, utc_text
+from buildlimits.utc_text import utc_moment
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -55,7 +53,7 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     the earlier readable file would already be gone. The rule raises the same
     ``ValueError`` the loader reports.
     """
-    _require_ordered_clock(path, snapshot.events)
+    require_ordered_clock(path, snapshot.events)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
@@ -118,7 +116,7 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
     decoded_events = tuple(event_from_dict(row, version=version) for row in events)
-    _require_ordered_clock(path, decoded_events)
+    require_ordered_clock(path, decoded_events)
     decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),
@@ -175,50 +173,6 @@ def _diagnostics_from(
     require_diagnostics_match(path, parts.source, diagnostics)
     require_event_labels_match(path, parts.events, diagnostics)
     return diagnostics
-
-
-def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
-    """Refuse a history whose recorded clock ran backwards.
-
-    The recorder stamps every row of one reading with that reading's own
-    moment, so rows a store appended together share a time, and a later
-    position carrying an earlier stamp means the wall clock stepped backwards.
-    No monotonic sequence is stored beside the times, so the two sides of a
-    step cannot be separated: an event admitted later could sort before a
-    label observed earlier, and the schedule would predict with a label not yet
-    observed. A history carrying admissions that crosses a step is refused
-    rather than scored; one with no admissions is unaffected, because it is
-    already reported as unpredicted.
-
-    Only two verified label times are a clock question. A row the audit
-    excludes is not evidence, so its stamp cannot decide the question; a
-    repeated attempt carries its original's moment and would otherwise report a
-    step that never happened. Rows are appended in decision order rather than
-    label order, so the comparison is made over the verified times in append
-    order, not over raw ``observed_at`` values.
-
-    Raises
-    ------
-    ValueError
-        If an admission-bearing history records an earlier verified label time
-        after a later one.
-    """
-    if not any(event.admitted_at is not None for event in events):
-        return
-    usable = timing_audit(events).usable
-    verified = [
-        moment
-        for index, event in enumerate(events)
-        if usable[index] and (moment := label_moment(event)) is not None
-    ]
-    for earlier, later in itertools.pairwise(verified):
-        if later < earlier:
-            msg = (
-                f"{path} records {utc_text(later)} after {utc_text(earlier)}; "
-                "label-availability times cannot order a history whose clock "
-                "ran backwards"
-            )
-            raise ValueError(msg)
 
 
 def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:

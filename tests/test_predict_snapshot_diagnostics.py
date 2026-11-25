@@ -91,6 +91,20 @@ def test_a_version_one_event_may_omit_admission(tmp_path: Path) -> None:
     assert loaded.events[0].admitted_at is None, "the absent time stays unknown"
 
 
+def test_a_half_correlation_pair_is_refused(tmp_path: Path) -> None:
+    """A row naming an attempt without its generation is not a correlation.
+
+    The store writes the pair together or not at all, so a document stating one
+    half describes a row no writer produced. Accepting it would let the event
+    evade duplicate and conflict detection while appearing correlated.
+    """
+    document = diagnostics_document()
+    events_of(document)[0]["attempt"] = "g1"
+
+    with pytest.raises(ValueError, match="stated together"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def test_a_version_two_event_must_name_admission(tmp_path: Path) -> None:
     """A version 2 row keeps the exact event shape, including admission."""
     document = document_as_version(diagnostics_document(), 2)

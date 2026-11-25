@@ -13,6 +13,8 @@ import pytest
 
 from buildlimits.predict.events import EPOCH, Event, admission_moment
 from buildlimits.predict.history import features, label_batches
+from buildlimits.predict.phases import phases
+from buildlimits.predict.timing import audit
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
@@ -249,6 +251,48 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     rows = features((first, stepped, third), load_window_seconds=60.0)
     assert typ.cast("Features", rows[1]).load == 0, "the tied label is not earlier"
     assert typ.cast("Features", rows[2]).load == 2, "both earlier labels are history"
+
+
+def test_an_unverified_row_does_not_split_an_equal_time_batch() -> None:
+    """Two rows accepted at one reading share a batch across an unverified row.
+
+    The unverified row has no availability, so it belongs to no batch. Letting
+    it separate the two verified rows would place one of them in tuning and the
+    other in the held-out period, which the split contract forbids.
+    """
+    first = _causal(10, "hit", attempt="g-first")
+    unverified = Event(
+        "b" * 64,
+        ORIGIN,
+        EPOCH,
+        EPOCH + dt.timedelta(seconds=10),
+        "hit",
+        1.0,
+        attempt="g-unverified",
+        supervisor_generation="test-generation",
+    )
+    last = Event(
+        "c" * 64,
+        ORIGIN,
+        EPOCH,
+        EPOCH + dt.timedelta(seconds=10),
+        "miss",
+        1.0,
+        label_observed_verified=True,
+        attempt="g-last",
+        supervisor_generation="test-generation",
+    )
+
+    assert label_batches((first, unverified, last)) == ((0, 2),), (
+        "the unverified row joins no batch and separates nothing"
+    )
+    assigned = phases(
+        (first, unverified, last),
+        audit((first, unverified, last)),
+        train_fraction=0.5,
+    )
+    assert assigned[0] == assigned[2], "one batch cannot straddle the split"
+    assert assigned[1] is None, "an unverified row is in no period"
 
 
 @pytest.mark.parametrize(

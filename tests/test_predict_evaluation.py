@@ -10,6 +10,7 @@ from predict_test_helpers import hand_event, predict_config
 from buildlimits.predict.bootstrap import block_bootstrap
 from buildlimits.predict.ensemble_runs import tuning_indices
 from buildlimits.predict.evaluation import (
+    STATUS_INSUFFICIENT,
     STATUS_INSUFFICIENT_HELDOUT,
     STATUS_OK,
     _is_evidence,
@@ -349,3 +350,37 @@ def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
     assert positions[1] is None, "the unpredictable event keeps its position"
     assert positions[0] is not None, "the first event was scored"
     assert positions[2] is not None, "the last event was scored"
+
+
+def test_repeated_attempts_do_not_satisfy_the_label_gate() -> None:
+    """A label gate counts independent invocations, not repeated appends.
+
+    Forty attempts appended twice each give eighty labelled rows but only forty
+    independent ones. Counting the raw rows would let a history that is mostly
+    retries clear a gate of fifty and reach a verdict on evidence it does not
+    have.
+    """
+    events = tuple(
+        dc.replace(
+            hand_event(
+                attempt,
+                moments=(
+                    EPOCH + dt.timedelta(seconds=attempt),
+                    EPOCH + dt.timedelta(seconds=attempt + 1),
+                ),
+                label="hit" if attempt % 2 else "miss",
+            ),
+            attempt=f"g{attempt}",
+        )
+        for attempt in range(40)
+        for _copy in range(2)
+    )
+    config = dc.replace(predict_config(), minimum_labelled_events=50)
+
+    walk = walk_forward(events, config)
+
+    assert walk.labelled == 80, "every row carries a label"
+    assert walk.usable_labelled == 40, "only the distinct attempts are evidence"
+    assert evaluate(walk, config).status == STATUS_INSUFFICIENT, (
+        "the gate counts independent labels, so the retries cannot clear it"
+    )

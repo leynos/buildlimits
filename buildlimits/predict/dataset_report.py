@@ -108,6 +108,11 @@ def _print_evidence(stats: SnapshotStats) -> None:
     )
     print(f"unverified label times: {stats.unverified_label_time}")
     print(
+        f"label availability: recorded={stats.availability_recorded} "
+        f"usable={stats.availability_usable} "
+        f"missing={stats.availability_missing}"
+    )
+    print(
         f"timing evidence: scored={stats.scored} "
         f"excluded={as_counts(stats.excluded)} "
         f"duplicate attempts={stats.duplicates} "

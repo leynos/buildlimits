@@ -15,7 +15,11 @@ import typing as typ
 
 from buildlimits.predict.accounting import Diagnostics, HistoryLoss
 from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
-from buildlimits.predict.events import admission_moment, unverified_label
+from buildlimits.predict.events import (
+    admission_moment,
+    label_moment,
+    unverified_label,
+)
 from buildlimits.predict.timing import audit as timing_audit
 from buildlimits.predict.timing import exclusions as timing_exclusions
 from buildlimits.predict.timing import scored as timing_scored
@@ -133,6 +137,13 @@ class SnapshotStats:
         unverified_label_time : int
             Hit or miss labels whose recorded observation time is unverified, so
             the replay withholds them rather than scoring an unsound release time.
+        availability_recorded : int
+            Events whose label time is proven.
+        availability_usable : int
+            Proven events whose decision is at or before that time, so a
+            prediction could have released the label.
+        availability_missing : int
+            Events with no proven label time at all.
         scored : int
             Events that pass every timing, label and correlation gate.
         excluded : Mapping[str, int]
@@ -156,6 +167,9 @@ class SnapshotStats:
     admission_missing: int
     admission_unusable: int
     unverified_label_time: int
+    availability_recorded: int
+    availability_usable: int
+    availability_missing: int
     scored: int
     excluded: cabc.Mapping[str, int]
     duplicates: int
@@ -211,6 +225,7 @@ class Snapshot:
             1 for event in self.events if unverified_label(event) is not None
         )
         verdict = timing_audit(self.events)
+        availability = _availability_counts(self.events)
         return SnapshotStats(
             events=total,
             labelled=labelled,
@@ -223,12 +238,41 @@ class Snapshot:
             admission_missing=total - len(recorded),
             admission_unusable=len(recorded) - usable,
             unverified_label_time=unverified,
+            availability_recorded=availability.recorded,
+            availability_usable=availability.usable,
+            availability_missing=total - availability.recorded,
             scored=timing_scored(verdict),
             excluded=timing_exclusions(verdict),
             duplicates=verdict.duplicates,
             conflicts=verdict.conflicts,
             gaps=self.gaps,
         )
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _AvailabilityCounts:
+    """How much of one history proves when its labels became available."""
+
+    recorded: int
+    usable: int
+
+
+def _availability_counts(events: cabc.Sequence[Event]) -> _AvailabilityCounts:
+    """Count the events whose label time is proven, and how many are usable.
+
+    Returns
+    -------
+    _AvailabilityCounts
+        The recorded and usable availability populations.
+    """
+    proven = [event for event in events if label_moment(event) is not None]
+    usable = sum(
+        1
+        for event in proven
+        if event.admitted_at is not None
+        and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
+    )
+    return _AvailabilityCounts(recorded=len(proven), usable=usable)
 
 
 def find_gaps(

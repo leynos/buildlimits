@@ -32,6 +32,17 @@ type ExclusionReason = typ.Literal[
 _MINIMUM_GROUP = 2
 """A repeated attempt needs at least two rows to be a duplicate or a conflict."""
 
+CORRELATION_REASONS: frozenset[str] = frozenset({
+    "duplicate_attempt",
+    "conflicting_attempt",
+})
+"""The reasons a row is not an independent label: its attempt identity repeats.
+
+A row excluded for one of these duplicates or contradicts another row, so it
+is not a second piece of label evidence. Every other reason withholds a label
+for its timing, which is a different population and a different report.
+"""
+
 
 @dc.dataclass(frozen=True, slots=True)
 class TimingAudit:
@@ -220,11 +231,15 @@ def _classify_attempt(
 def _fingerprint(event: Event) -> tuple[object, ...]:
     """Return the recorded evidence that must agree for one attempt.
 
+    A retried append reproduces every one of these values. The generation digest
+    is included because two rows that name one invocation but different
+    sccache generations did not come from the same reading, which is a
+    contradiction rather than an idempotent duplicate.
+
     Returns
     -------
     tuple[object, ...]
-        The identity, label, timing evidence and runtime of the row. A retried
-        append reproduces all of them, so any difference is a real conflict.
+        The identity, label, timing evidence, runtime and generation of the row.
     """
     return (
         event.identity,
@@ -235,6 +250,7 @@ def _fingerprint(event: Event) -> tuple[object, ...]:
         event.label_observed_verified,
         event.observed_at,
         event.runtime_seconds,
+        event.generation_digest,
     )
 
 

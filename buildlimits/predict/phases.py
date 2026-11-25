@@ -84,16 +84,45 @@ def phases(
     batches = label_batches(events)
     target = int(_scorable_labels(batches, events, timing) * train_fraction)
     assigned: list[Phase | None] = [None] * len(events)
-    kept = 0
+    placement = _Placement(events, timing, assigned)
+    placement.target = target
     for batch in batches:
-        if label_moment(events[batch[0]]) is None:
-            continue
-        phase: Phase = "train" if kept < target else "held-out"
-        for index in batch:
-            if _is_scorable(events[index], is_usable=timing.usable[index]):
-                assigned[index] = phase
-                kept += 1
+        placement.take(batch)
     return tuple(assigned)
+
+
+class _Placement:
+    """Accumulates the phase assignment for one pass over the batches.
+
+    The batches, the events they index and the audit travel together on every
+    call, so one small value carries them instead of four parameters, and the
+    running count of placed rows lives here rather than in a loop variable.
+    """
+
+    def __init__(
+        self,
+        events: cabc.Sequence[Event],
+        timing: TimingAudit,
+        assigned: list[Phase | None],
+    ) -> None:
+        self.events = events
+        self.timing = timing
+        self.assigned = assigned
+        self.kept = 0
+
+    def take(self, batch: tuple[int, ...]) -> None:
+        """Place one batch's scorable rows in the next phase and count them."""
+        phase: Phase = "train" if self.kept < self.target else "held-out"
+        scorable = [
+            index
+            for index in batch
+            if _is_scorable(self.events[index], is_usable=self.timing.usable[index])
+        ]
+        for index in scorable:
+            self.assigned[index] = phase
+        self.kept += len(scorable)
+
+    target: int = 0
 
 
 def _is_scorable(event: Event, *, is_usable: bool) -> bool:

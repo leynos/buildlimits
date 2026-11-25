@@ -231,15 +231,21 @@ class OutcomeShell:
     def _emptied(self, ending: GroupEnding) -> None:
         """Fold an admitted group's completion into the recorder.
 
-        No label time is supplied here. A group finishing is not a label: the
-        reading that produces one stamps every row it emits with its own
-        completion moment.
+        The group's own completion moment is read from the wall clock here and
+        recorded as completion evidence. It is not a label time: only the
+        reading that produces a label dates that, so this moment never becomes
+        a row's availability.
         """
         if not ending.is_cached:
             return
         self._publish(
             self._recorder.advance(
-                Ended(ending.group_id, ending.is_clean, self._supervisor.clock())
+                Ended(
+                    ending.group_id,
+                    ending.is_clean,
+                    self._supervisor.clock(),
+                    observed_at=self._wall_clock(),
+                )
             )
         )
 

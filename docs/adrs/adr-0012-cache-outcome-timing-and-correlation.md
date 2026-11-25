@@ -112,32 +112,48 @@ Both tokens are bounded and validated against a path-free character set, so the
 existing redaction contract holds. Neither reveals a path, an argument, a
 process identifier or a host name.
 
+The recorded evidence compared for one attempt includes the row's
+`generation_digest`. Two rows naming one invocation but different sccache
+generations did not come from one reading, so they are a contradiction rather
+than an idempotent retry.
+
 A row that proved its time but names no invocation still releases: the marker
 and the pair answer different questions, and requiring both would make every
 version 3 or 4 row unscorable for a fact it never could have carried. Such a
 row takes no part in duplicate or conflict detection, and the audit reports it
-as uncorrelated rather than inventing an identity.
+as uncorrelated rather than inventing an identity. A row that states one half
+of the pair is not this case: it claims a correlation it cannot honour, so the
+snapshot loader refuses it rather than letting it evade the correlation gate.
 
-### D5: the snapshot is version 5 and carries the correlation group
+The minimum-label gate counts independent labelled rows, meaning those no
+correlation exclusion rejects. A history that is mostly retries of a few
+attempts therefore cannot clear a label threshold it does not meet, while a row
+withheld only for its timing still counts as a recorded label.
 
-The snapshot event gains `completed_at`, `attempt` and `supervisor_generation`,
-and keeps `label_observed_verified` as the statement about its time. Version 1
-to 4 documents still load, with the newer fields absent. The replay releases a
-label at its verified time and nowhere else: an unverified `observed_at` is
-never a release time. An event with no verified time is not released, not
-predicted and not scored. The training/held-out split and the equal-time
-batching both use that verified moment, so rows accepted at one reading land in
-one batch.
+### D5: the snapshot is version 6 and carries the correlation evidence
+
+The snapshot event gains `completed_at`, `attempt`, `supervisor_generation` and
+`generation_digest`, and keeps `label_observed_verified` as the statement about
+its time. Version 1 to 5 documents still load, with the newer fields absent.
+The replay releases a label at its verified time and nowhere else: an unverified
+`observed_at` is never a release time. An event with no verified time is not
+released, not predicted and not scored. The training/held-out split uses that
+verified moment, and equal-time batching groups the verified rows by it without
+letting a row that has none separate two rows that share one.
 
 ### D6: chronology is checked on availability, in append order
 
 The snapshot loader refuses a history whose verified availability times
 decrease in append order: the recorder stamps each row when it accepts the
 reading, so a later position carrying an earlier stamp means the clock stepped
-backwards. Only two verified times form a pair; a slow compilation written
-after a faster one that started later is not a step. The check is applied on
-write as well as on read, so the dataset command cannot replace a readable
-snapshot with one its own reader refuses.
+backwards. It also refuses a verified label time that precedes a decision
+recorded earlier in the file. That decision was taken before its own row was
+appended, so under a monotonic clock it is strictly earlier than any later
+row's reading; a step can leave the label times themselves increasing while
+crossing such a decision, and only the second rule catches it. A slow
+compilation appended after a faster one that was decided later is not a step.
+The check is applied on write as well as on read, so the dataset command cannot
+replace a readable snapshot with one its own reader refuses.
 
 No monotonic absolute value is persisted. Monotonic readings from unrelated
 boot epochs cannot be compared, so they stay inside the process where they were

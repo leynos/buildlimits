@@ -820,8 +820,8 @@ to a prediction only when it became available strictly earlier than that
 prediction's decision; a decision at exactly the availability instant does not
 see it. A completion time is retained for provenance and is never used instead.
 
-The store format is version 5 and the snapshot format is version 5. Version 1
-to 4 documents still load, with the newer evidence reported as `unrecorded` or
+The store format is version 5 and the snapshot format is version 6. Version 1
+to 5 documents still load, with the newer evidence reported as `unrecorded` or
 absent rather than guessed. A history whose rows predate the availability
 marker reports `insufficient label-availability times` until new rows are
 recorded, and one whose rows predate the admission field reports

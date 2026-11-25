@@ -29,7 +29,7 @@ incompatible configuration fails before any compiler is admitted. The sccache
 version is not checked at startup: an unsupported version is detected on a
 later statistics reading, which disables recording while admission continues.
 
-The store format is version 5 and the snapshot format is version 5. An outcome
+The store format is version 5 and the snapshot format is version 6. An outcome
 row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`
 and `outcome_attribution` (version 2), the `label_time_provenance` marker that
 says whether its label time is proven (version 3), the `generation_digest` that
