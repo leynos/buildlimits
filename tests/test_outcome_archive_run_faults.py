@@ -24,6 +24,7 @@ from outcome_archive_helpers import (
     refuse,
     restore_source,
     run,
+    segment_bytes_for,
     write,
 )
 
@@ -162,7 +163,11 @@ def test_a_failed_older_delete_stops_before_a_newer_trim(
     for is still present.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    base = policy(segment_bytes=2200)
+    # Three records per segment, so the record cap deletes the oldest segment
+    # whole and trims the next one. The bound is derived from the row the
+    # fixture writes rather than pinned, so a wider row cannot repartition the
+    # history this scenario depends on.
+    base = policy(segment_bytes=segment_bytes_for(3))
     write(store, records(NOW, 12), base)
     before = {
         entry.sequence: entry.record_count

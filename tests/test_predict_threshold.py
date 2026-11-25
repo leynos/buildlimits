@@ -135,13 +135,14 @@ def _verified_snapshot(tmp_path: Path, *, usable: int) -> Path:
 
 
 def _write_labelled_store(path: Path, count: int, *, with_admission: bool) -> None:
-    """Write one labelled store that mixes version 1 and version 2 row shapes.
+    """Write one labelled store whose rows claim no label-time provenance.
 
-    Without ``with_admission`` the store alternates the two shapes and states
-    no admission time at all. With it, every row is version 2 and carries an
-    admission moment two seconds before its own label. Either way the rows are
-    version 2 history, so the dataset command emits their label times as
-    unverified.
+    Without ``with_admission`` the store alternates the version 1 and version 2
+    shapes and states no admission time at all. With it, every row carries an
+    admission moment two seconds before its own label. Either way no row claims
+    provenance, so the dataset command emits every label time as unverified: a
+    row that says nothing is unproven, whichever document version it is written
+    into.
 
     Parameters
     ----------

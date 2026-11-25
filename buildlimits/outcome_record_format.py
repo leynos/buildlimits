@@ -9,6 +9,24 @@ from buildlimits.json_values import nonnegative_integer
 from buildlimits.metrics_schema import CACHE_RESULTS as _CACHE_RESULTS
 from buildlimits.metrics_schema import OUTCOME_REASONS as _OUTCOME_REASONS
 from buildlimits.outcome_key import CacheKey, ToolchainIdentity
+from buildlimits.outcome_record_key import (
+    _DIGEST_HEX_LENGTH as _DIGEST_HEX_LENGTH,
+)
+from buildlimits.outcome_record_key import (
+    _is_choice as _is_choice,
+)
+from buildlimits.outcome_record_key import (
+    _optional_choice as _optional_choice,
+)
+from buildlimits.outcome_record_key import (
+    _text as _text,
+)
+from buildlimits.outcome_record_key import (
+    _valid_digest as _valid_digest,
+)
+from buildlimits.outcome_record_key import (
+    _validate_key as _validate_key,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -19,21 +37,22 @@ if typ.TYPE_CHECKING:
 
 type Origin = typ.Literal["registry", "git", "path", "unknown"]
 type ChildSighting = typ.Literal["seen", "ambiguous", "not_seen", "unavailable"]
+type LabelTimeProvenance = typ.Literal["verified"]
 
 FORMAT_NAME = "buildlimits-cache-outcomes"
-FORMAT_VERSION = 2
-SUPPORTED_FORMAT_VERSIONS = frozenset({1, FORMAT_VERSION})
+FORMAT_VERSION = 3
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, FORMAT_VERSION})
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 # The largest document an in-place compaction may write. A policy that lets
 # the active file grow past this bound cannot compact it in legacy mode, so
 # the retention policy refuses such a segment size.
 MAX_COMPACT_BYTES = 12 * 1024 * 1024
-_DIGEST_HEX_LENGTH = 64
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})
 _ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
+_PROVENANCES = frozenset({"verified"})
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -82,6 +101,12 @@ class OutcomeRecord:
         The UTC wall-clock moment the supervisor admitted the compilation,
         captured at admission. ``None`` means the row predates admission-time
         recording or the launch was not admitted through the supervisor.
+    label_time_provenance : Literal["verified"] | None
+        Whether ``observed_at`` is proven to be when the label became known.
+        The current recorder writes ``verified``, because it dates every row at
+        the statistics reading that produced the label. ``None`` means the row
+        predates the marker (a version 1 or 2 row) and proves nothing: either
+        release it as a lower bound or withhold it, never treat it as proof.
     """
 
     key: CacheKey
@@ -95,6 +120,7 @@ class OutcomeRecord:
     outcome_reason: OutcomeReason | None = None
     outcome_attribution: AttributionKind | None = None
     admitted_at: dt.datetime | None = None
+    label_time_provenance: LabelTimeProvenance | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -144,12 +170,25 @@ class DecodedStore:
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}
 _IDENTITY_FIELDS = {field.name for field in dc.fields(ToolchainIdentity)}
 _OUTCOME_FIELDS = {field.name for field in dc.fields(OutcomeRecord)} | {"kind"}
-# Version 1 rows predate admission-time and classification evidence. They stay
-# readable, and every absent field decodes as None rather than a guessed label.
-_V1_OUTCOME_FIELDS = _OUTCOME_FIELDS - {
+# Version 2 rows predate the label-time provenance marker; version 1 rows also
+# predate admission-time and classification evidence. Both stay readable, and
+# every absent field decodes as None rather than a guessed proof or label.
+_V2_OUTCOME_FIELDS = _OUTCOME_FIELDS - {"label_time_provenance"}
+_V1_OUTCOME_FIELDS = _V2_OUTCOME_FIELDS - {
     "outcome_reason",
     "outcome_attribution",
     "admitted_at",
+}
+# The outcome shapes each document version may hold. A current document holds
+# only the current shape, so its rows state their provenance: the writer always
+# emits the marker, and a row preserved from an older document is re-encoded by
+# compaction with an explicit null rather than losing the field. An older
+# document keeps the shapes its release wrote, plus the older rows a previous
+# compaction of that release preserved.
+_ACCEPTED_OUTCOME_SHAPES: dict[int, frozenset[frozenset[str]]] = {
+    1: frozenset({frozenset(_V1_OUTCOME_FIELDS)}),
+    2: frozenset({frozenset(_V1_OUTCOME_FIELDS), frozenset(_V2_OUTCOME_FIELDS)}),
+    FORMAT_VERSION: frozenset({frozenset(_OUTCOME_FIELDS)}),
 }
 _SUMMARY_FIELDS = {field.name for field in dc.fields(WindowSummary)} | {"kind"}
 _SUMMARY_COUNTS = tuple(field.name for field in dc.fields(WindowSummary)[2:])
@@ -173,6 +212,7 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _optional_choice(record.outcome_reason, _OUTCOME_REASONS),
         _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
         _optional_utc(record.admitted_at),
+        _optional_choice(record.label_time_provenance, _PROVENANCES),
     ))
 
 
@@ -196,6 +236,7 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         nonnegative_integer(value.get("child_samples")) is not None,
         _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
         _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
+        _optional_choice(value.get("label_time_provenance"), _PROVENANCES),
     ))
 
 
@@ -219,100 +260,6 @@ def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:
     return version in SUPPORTED_FORMAT_VERSIONS
 
 
-def _validate_key(key: CacheKey) -> None:
-    """Reject cache keys containing local paths or invalid digests.
-
-    Raises
-    ------
-    ValueError
-        If a key field is empty, malformed or path-bearing.
-    """
-    identity = key.toolchain_identity
-    is_valid = all((
-        _safe_component(key.crate_name),
-        _safe_origin(key.crate_origin),
-        _safe_target(key.target),
-        _valid_digest(key.argument_digest) is not None,
-        _valid_digest(identity.compiler_digest) is not None,
-        _valid_digest(identity.rustup_toolchain_digest) is not None,
-        _text(identity.cache_version) is not None,
-        _text(identity.server_version) is not None,
-    ))
-    if not is_valid:
-        raise ValueError
-
-
-def _safe_component(value: object) -> bool:
-    """Check a crate-name component without filesystem separators.
-
-    Returns
-    -------
-    bool
-        Whether the value is a non-empty, path-free string.
-    """
-    if not isinstance(value, str) or not value.strip():
-        return False
-    return not any(separator in value for separator in ("/", "\\"))
-
-
-def _safe_origin(value: object) -> bool:
-    """Check a classified origin label without retaining path components.
-
-    Returns
-    -------
-    bool
-        Whether the optional origin is a supported path-free label.
-    """
-    if value is None:
-        return True
-    if not isinstance(value, str):
-        return False
-    if not value.startswith(("registry:", "git:", "path:")):
-        return False
-    return not any(separator in value for separator in ("/", "\\"))
-
-
-def _safe_target(value: object) -> bool:
-    """Check a target triple or keyed target-path digest.
-
-    Returns
-    -------
-    bool
-        Whether the target is safe to persist.
-    """
-    if not isinstance(value, str) or not value.strip():
-        return False
-    if value.startswith("path:"):
-        return _valid_digest(value.removeprefix("path:")) is not None
-    return not _path_like(value)
-
-
-def _path_like(value: str) -> bool:
-    """Identify Unix, relative and Windows path spellings.
-
-    Returns
-    -------
-    bool
-        Whether the value resembles a local filesystem path.
-    """
-    return any((
-        any(separator in value for separator in ("/", "\\")),
-        value.startswith((".", "~")),
-        len(value) > 1 and value[1] == ":",
-    ))
-
-
-def _text(value: object) -> str | None:
-    """Accept a non-empty string value.
-
-    Returns
-    -------
-    str or None
-        The original string, or no value for empty or non-string input.
-    """
-    return value if isinstance(value, str) and value.strip() else None
-
-
 def _require_text(value: object) -> None:
     """Require one non-empty string field.
 
@@ -323,28 +270,6 @@ def _require_text(value: object) -> None:
     """
     if _text(value) is None:
         raise ValueError
-
-
-def _is_choice(value: object, allowed: frozenset[str]) -> bool:
-    """Check a string against a closed vocabulary.
-
-    Returns
-    -------
-    bool
-        Whether the string belongs to the allowed values.
-    """
-    return isinstance(value, str) and value in allowed
-
-
-def _optional_choice(value: object, allowed: frozenset[str]) -> bool:
-    """Check an absent value or a string from a closed vocabulary.
-
-    Returns
-    -------
-    bool
-        Whether the value is None or belongs to the allowed values.
-    """
-    return value is None or _is_choice(value, allowed)
 
 
 def _optional_utc(value: dt.datetime | None) -> bool:
@@ -380,18 +305,3 @@ def _valid_number(value: object) -> bool:
                 return False
         case _:
             return False
-
-
-def _valid_digest(value: object) -> str | None:
-    """Accept lowercase SHA-256 hexadecimal digests.
-
-    Returns
-    -------
-    str or None
-        The digest, or no value for a malformed representation.
-    """
-    if not isinstance(value, str) or len(value) != _DIGEST_HEX_LENGTH:
-        return None
-    if not all(character in "0123456789abcdef" for character in value):
-        return None
-    return value

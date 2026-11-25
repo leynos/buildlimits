@@ -4,11 +4,10 @@ import dataclasses as dc
 
 from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import Pending, QueryFailure, StatisticsText, Ticket
-from buildlimits.outcome_recorder_effects import _join_outputs
+from buildlimits.outcome_recorder_effects import _join_outputs, _with_progress
 from buildlimits.outcome_recorder_outputs import (
     _EmissionMoment,
     _emit_unattributed,
-    _with_progress,
 )
 from buildlimits.outcome_recorder_reading import _finish_failure, _finish_reading
 from buildlimits.outcome_recorder_sampling import sampled as _sampled

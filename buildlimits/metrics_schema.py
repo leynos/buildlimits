@@ -125,7 +125,10 @@ EVALUATION_REASONS = frozenset({
 # a launch whose salt or crate identity was missing, and
 # ``label_time_unavailable`` names one with no wall-clock label moment. An
 # omitted outcome is measured loss, not a silent gap: the observer sums this
-# vocabulary and reconciles it against the events it published.
+# vocabulary and reconciles it against the events it published. The reason is a
+# token on each ``cache_outcome`` event, because one event describes one
+# outcome; a count of omissions is derived from the events and is never itself
+# published as a counter.
 RECORD_OMISSIONS = frozenset({
     "none",
     "key_unavailable",
@@ -178,7 +181,10 @@ VOCABULARIES = {
     "evaluation_reason": EVALUATION_REASONS,
     "store_operation": STORE_OPERATIONS,
     "gate_reason": GATE_REASONS,
-    "record_omission": RECORD_OMISSIONS,
+    # The reason one published outcome produced no store row, carried by its
+    # ``cache_outcome`` event. It is a token, never a count: the observer sums
+    # the closed values to measure the omitted total.
+    "record_omitted": RECORD_OMISSIONS,
     "child_sighting": frozenset({"seen", "not_seen", "ambiguous", "unavailable"}),
     # A timer-fired archive run, reported once per firing through
     # ``run_archive``. The statuses mirror ``RunStatus``; the reasons are
@@ -241,7 +247,6 @@ COUNTERS = frozenset({
     "window_groups",
     "store_records",
     "store_discarded",
-    "record_omitted",
     "child_samples",
     "child_samples_taken",
     "child_sample_failures",

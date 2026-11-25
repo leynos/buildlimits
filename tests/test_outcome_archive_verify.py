@@ -119,7 +119,7 @@ def test_a_version_the_store_does_not_support_is_named() -> None:
     document = (
         json.dumps({
             "format": "buildlimits-cache-outcomes",
-            "version": 3,
+            "version": 4,
             "salt_id": "salt-1",
             "written_at": "2026-11-19T00:00:00Z",
         })

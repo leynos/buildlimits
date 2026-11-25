@@ -44,6 +44,7 @@ def _fixture() -> tuple[ModuleType, typ.Any, tuple[str, ...]]:
         parser_class="cacheable",
         child_sighting="seen",
         child_samples=3,
+        label_time_provenance="verified",
     )
     summary = records.WindowSummary(
         observed_at=_NOW,
@@ -102,7 +103,7 @@ def test_decoder_drops_only_a_torn_final_line() -> None:
         ('{"version":2}\n', "corrupt"),
         ('{"format":"wrong"}\n', "corrupt"),
         (
-            '{"format":"buildlimits-cache-outcomes","version":3}\n',
+            '{"format":"buildlimits-cache-outcomes","version":99}\n',
             "version_mismatch",
         ),
         (

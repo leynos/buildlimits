@@ -18,7 +18,7 @@ from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.dataset import StoreHistory, build_snapshot
 from buildlimits.predict.records import decode_history
-from buildlimits.predict.snapshot_codec import snapshot_to_dict
+from buildlimits.predict.snapshot_codec import SNAPSHOT_VERSION, snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -50,15 +50,17 @@ def _document() -> dict[str, object]:
 
 
 def _as_version(document: dict[str, object], version: int) -> dict[str, object]:
-    """Rewrite a current document as the shape one earlier version wrote.
+    """Rewrite a current document as the shape the named version wrote.
 
     A test that loads an older document must reproduce what that release really
     wrote, not a current row with a downgraded header. Version 1 or 2 predates
-    the label-time provenance marker, so the marker is dropped with the header.
+    the label-time provenance marker, so the marker is dropped with the header;
+    the current version states it, so the row keeps it.
     """
     document["snapshot_version"] = version
-    for event in _events(document):
-        event.pop("label_observed_verified", None)
+    if version < SNAPSHOT_VERSION:
+        for event in _events(document):
+            event.pop("label_observed_verified", None)
     return document
 
 
@@ -85,8 +87,16 @@ def test_an_older_event_time_is_never_read_as_verified(tmp_path: Path) -> None:
         )
 
 
-def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> None:
-    """The retained-store and history-loss counts survive the document."""
+@pytest.mark.parametrize("version", [2, 3])
+def test_a_versioned_snapshot_round_trips_its_diagnostics(
+    tmp_path: Path, version: int
+) -> None:
+    """The retained-store and history-loss counts survive each document shape.
+
+    Version 2 predates the label-time provenance marker and version 3 states
+    it, so a round trip must be exercised at both shapes rather than at the
+    current one alone.
+    """
     snapshot = build_snapshot(
         _history(
             attributed_record(outcome="hit"),
@@ -95,7 +105,8 @@ def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> N
         now=NOW,
         history_loss=ACTIVE_FILE_ONLY,
     )
-    path = write_json(tmp_path / "history.jsonl", snapshot_to_dict(snapshot))
+    document = _as_version(snapshot_to_dict(snapshot), version)
+    path = write_json(tmp_path / f"v{version}.jsonl", document)
 
     loaded = load_snapshot(path)
 

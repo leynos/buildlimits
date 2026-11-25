@@ -13,6 +13,7 @@ import json
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.outcome_record_format import (
     FORMAT_NAME,
+    FORMAT_VERSION,
     MAX_RECORD_BYTES,
     SUPPORTED_FORMAT_VERSIONS,
     OutcomeRecord,
@@ -27,9 +28,49 @@ from buildlimits.outcome_record_time import timestamp_text
 
 __all__ = ["encode_line", "header_floor_bytes"]
 
+# The fields each document version's outcome row carries. A row is encoded in
+# the shape its document version accepts, so a caller that writes an older
+# document gets a faithful older row rather than a current one its own reader
+# would refuse. The current shape is therefore not imposed on history.
+_V2_ROW_FIELDS = frozenset({
+    "key",
+    "outcome",
+    "origin",
+    "runtime_seconds",
+    "observed_at",
+    "parser_class",
+    "child_sighting",
+    "child_samples",
+    "outcome_reason",
+    "outcome_attribution",
+    "admitted_at",
+})
+_V1_ROW_FIELDS = _V2_ROW_FIELDS - {
+    "outcome_reason",
+    "outcome_attribution",
+    "admitted_at",
+}
+_ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
+    1: _V1_ROW_FIELDS,
+    2: _V2_ROW_FIELDS,
+    FORMAT_VERSION: _V2_ROW_FIELDS | {"label_time_provenance"},
+}
 
-def encode_line(value: StoreHeader | StoreRecord) -> str:
+
+def encode_line(
+    value: StoreHeader | StoreRecord, *, version: int = FORMAT_VERSION
+) -> str:
     """Encode one store value as deterministic compact JSON.
+
+    Parameters
+    ----------
+    value : StoreHeader | StoreRecord
+        The typed store value to encode.
+    version : int
+        The document version the row is written into. It fixes the row shape,
+        so writing a current row beneath an older header is refused rather than
+        producing a document that version's own reader would call corrupt. A
+        header carries its own version and ignores this argument.
 
     Returns
     -------
@@ -39,15 +80,16 @@ def encode_line(value: StoreHeader | StoreRecord) -> str:
     Raises
     ------
     ValueError
-        If a field is invalid or the encoded row exceeds 16 KiB.
+        If a field is invalid, the value cannot be expressed at that version,
+        or the encoded row exceeds 16 KiB.
 
     Examples
     --------
     >>> import datetime as dt
     >>> encode_line(StoreHeader("salt-1", dt.datetime(2026, 1, 1, tzinfo=dt.UTC)))
-    '{"format":"buildlimits-cache-outcomes","version":2,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
+    '{"format":"buildlimits-cache-outcomes","version":3,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
     """
-    document = _document(value)
+    document = _document(value, version)
     line = json.dumps(
         document, ensure_ascii=False, separators=(",", ":"), allow_nan=False
     )
@@ -56,7 +98,7 @@ def encode_line(value: StoreHeader | StoreRecord) -> str:
     return line
 
 
-def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
+def _document(value: StoreHeader | StoreRecord, version: int) -> dict[str, object]:
     """Validate and map one record dataclass in stable field order.
 
     Returns
@@ -69,7 +111,8 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
     TypeError
         If ``value`` is not a supported store value.
     ValueError
-        If a field value or timestamp is invalid.
+        If a field value or timestamp is invalid, or the row cannot be written
+        at the requested document version.
     """
     match value:
         case StoreHeader():
@@ -90,27 +133,36 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
             if not _valid_outcome(record):
                 msg = "outcome record fields are invalid"
                 raise ValueError(msg)
-            return _record_document(record, "outcome")
+            return _record_document(record, "outcome", version)
         case WindowSummary() as summary:
             _require_text(summary.server_version)
             counts = _summary_counts(summary)
             if not all(nonnegative_integer(count) is not None for count in counts):
                 raise ValueError
-            return _record_document(summary, "window_summary")
+            return _record_document(summary, "window_summary", version)
         case _:
             raise TypeError
 
 
-def _record_document(record: StoreRecord, kind: str) -> dict[str, object]:
+def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, object]:
     """Map one validated record and canonicalize its timestamps.
 
     An absent optional timestamp is written as an explicit JSON null, so a row
-    states that no admission moment is known rather than omitting the field.
+    states that no admission moment is known rather than omitting the field. A
+    document predating the label-time provenance marker drops that field, and an
+    outcome row that has already claimed provenance cannot be written into such
+    a document: the older shape has nowhere to state it, and dropping it would
+    turn proof into silence.
 
     Returns
     -------
     dict[str, object]
         JSON-compatible fields prefixed with the record kind.
+
+    Raises
+    ------
+    ValueError
+        If the row states evidence its document version cannot carry.
     """
     fields = dc.asdict(record)
     fields["observed_at"] = timestamp_text(record.observed_at)
@@ -118,6 +170,14 @@ def _record_document(record: StoreRecord, kind: str) -> dict[str, object]:
         fields["admitted_at"] = (
             None if record.admitted_at is None else timestamp_text(record.admitted_at)
         )
+        if version < FORMAT_VERSION and record.label_time_provenance is not None:
+            msg = "an older document cannot state label-time provenance"
+            raise ValueError(msg)
+        allowed = _ROW_FIELDS_BY_VERSION.get(version)
+        if allowed is None:
+            msg = "store record version is not supported"
+            raise ValueError(msg)
+        fields = {name: value for name, value in fields.items() if name in allowed}
     return {"kind": kind, **fields}
 
 

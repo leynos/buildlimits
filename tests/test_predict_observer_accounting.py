@@ -142,8 +142,14 @@ def test_published_outcomes_reconcile_as_rows_plus_omissions() -> None:
     )
 
 
-def test_an_outcome_without_an_omission_field_counts_no_omission() -> None:
-    """An older recorder's event is not read as a measured omission."""
+def test_an_outcome_without_an_omission_field_is_counted_as_unrecorded() -> None:
+    """An older recorder's event is not read as a measured ``none``.
+
+    An event that carries no omission field says nothing about whether its
+    outcome was stored. Counting it as a measured zero would make the window
+    indistinguishable from one whose outcomes were all stored, so it is
+    counted apart as unrecorded.
+    """
     observer = count_journal(
         (
             Record(
@@ -167,3 +173,26 @@ def test_an_outcome_without_an_omission_field_counts_no_omission() -> None:
     assert observer.outcomes == 1, "the outcome is still counted"
     assert observer.record_omitted == 0, "absence is not a measured omission"
     assert observer.by_omission_reason == {}, "and it names no reason"
+    assert observer.record_omitted_unrecorded == 1, (
+        "the missing evidence is counted as unavailable, not as none"
+    )
+
+
+def test_a_measured_stored_window_records_no_unrecorded_omission() -> None:
+    """A window the recorder tagged with ``none`` is not called unrecorded."""
+    observer = count_journal(
+        (
+            _outcome("none"),
+            _outcome("none"),
+            _store_result("append", records=2, discarded=0),
+        ),
+        since="1h",
+        cap=1000,
+        truncated=False,
+    ).observer
+
+    assert observer is not None, "the counts are present"
+    assert observer.record_omitted == 0, "nothing was omitted"
+    assert observer.record_omitted_unrecorded == 0, (
+        "a stated none is measured evidence, so it is not unrecorded"
+    )

@@ -19,5 +19,5 @@ OUTCOME_ALIASES = {
     "evaluation_reason": EvaluationReason,
     "store_operation": StoreOperation,
     "gate_reason": GateReason,
-    "record_omission": RecordOmission,
+    "record_omitted": RecordOmission,
 }

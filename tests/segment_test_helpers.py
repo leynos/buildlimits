@@ -22,10 +22,11 @@ if typ.TYPE_CHECKING:
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 DIGEST = "a" * 64
 
-# The fields a version 2 outcome row added. A version 1 release wrote rows
-# without them, so a faithful old document must omit them rather than emit
-# nulls.
+# The fields a version 2 outcome row added, and the field version 3 added. A
+# version 1 release wrote rows without any of them, so a faithful old document
+# must omit them rather than emit nulls.
 _V1_OMITTED_FIELDS = ("outcome_reason", "outcome_attribution", "admitted_at")
+_V2_ADDED_FIELDS = (*_V1_OMITTED_FIELDS, "label_time_provenance")
 
 __all__ = [
     "DIGEST",
@@ -37,6 +38,7 @@ __all__ = [
     "store_layout",
     "swap_after_validation",
     "version_one_document",
+    "version_two_document",
     "write_private",
     "write_sidecar",
 ]
@@ -65,8 +67,37 @@ def version_one_document(
     }
     lines = [json.dumps(header, separators=(",", ":"))]
     for row in rows:
-        record = json.loads(outcome_record_encode.encode_line(row))
+        record = json.loads(outcome_record_encode.encode_line(row, version=1))
         for field in _V1_OMITTED_FIELDS:
+            record.pop(field, None)
+        lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return ("\n".join(lines) + "\n").encode()
+
+
+def version_two_document(
+    rows: tuple[StoreRecord, ...], salt_id: str = "salt-1"
+) -> bytes:
+    """Encode one header and rows as a version 2 document.
+
+    A version 2 release wrote the admission and classification evidence but no
+    label-time provenance marker, so a fixture that predates that marker must
+    omit it rather than write a null a version 2 encoder never emitted.
+
+    Returns
+    -------
+    bytes
+        The complete, newline-terminated version 2 document.
+    """
+    header = {
+        "format": "buildlimits-cache-outcomes",
+        "version": 2,
+        "salt_id": salt_id,
+        "written_at": "2026-11-19T00:00:00Z",
+    }
+    lines = [json.dumps(header, separators=(",", ":"))]
+    for row in rows:
+        record = json.loads(outcome_record_encode.encode_line(row, version=2))
+        for field in _V2_ADDED_FIELDS:
             record.pop(field, None)
         lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
     return ("\n".join(lines) + "\n").encode()

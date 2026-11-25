@@ -74,20 +74,21 @@ def event_of(record: OutcomeRecord) -> Event:
     real admission, which is the leak the walk-forward order exists to stop.
     The absence is reported, not repaired.
 
-    The label time is emitted as unverified. A version 2 store row cannot say
-    whether its ``observed_at`` was stamped by the fixed recorder or by the
-    earlier build that stamped a launch's completion, so the row proves
-    nothing about when its label was really known. Treating a version 2 row as
-    verified would silently release an old label before the reading that
-    produced it. A future store row that carries its own provenance marker can
-    emit ``label_observed_verified=True``; until then the benchmark withholds
-    these labels and counts them rather than scoring them.
+    The label time is emitted as verified only when the row says so. A
+    version 1 or 2 store row cannot say whether its ``observed_at`` was stamped
+    by the fixed recorder or by the earlier build that stamped a launch's
+    completion, so it proves nothing about when its label was really known. A
+    row without that marker decodes its provenance as ``None`` and is emitted
+    unverified; treating it as proof would silently release an old label before
+    the reading that produced it. The current recorder writes ``verified`` on
+    every row it dates at the reading, and that is the one source the benchmark
+    can score without withholding.
 
     Returns
     -------
     Event
         The redacted event, with its recorded admission time when present and
-        its label time marked unverified.
+        its label-time provenance copied from the row.
     """
     return Event(
         identity=identity_of(record.key),
@@ -96,7 +97,7 @@ def event_of(record: OutcomeRecord) -> Event:
         observed_at=record.observed_at,
         label=label_of(record.outcome),
         runtime_seconds=record.runtime_seconds,
-        label_observed_verified=False,
+        label_observed_verified=record.label_time_provenance == "verified",
     )
 
 

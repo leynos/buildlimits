@@ -7,22 +7,33 @@ import tempfile
 import typing as typ
 from pathlib import Path
 
+import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
 
-from buildlimits import outcome_store_io
-from buildlimits.outcome_record_format import DecodedStore, OutcomeRecord, StoreHeader
+from buildlimits import outcome_record_codec, outcome_store_io
+from buildlimits.outcome_record_encode import encode_line
+from buildlimits.outcome_record_format import (
+    FORMAT_VERSION,
+    DecodedStore,
+    OutcomeRecord,
+    StoreHeader,
+)
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source, build_snapshot
 from buildlimits.predict.events import Event
-from buildlimits.predict.journal_provenance import JournalUnavailable
+from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalUnavailable,
+    count_journal,
+)
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 from buildlimits.predict.synthetic import identity, stationary
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_record_format import Origin
+    from buildlimits.outcome_record_format import Origin, StoreRecord
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Label
@@ -200,27 +211,46 @@ def write_admitted_store_snapshot(tmp_path: Path, count: int) -> Path:
 
 
 def record_events(
-    records: tuple[object, ...], *, now: dt.datetime
+    records: tuple[StoreRecord, ...],
+    *,
+    now: dt.datetime,
+    version: int = FORMAT_VERSION,
 ) -> tuple[Event, ...]:
     """Snapshot one reading's records and load the events back.
 
     A test that inspects the events a recorder emitted must read them through
     the file the dataset command writes, not through the in-memory rows: only
-    the written document states each event's label-time provenance.
+    the written document states each event's label-time provenance. The rows
+    therefore travel through the real encoder and codec at ``version``, so a
+    test that claims a version's behaviour has exercised that version's shapes.
 
     Parameters
     ----------
-    records : tuple[object, ...]
+    records : tuple[StoreRecord, ...]
         The records one reading emitted, outcome rows and summary included.
     now : datetime
         The moment the reading returned, used as the store's write time.
+    version : int
+        The document version to write and read back. A version 2 document
+        cannot carry a provenance marker, so a row that states one must be
+        stripped before it is written there.
 
     Returns
     -------
     tuple[Event, ...]
         The loaded event stream, in store append order.
     """
-    decoded = DecodedStore(StoreHeader("fixed-salt", now), typ.cast("typ.Any", records))
+    header = StoreHeader("fixed-salt", now, version=version)
+    document = "\n".join((
+        encode_line(header),
+        *(
+            encode_line(_as_version_row(record, version), version=version)
+            for record in records
+        ),
+    ))
+    decoded = outcome_record_codec.decode_lines(document + "\n")
+    if not isinstance(decoded, DecodedStore):
+        pytest.fail(f"the fixture's own document did not decode: {decoded}")
     snapshot = build_snapshot(
         decode_history(decoded),
         now=now,
@@ -229,6 +259,24 @@ def record_events(
     path = Path(tempfile.mkdtemp()) / "history.jsonl"
     save_snapshot(path, snapshot)
     return load_snapshot(path).events
+
+
+def _as_version_row(record: StoreRecord, version: int) -> StoreRecord:
+    """Reproduce the row shape the named document version actually wrote.
+
+    A version 1 or 2 release could not state label-time provenance, so a test
+    that asks what such a history looks like must strip the marker its own
+    recorder now sets. Writing it as-is would be refused, which is the encoder
+    correctly refusing to record proof a document cannot carry.
+
+    Returns
+    -------
+    StoreRecord
+        The record as that version would have written it.
+    """
+    if version >= FORMAT_VERSION or not isinstance(record, OutcomeRecord):
+        return record
+    return dc.replace(record, label_time_provenance=None)
 
 
 def write_snapshot(tmp_path: Path, count: int) -> Path:
@@ -320,3 +368,20 @@ def write_fast_config(tmp_path: Path) -> Path:
         block_size=20,
     )
     return write_json(tmp_path / "config.json", dc.asdict(config))
+
+
+def journal_note(*records: object, truncated: bool = False) -> JournalCounts:
+    """Count one journal window over the supplied validated records.
+
+    Both the provenance tests and the report tests need the same counting
+    call; folding a window is the only thing they share, so it is built once
+    here rather than restated per module.
+
+    Returns
+    -------
+    JournalCounts
+        The counts for the window.
+    """
+    return count_journal(
+        typ.cast("typ.Any", records), since="4w", cap=1000, truncated=truncated
+    )

@@ -87,11 +87,13 @@ row then claims an admission time it did not observe.
 Version 1 rows remain readable and decode every new field as `None`. A `None`
 admission time is not a zero and not a guess: the benchmark event keeps it
 absent, `admission_moment` returns `None`, and the row is never scored. A
-writer that compacts an old store writes a version 2 header while preserving
-the old rows, so a version 2 file may contain version 1 rows; the decoder
-validates each row's shape, not a header-wide assumption. The snapshot gains
-this evidence at version 2, and D6 raises it to version 3; a version 1 snapshot
-loads with diagnostics unavailable.
+writer that compacts an old store writes a current header while preserving the
+old rows, so a version 2 file may contain version 1 rows; the decoder validates
+each row's shape, not a header-wide assumption, and the shape it accepts is
+fixed by the document's own version. The snapshot gains this evidence at
+version 2, and D6 raises it to version 3; a version 1 snapshot loads with
+diagnostics unavailable. D9 raises the store to version 3 and fixes that row
+shape by version.
 
 ### D2: keep label-loss accounting in the snapshot, not in per-request logs
 
@@ -229,8 +231,8 @@ dataset command cannot distinguish a pre-fix version 2 row from a fixed version
 2 row — both are version 2 store rows — so it emits them **unverified**.
 Claiming verification for a version 2 row would silently release an old label
 before the reading that produced it, which is exactly the leak D4 closed. A
-future version 3 store row that carries its own provenance marker is the first
-source that can emit a verified event.
+version 3 store row that carries its own provenance marker, as D9 specifies, is
+the first source that can emit a verified event.
 
 The loader treats a version 1 or 2 snapshot's events as unverified, and refuses
 a version 3 event that omits the marker or sets it to a non-boolean. Absence is
@@ -258,10 +260,24 @@ reconciles by construction.
 
 `ObserverAccounting.record_omitted` sums those reasons, and
 `by_omission_reason` breaks them down. The journal codec requires the map to
-sum to the total. The reconciliation rule the report states is: published
-outcomes = appended rows + omitted ones by cause. A journal record that carries
-no omission field, as an older recorder wrote it, contributes nothing to
-either, so absence is not read as a measured zero.
+sum to the total. `record_omitted` is a token on the event, not a counter: one
+event describes one outcome, so the observer derives the count from the closed
+values instead of the recorder publishing a tally beside them.
+
+The identity the report states is the one the counts can prove: published
+outcomes are accounted for by appended outcome rows, pre-store omissions,
+discarded writes and outstanding queued writes. A published outcome is not
+simply an appended row or an omitted one, because a failed append lands in
+`store_discarded` with a reason, a successful reading appends its outcome rows
+*and* a window summary, and a write queued inside the window may complete after
+it. A reading's summary is therefore not an outcome row and is never counted as
+one.
+
+A journal record that carries no omission field, as an older recorder wrote it,
+is counted in `record_omitted_unrecorded` rather than contributing zero to
+either total, so absence is not read as a measured `none`. The journal codec
+requires the omitted and unrecorded totals together to fit inside the outcomes
+the window held.
 
 ### D8: the store total counts appends, not every operation's rows
 
@@ -273,6 +289,39 @@ contributes to the append total now; every result still appears in
 `by_store_operation`, so the compactions and seals are visible beside the
 appends. Both the dataset report and the rendered Markdown label the number
 "rows appended" and state the rule, so no report calls a mixed total appends.
+
+### D9: a store row states its own label-time provenance
+
+D6 withdrew every store-derived label because a version 2 row cannot say which
+code dated it. That was correct for history already written, but it left no
+path by which a correctly recorded row could ever be scored: the dataset
+adapter marked every store-derived event unverified, whatever wrote it.
+
+The store format becomes version 3, and an `outcome` row gains
+`label_time_provenance`, written `verified` by the recorder that dates a row at
+its statistics reading. The marker is per row rather than per document, for the
+same reason D6 gives for the snapshot marker: one snapshot may hold rows of
+mixed provenance, and a document-wide claim would have to overstate one of
+them. A version 1 or 2 row decodes the field as `None`, which means unproven
+rather than false, and the adapter maps `None` to an unverified event, so older
+history keeps exactly the treatment D6 gave it. No historical row is repaired
+or re-stamped.
+
+The accepted row shape is fixed by the document's own version, not by the
+running code. A version 3 row that omits the marker is corrupt, because the
+version 3 shape is exact: a row preserved from an older document is re-encoded
+by compaction with the field present and null, so no current document holds a
+row that predates the marker. `encode_line` takes the document version for the
+same reason and refuses to write a verified row into an older document, whose
+shape has nowhere to state it. Every reader that decodes rows beneath a header
+passes that header's version on, so an older document stays readable while a
+current row that omits its marker is refused.
+
+The recorder writes `verified` only when the emission's own moment dated the
+row. The completion-time fallback exists for a purely synthetic event carrying
+no wall clock; a completion time is a lower bound on when the label became
+known, so a row dated that way states no provenance rather than claiming proof
+the shell never supplied.
 
 ## Consequences
 
@@ -295,14 +344,21 @@ appends. Both the dataset report and the rendered Markdown label the number
   but are not scorable through the benchmark: the dataset command emits their
   label times as unverified, so the replay withholds them and reports the
   count. No historical row is repaired, and no report claims a version 2 row
-  proves when its label was known; see D4 and D6. An operator who needs a
-  scored history must wait for a store format that records the row's own
-  label-time provenance.
+  proves when its label was known; see D4 and D6. A history recorded by a
+  version 3 store is scorable, because its rows state their provenance; an
+  operator who needs one must run the current recorder and let new rows
+  accumulate, since no older row can be promoted.
 - The snapshot format is version 3. A version 1 or 2 snapshot still loads, with
   its events unverified; a version 3 event that omits the marker is refused.
 - A published outcome that produced no store row is counted by its closed
-  reason, so the observer's totals reconcile as appended rows plus omissions;
-  see D7.
+  reason, and an event whose omission evidence is absent is counted as
+  unrecorded rather than as a measured `none`; see D7. The report states the
+  identity those counts support rather than the simpler one they do not.
+- A version 3 store row states its own label-time provenance, so a history the
+  current recorder wrote is scored while version 1 and 2 rows stay withheld;
+  see D9. The store row grows again, so segment boundaries and archive sizes
+  move once more, and the tests that pinned a literal row size derive it from
+  the row instead.
 - The store append total counts only `append` results, and the operations that
   retained or released rows appear in their own map; see D8. A reader who
   previously summed every operation's `store_records` sees a smaller, correct
@@ -367,9 +423,9 @@ appends. Both the dataset report and the rendered Markdown label the number
   `insufficient admission times` until genuine rows meet both gates. A history
   whose labels are all unverified reports `insufficient data` with the withheld
   count, because an unproven label time is not scored evidence.
-- A future version 3 store row that records the provenance of its own label time
-  can emit a verified event; the dataset adapter is the one place that decision
-  would change.
+- A version 3 store row records the provenance of its own label time and emits a
+  verified event through `event_of`; that adapter is the one place D9's
+  decision lives, so a later source format changes it once.
 - A later observation port may add a supported per-request backend signal for a
   backend that provides one. It must keep the mixed-window `unknown` result for
   sccache 0.14.

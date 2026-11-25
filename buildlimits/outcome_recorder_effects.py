@@ -5,13 +5,21 @@ build one from effects produced in more than one step: a reducer step, the
 port's response to a command it issued, and the span that records the reading's
 terminal state. Keeping those combinations here leaves
 ``outcome_recorder_outputs`` to the window-to-row mapping itself.
+
+The module also owns the two typestate projections the recorder needs around a
+transition: the attribution module's narrow window input, and the shared
+progress a state carries. Neither builds a row, and both reshape state rather
+than mapping a launch, so they belong beside the effect joiner rather than in
+the row builder.
 """
 
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_attribution import WindowEntry
 from buildlimits.outcome_recorder_types import (
     CloseQuery,
+    Disabled,
     Idle,
     Outputs,
     QueryFinished,
@@ -26,8 +34,10 @@ if typ.TYPE_CHECKING:
         PollResult,
         Progress,
         SpanTransition,
+        _Launch,
     )
     from buildlimits.outcome_vocabulary import OutcomeReason
+    from buildlimits.outcome_window import OutcomeWindow
 
 
 def _emission(
@@ -125,3 +135,47 @@ def _finish_state(
         ),
     )
     return Idle(progress), output
+
+
+def _attribution_window(window: OutcomeWindow[_Launch]) -> tuple[WindowEntry, ...]:
+    """Project launch state into the attribution module's narrow input.
+
+    Returns
+    -------
+    tuple[WindowEntry, ...]
+        Group identifiers paired with their cleanliness observations.
+
+    Examples
+    --------
+    An empty recorder window projects to ``()``.
+    """
+    return tuple(
+        WindowEntry(entry.group_id, entry.is_clean) for entry in window.entries
+    )
+
+
+def _with_progress(
+    state: RecorderState, progress: Progress, *, straddled: bool = False
+) -> RecorderState:
+    """Replace shared progress without changing the recorder typestate.
+
+    Returns
+    -------
+    RecorderState
+        The same enabled or disabled variant with the supplied progress.
+
+    Examples
+    --------
+    Replacing progress on ``Idle()`` returns another idle state.
+    """
+    match state:
+        case Querying():
+            return dc.replace(
+                state,
+                progress=progress,
+                has_straddled_launch=state.has_straddled_launch or straddled,
+            )
+        case Disabled():
+            return dc.replace(state, progress=progress)
+        case Idle():
+            return Idle(progress)

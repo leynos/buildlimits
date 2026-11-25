@@ -191,6 +191,39 @@ def _unverified_line(stats: cabc.Mapping[str, object]) -> str:
     )
 
 
+def _omission_line(block: cabc.Mapping[str, object]) -> str:
+    """Return the bullet accounting for published outcomes without a store row.
+
+    A published outcome is not simply an appended row or an omitted one. A
+    failed append lands in ``store_discarded`` with a reason, a successful
+    reading appends its outcome rows *and* a window summary, and a write that
+    was queued inside the window may complete after it. The identity the bullet
+    states is therefore the one the counts can prove, and it says outright that
+    a reading's summary is not an outcome row.
+
+    Returns
+    -------
+    str
+        The Markdown bullet.
+    """
+    unrecorded = block.get("record_omitted_unrecorded")
+    omitted = (
+        f"{as_count(block.get('record_omitted'))}, by reason "
+        f"{as_counts(block.get('by_omission_reason'))}"
+    )
+    if unrecorded:
+        omitted = (
+            f"{omitted}; {as_count(unrecorded)} published outcomes carried no "
+            "omission field, so their omission is unknown rather than measured"
+        )
+    return (
+        f"- Observer outcomes without a store row: {omitted}. Published outcomes "
+        "are accounted for by appended outcome rows, pre-store omissions, "
+        "discarded writes and outstanding queued writes; a reading's window "
+        "summary is not an outcome row"
+    )
+
+
 def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
     """Return the recorder's own counts from the journal note.
 
@@ -215,12 +248,7 @@ def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
             f"{as_count(block.get('store_records'))} rows appended, "
             f"{as_count(block.get('store_discarded'))} dropped or evicted"
         ),
-        (
-            f"- Observer outcomes without a store row: "
-            f"{as_count(block.get('record_omitted'))}, by reason "
-            f"{as_counts(block.get('by_omission_reason'))}; a published outcome "
-            "reconciles as an appended row plus an omitted one"
-        ),
+        _omission_line(block),
         (
             f"- Observer readings: {as_count(block.get('readings'))} completed, "
             f"{as_count(block.get('readings_skipped'))} skipped, "

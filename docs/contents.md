@@ -65,7 +65,7 @@
   records why closed history is sealed and verified, how logical-byte retention
   and the timer-facing command work, and the schema and salt guarantees.
 - [ADR 011: cache-outcome admission time and label-loss accounting](adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
-  records the version 2 store fields, the bounded observer/store/snapshot
+  records the version 3 store fields, the bounded observer/store/snapshot
   diagnostics, and the quiet-point and overflow repairs behind issue #68.
 
 ## Conventions

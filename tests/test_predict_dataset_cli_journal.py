@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import OBSERVED_AT
-from predict_test_helpers import write_store
+from predict_test_helpers import journal_note, write_store
 
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
@@ -127,25 +127,11 @@ def test_observer_counts_survive_the_snapshot_round_trip(tmp_path: Path) -> None
     assert observer.by_cache_path == {"cached": 1}, "the cache path survives"
 
 
-def _note(*records: Record, truncated: bool = False) -> JournalCounts:
-    """Count one journal window over the supplied records.
-
-    Each case here builds a different window and asserts something the others
-    do not; only the counting call is shared, so it is folded here.
-
-    Returns
-    -------
-    JournalCounts
-        The counts for the window.
-    """
-    return count_journal(records, since="4w", cap=1000, truncated=truncated)
-
-
 def test_a_failed_reading_is_reported_without_admissions(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A window holding only a failed reading still names its failure."""
-    note = _note(
+    note = journal_note(
         Record(
             "supervisor",
             "outcome_reading",
@@ -166,7 +152,7 @@ def test_a_gate_only_window_reports_its_reason(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A window whose only record is a gate transition still reports it."""
-    note = _note(
+    note = journal_note(
         Record(
             "supervisor",
             "outcome_reading",
@@ -191,7 +177,7 @@ def test_a_truncated_journal_marks_its_observer_counts_partial(
     The same sentence the rendered report prints marks them partial, so a
     reader of either form is told the window is smaller than the lookback.
     """
-    note = _note(
+    note = journal_note(
         Record(
             "supervisor",
             "request_admitted",
@@ -212,7 +198,7 @@ def test_a_complete_journal_prints_no_partial_warning(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A window that never reached the cap is printed without the warning."""
-    note = _note(
+    note = journal_note(
         Record(
             "supervisor",
             "request_admitted",

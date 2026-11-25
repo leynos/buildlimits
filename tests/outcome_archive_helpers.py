@@ -21,9 +21,10 @@ from outcome_test_helpers import records_at as records
 from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
-from buildlimits import outcome_archive_fs
+from buildlimits import outcome_archive_fs, outcome_record_encode
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_archive_context import ignore_retry
+from buildlimits.outcome_record_format import StoreHeader
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import archive_name, segment_name
 
@@ -49,6 +50,7 @@ __all__ = [
     "run",
     "seal_store",
     "seeded_store",
+    "segment_bytes_for",
     "store_with_archive",
     "unsealed_store",
     "write",
@@ -79,6 +81,28 @@ def policy(
         headroom_bytes=max(segment_bytes, 1) * 4,
         segment_bytes=segment_bytes,
     )
+
+
+def segment_bytes_for(rows: int) -> int:
+    """Return a segment bound that seals after exactly ``rows`` records.
+
+    An encoded row changes size with the store format, so a fixture that pins a
+    literal byte count silently re-partitions history whenever a field is
+    added. Deriving the bound from the row the fixture writes keeps a scenario
+    about the plan's shape independent of the row's shape.
+
+    Returns
+    -------
+    int
+        The byte bound a header plus ``rows`` encoded records occupy.
+
+    The salt the writer activates is a full 64-character digest, so the bound
+    is measured with a maximal identifier. Sizing it from a short test salt
+    would seal one row later than the scenario expects.
+    """
+    header = outcome_record_encode.encode_line(StoreHeader("0" * 64, NOW))
+    record = outcome_record_encode.encode_line(records(NOW, 1)[0])
+    return len(header.encode()) + 1 + rows * (len(record.encode()) + 1)
 
 
 def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:

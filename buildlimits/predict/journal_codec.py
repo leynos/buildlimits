@@ -27,6 +27,7 @@ _OBSERVER_COUNT_FIELDS = (
     "requests",
     "outcomes",
     "record_omitted",
+    "record_omitted_unrecorded",
     "store_records",
     "store_discarded",
     "readings",
@@ -247,6 +248,12 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
         raise ValueError(msg)
     if sum(maps["by_omission_reason"].values()) != counts["record_omitted"]:
         msg = f"{label} journal observer omissions do not sum to its omitted total"
+        raise ValueError(msg)
+    if (
+        counts["record_omitted"] + counts["record_omitted_unrecorded"]
+        > counts["outcomes"]
+    ):
+        msg = f"{label} journal observer omissions exceed its published outcomes"
         raise ValueError(msg)
     return ObserverAccounting.from_parts(counts, maps)
 

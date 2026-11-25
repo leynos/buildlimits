@@ -23,6 +23,8 @@ _DOMAIN_MODULES = (
     "outcome_recorder_types.py",
     "outcome_record_codec.py",
     "outcome_record_format.py",
+    "outcome_record_key.py",
+    "outcome_record_lines.py",
     "outcome_record_time.py",
     "outcome_records.py",
     "outcome_window.py",

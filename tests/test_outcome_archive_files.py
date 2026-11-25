@@ -161,7 +161,7 @@ def test_a_corrupt_source_is_not_archived(tmp_path: Path) -> None:
 def test_an_unsupported_version_is_named(tmp_path: Path) -> None:
     """A future record schema is reported as such, not as corruption."""
     raw = (
-        b'{"format":"buildlimits-cache-outcomes","version":3,'
+        b'{"format":"buildlimits-cache-outcomes","version":4,'
         b'"salt_id":"salt-1","written_at":"2026-11-19T00:00:00Z"}\n'
     )
     sealed = source(tmp_path, 1, raw)

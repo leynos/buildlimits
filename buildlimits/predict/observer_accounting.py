@@ -58,6 +58,7 @@ _COUNT_FIELDS = (
     "store_records",
     "store_discarded",
     "record_omitted",
+    "record_omitted_unrecorded",
     "readings",
     "readings_skipped",
     "readings_failed",
@@ -68,6 +69,11 @@ _COUNT_FIELDS = (
 rows a result dropped. A compaction reports the rows it retained and a seal
 the rows it released, but neither appends a row, so counting them would report
 a row more than once. They are kept apart in the per-operation map instead.
+
+``record_omitted_unrecorded`` counts the published outcomes whose event carried
+no omission field, as an older recorder wrote it. Without that count a window
+of such events would read exactly like a window of stored ones, because the
+omitted total would be zero either way.
 """
 
 _MAP_FIELDS = (
@@ -156,6 +162,12 @@ class ObserverAccounting:
         no cache key or no wall-clock label moment. An omitted outcome is
         measured loss the writer never sees, so it is counted here from the
         event that carried the reason.
+    record_omitted_unrecorded : int
+        Published outcomes whose event carried no omission field, as an older
+        recorder wrote it. Their omission is unknown rather than measured as
+        none, so a window where this count is non-zero cannot prove that its
+        outcomes were stored. It is kept apart from ``record_omitted`` so
+        absence never reads as a measured ``none``.
     by_omission_reason : Mapping[str, int]
         Those omitted outcomes by their closed reason. It sums to
         ``record_omitted``, so published outcomes reconcile as stored rows
@@ -196,6 +208,7 @@ class ObserverAccounting:
     by_attribution: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     by_origin: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     record_omitted: int = 0
+    record_omitted_unrecorded: int = 0
     by_omission_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     store_records: int = 0
     store_discarded: int = 0
@@ -236,6 +249,7 @@ class ObserverAccounting:
             requests=counts["requests"],
             outcomes=counts["outcomes"],
             record_omitted=counts["record_omitted"],
+            record_omitted_unrecorded=counts["record_omitted_unrecorded"],
             store_records=counts["store_records"],
             store_discarded=counts["store_discarded"],
             readings=counts["readings"],
@@ -289,31 +303,38 @@ def observer_accounting(
         for field, bucket in _EVENT_COUNTERS.get(record.event, ()):
             counters[bucket] += 1 if field is None else _integer(fields.get(field))
         if record.event == "cache_outcome":
-            _count_omission(maps["by_omission_reason"], fields)
+            _count_omission(maps["by_omission_reason"], counters, fields)
         if record.event == "outcome_store":
             _count_store_result(maps, counters, fields)
     ordered = {name: dict(sorted(counts.items())) for name, counts in maps.items()}
     # The omitted total is the sum of its reason map rather than a separately
-    # incremented counter, so the two cannot drift apart. An event that carries
-    # no omission field (one an older recorder wrote) adds nothing to either,
-    # which keeps absence from reading as a measured zero.
+    # incremented counter, so the two cannot drift apart. An event whose
+    # omission field is absent adds to neither; it is counted apart instead, so
+    # absence stays distinguishable from a measured ``none``.
     counters["record_omitted"] = sum(ordered["by_omission_reason"].values())
     return ObserverAccounting.from_parts(counters, ordered)
 
 
 def _count_omission(
-    by_reason: collections.Counter[str], fields: cabc.Mapping[str, str]
+    by_reason: collections.Counter[str],
+    counters: dict[str, int],
+    fields: cabc.Mapping[str, str],
 ) -> None:
-    """Count one published outcome that produced no store row.
+    """Count one published outcome by whether it produced a store row.
 
-    An outcome stored normally reports ``none`` and adds nothing, so the map
-    sums to ``record_omitted`` instead of counting every stored outcome under a
-    reason of its own. A malformed or absent value is treated the same way: the
-    event says nothing about an omission, so there is none to count.
+    An outcome stored normally reports ``none`` and adds nothing to the map, so
+    the map sums to ``record_omitted`` instead of counting every stored outcome
+    under a reason of its own. An event that carries no omission field at all
+    was written by an older recorder: it says nothing about whether the outcome
+    was stored, so it is counted as unrecorded rather than read as a measured
+    ``none``. A malformed value cannot occur at the validated journal boundary,
+    and is treated as absent for the same reason.
     """
     reason = fields.get("record_omitted")
-    if reason not in {None, "", "none"}:
-        by_reason[typ.cast("str", reason)] += 1
+    if not isinstance(reason, str) or not reason:
+        counters["record_omitted_unrecorded"] += 1
+    elif reason != "none":
+        by_reason[reason] += 1
 
 
 def _count_store_result(

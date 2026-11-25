@@ -227,11 +227,12 @@ one place. An `Event` whose `label_observed_verified` is false has a recorded
 observation time that is only a lower bound, so `events.scored_label` returns
 None for it and neither training, scoring nor the phase schedule can use it.
 `history.released_labels` therefore withholds it, and
-`history.unverified_label_count` measures it for the report. A store-derived
-event is always unverified, because a version 2 store row cannot prove which
-code dated it; the benchmark's own synthetic streams state their times are
-verified. Changing this rule means changing `scored_label`, so the three
-consumers cannot drift apart.
+`history.unverified_label_count` measures it for the report. The flag is copied
+from the store row's own `label_time_provenance`, so a version 3 row the fixed
+recorder wrote is verified and is scored, while a version 1 or 2 row decodes
+that field as `None`, is emitted unverified, and is withheld. The benchmark's
+own synthetic streams state their times are verified. Changing this rule means
+changing `scored_label`, so the three consumers cannot drift apart.
 
 `observer_accounting` folds the recorder's journal events into the observer
 denominators. Its append total counts only `operation == "append"` results: a
@@ -239,9 +240,12 @@ compaction reports the rows it retained and a seal the rows it released, so
 summing them as appends would count one row several times. Those operations
 stay visible in `by_store_operation`. `record_omitted` and `by_omission_reason`
 count the published outcomes that produced no store row, by the closed
-`RecordOmission` reason the recorder copies onto each event. The two rules are
-what make the report's denominators reconcile: published outcomes = appended
-rows + omitted ones by cause.
+`RecordOmission` reason the recorder copies onto each event. An event that
+carries no omission field, as an older recorder wrote it, is counted in
+`record_omitted_unrecorded` instead, so absence is never presented as a measured
+`none`. The account the report states is therefore: published outcomes are
+covered by appended outcome rows, pre-store omissions, discarded writes and
+outstanding queued writes, and a reading's window summary is not an outcome row.
 
 None of those modules imports a file-system, JSON, process or command module,
 and none imports an adapter. `journal_codec`, `diagnostics_codec` and
@@ -417,7 +421,9 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                                                                                 |
 | `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                                                                          |
 | `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                                                                                  |
-| `outcome_record_encode`                                                            | Deterministic JSON Lines encoding for cache-outcome store values                                                                                            |
+| `outcome_record_key`                                                               | Path-free cache key and toolchain-identity validation shared by the encoder and decoder                                                                     |
+| `outcome_record_lines`                                                             | Bounded JSON Lines scanning that turns a document or one raw row into parsed values                                                                         |
+| `outcome_record_encode`                                                            | Deterministic JSON Lines encoding for cache-outcome store values, in the shape its document version holds                                                   |
 | `outcome_record_codec`                                                             | Strict JSON Lines decoding for cache-outcome store values                                                                                                   |
 | `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                                                                                   |
 | `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
@@ -483,7 +489,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                                                                                |
 | `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage                                                                       |
 | `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                                                                                     |
-| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and terminal transition outputs                                                                                |
+| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and window summaries from one launch                                                                           |
+| `outcome_recorder_effects`                                                         | Joining reducer and port effects, closing a terminal ticket, and the two typestate projections                                                              |
 | `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                                                                                        |
 | `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                                                                                |
 | `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                                                                                     |
@@ -945,10 +952,16 @@ rather than trusting a separate count field. `tracing_export` reserves
 `statistics_read` and the three store operations with the fixed
 `statistics_query`, `store_io` and `salt` failure categories.
 
-The outcome store is version 2. `OutcomeRecord` carries `admitted_at`,
-`outcome_reason` and `outcome_attribution` beside the version 1 fields; a
-version 1 row decodes the three as `None`, and a present but malformed
-admission time is corruption rather than absence. `Groups.place` reads the UTC
+The outcome store is version 3. `OutcomeRecord` carries `admitted_at`,
+`outcome_reason` and `outcome_attribution` beside the version 1 fields, plus
+`label_time_provenance`, which the current recorder writes as `verified` for
+every row it dates at the statistics reading. A version 1 row decodes the
+version 2 fields as `None`; a version 1 or 2 row decodes the provenance marker
+as `None`, which means unproven, never false. A present but malformed admission
+time or marker is corruption rather than absence. The accepted row shape is
+fixed by the document version, so a version 3 row that omits the marker is
+corrupt, and the encoder refuses to write a verified row into an older
+document: the older shape has nowhere to state it. `Groups.place` reads the UTC
 wall clock at the same point as the monotonic `entry.admitted`, `Launched`
 carries the value, and the recorder copies it onto every row emitted for that
 launch. `observed_at` is the time the label or refusal became known, and the
@@ -967,12 +980,19 @@ the rows whose admission is at or before their own label.
 
 `StoreHeader` carries the `version` its document was read at or will be written
 with, defaulting to `FORMAT_VERSION`, and decoding preserves the file's own
-value. A restart that loads a header older than the current format settles the
-file before the writer becomes ready: a segmented store seals the old active
-file through `outcome_store_sealing.seal`, and a compaction or seal always
-installs a current header. A failed seal clears readiness rather than appending
-above the old header, so no current-format row is ever written beneath a header
-that says the file cannot hold one.
+value. `encode_line` takes the document version a row is written into, because
+the accepted row shape differs by version: a row is encoded in the shape its
+header can hold, and a verified row cannot be written into a document that
+cannot state its provenance. Every reader that decodes rows beneath a header
+passes that header's version on - `decode_lines` for a whole document and
+`DocumentReader` for a streamed segment - so an older document's rows stay
+readable while a current row that omits its marker is refused. A restart that
+loads a header older than the current format settles the file before the writer
+becomes ready: a segmented store seals the old active file through
+`outcome_store_sealing.seal`, and a compaction or seal always installs a
+current header. A failed seal clears readiness rather than appending above the
+old header, so no current-format row is ever written beneath a header that says
+the file cannot hold one.
 
 `buildlimits.predict.accounting` folds decoded rows into the bounded
 `StoreAccounting` value stored once in the snapshot's `diagnostics` block.
@@ -1001,9 +1021,20 @@ report called it appends. `by_store_operation` keeps every operation visible
 beside that total. And `record_omitted` counts the published outcomes that
 produced no store row, because the recorder knows why it did not key a launch;
 `by_omission_reason` breaks them down by the closed `RecordOmission` reason the
-event carries, and the journal codec requires the map to sum to the total. The
-report therefore states one reconciliation: published outcomes = appended rows
-plus omitted ones by cause.
+event carries, and the journal codec requires the map to sum to the total. An
+event that carries no omission field is counted in `record_omitted_unrecorded`
+instead, and the codec requires the omitted and unrecorded totals together to
+fit inside `outcomes`. The report therefore states the identity the counts can
+prove: published outcomes are covered by appended outcome rows, pre-store
+omissions, discarded writes and outstanding queued writes, and a reading's
+window summary is not an outcome row.
+
+`record_omitted` is a token on the `cache_outcome` event, not a counter. The
+schema's `RECORD_OMISSIONS` vocabulary fixes its values, and one event
+describes one outcome, so an omission count is derived from the events rather
+than published as a field of its own. Classifying it as a counter made
+`Metrics.emit` drop the field from every event, which silently removed the one
+piece of evidence that reconciles published outcomes with stored rows.
 
 The quiet-point gate in `outcome_gate` no longer requires an empty queue; every
 reading, baseline included, still requires no cached movement or detached

@@ -10,12 +10,12 @@ from buildlimits.outcome_attribution import (
 )
 from buildlimits.outcome_ports import GenerationFailure
 from buildlimits.outcome_recorder_effects import (
+    _attribution_window,
     _emission,
     _finish_state,
     _with_reading_reason,
 )
 from buildlimits.outcome_recorder_outputs import (
-    _attribution_window,
     _EmissionMoment,
     _emit_attribution,
     _emit_unattributed,

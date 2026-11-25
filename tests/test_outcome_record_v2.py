@@ -5,12 +5,16 @@ import datetime as dt
 import json
 import typing as typ
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 import pytest
 from outcome_test_helpers import OBSERVED_AT, attributed_record, cache_key
 
 from buildlimits.outcome_record_codec import decode_lines
 from buildlimits.outcome_record_encode import encode_line
 from buildlimits.outcome_record_format import (
+    FORMAT_VERSION,
     DecodedStore,
     OutcomeRecord,
     RecordFailure,
@@ -52,14 +56,19 @@ def _v1_row(**changes: object) -> str:
 
 
 def _v2_row() -> str:
-    """Return one version-two row carrying every optional field."""
+    """Return one version-two row carrying every optional field.
+
+    A version 2 document predates the label-time provenance marker, so the row
+    is encoded at that version rather than the current one.
+    """
     return encode_line(
         dc.replace(
             attributed_record(outcome="miss"),
             outcome_reason="mixed_window",
             outcome_attribution="none",
             admitted_at=ADMITTED_AT,
-        )
+        ),
+        version=2,
     )
 
 
@@ -141,7 +150,7 @@ def _reload_with(replace: dict[str, object]) -> DecodedStore | RecordFailure:
     """
     row = json.loads(_v2_row())
     row.update(replace)
-    return _decode(_header(), json.dumps(row, separators=(",", ":")))
+    return _decode(_header(2), json.dumps(row, separators=(",", ":")))
 
 
 @pytest.mark.parametrize(
@@ -167,7 +176,7 @@ def test_a_version_two_row_missing_an_evidence_field_is_corrupt() -> None:
     row = json.loads(_v2_row())
     row.pop("outcome_reason")
 
-    loaded = _decode(_header(), json.dumps(row, separators=(",", ":")))
+    loaded = _decode(_header(2), json.dumps(row, separators=(",", ":")))
 
     assert isinstance(loaded, RecordFailure), loaded
     assert loaded.reason == "corrupt", "the row shape is validated exactly"
@@ -190,3 +199,110 @@ def test_an_explicit_null_admission_remains_unknown() -> None:
     (record,) = typ.cast("tuple[typ.Any, ...]", _records(loaded))
 
     assert record.admitted_at is None, "null decodes as unknown"
+
+
+def _current_row(**changes: object) -> str:
+    """Return one version-three row carrying the label-time marker.
+
+    Returns
+    -------
+    str
+        The encoded current-format row.
+    """
+    record = dc.replace(
+        attributed_record(outcome="hit"),
+        outcome_reason="none",
+        outcome_attribution="solo",
+        admitted_at=ADMITTED_AT,
+        label_time_provenance="verified",
+        **changes,
+    )
+    return encode_line(record)
+
+
+def _decode_current(row: str) -> DecodedStore | RecordFailure:
+    """Decode one current-format row beneath a current header.
+
+    Returns
+    -------
+    DecodedStore or RecordFailure
+        The decoded document or the refusal.
+    """
+    return _decode(_header(FORMAT_VERSION), row)
+
+
+def test_a_version_three_row_round_trips_its_label_time_provenance() -> None:
+    """The row's own marker survives encoding and decoding unchanged."""
+    header = StoreHeader(_SALT, OBSERVED_AT)
+    row = _current_row()
+
+    loaded = decode_lines("\n".join((encode_line(header), row)) + "\n")
+
+    assert isinstance(loaded, DecodedStore), loaded
+    (record,) = typ.cast("tuple[OutcomeRecord, ...]", loaded.records)
+    assert record.label_time_provenance == "verified", (
+        "the row states that its time is proven"
+    )
+
+
+def _decode_current_mutated(
+    mutate: cabc.Callable[[dict[str, object]], None],
+) -> object:
+    """Decode a current row after a caller edits its fields in place.
+
+    Each case here changes one field of the same row and asks the decoder what
+    it now makes of it. The mutation stays with the test, because what each
+    malformed row must prove is the contract they differ on.
+
+    Returns
+    -------
+    object
+        The decoded record or the refusal.
+    """
+    row = json.loads(_current_row())
+    mutate(row)
+    return _decode_current(json.dumps(row, separators=(",", ":")))
+
+
+def test_a_version_three_row_that_omits_the_marker_is_corrupt() -> None:
+    """The current shape is exact, so a dropped marker cannot pass as unproven."""
+
+    def drop_marker(row: dict[str, object]) -> None:
+        """Remove the provenance marker the current shape requires."""
+        row.pop("label_time_provenance")
+
+    loaded = _decode_current_mutated(drop_marker)
+
+    assert isinstance(loaded, RecordFailure), loaded
+    assert loaded.reason == "corrupt", "the current row shape is validated exactly"
+
+
+def test_a_marker_outside_the_closed_vocabulary_is_corrupt() -> None:
+    """Only ``verified`` is a provenance a row may state."""
+    loaded = _decode_current_mutated(
+        lambda row: row.__setitem__("label_time_provenance", "probably")
+    )
+
+    assert isinstance(loaded, RecordFailure), loaded
+    assert loaded.reason == "corrupt", "an unknown provenance is refused"
+
+
+def test_a_version_two_row_decodes_its_missing_marker_as_unproven() -> None:
+    """An older row proves nothing, and the absence is not read as a value."""
+    loaded = _decode(_header(2), _v2_row())
+    (record,) = typ.cast("tuple[OutcomeRecord, ...]", _records(loaded))
+
+    assert record.label_time_provenance is None, (
+        "an older row states no label-time provenance"
+    )
+
+
+def test_the_encoder_refuses_provenance_an_older_document_cannot_state() -> None:
+    """Writing proof into a document that cannot record it is an error."""
+    record = dc.replace(
+        attributed_record(outcome="hit"),
+        label_time_provenance="verified",
+    )
+
+    with pytest.raises(ValueError, match="provenance"):
+        encode_line(record, version=2)

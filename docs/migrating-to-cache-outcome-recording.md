@@ -29,16 +29,18 @@ incompatible configuration fails before any compiler is admitted. The sccache
 version is not checked at startup: an unsupported version is detected on a
 later statistics reading, which disables recording while admission continues.
 
-The store format is version 2 and the snapshot format is version 3. An outcome
-row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`
-and `outcome_attribution`; a snapshot adds the bounded label-loss diagnostics
-and, per event, the `label_observed_verified` marker that says whether its
-label time is proven. Version 1 stores and snapshots remain readable, and their
-rows report the new evidence as `unrecorded` or absent, so they contribute no
-labels or admission times to the prediction benchmark. Upgrade the readers
-before the supervisor. A release that predates version 2 treats the store as a
-version mismatch and moves it aside, so archive or migrate the history before a
-downgrade; the new code never rewrites an old document merely to read it.
+The store format is version 3 and the snapshot format is version 3. An outcome
+row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`,
+`outcome_attribution` and the `label_time_provenance` marker that says whether
+its label time is proven; a snapshot adds the bounded label-loss diagnostics
+and, per event, the `label_observed_verified` marker that carries the same
+statement. Version 1 and 2 stores and snapshots remain readable, and their rows
+report the newer evidence as `unrecorded` or absent, so a history written
+before the markers existed contributes no proven labels or admission times to
+the prediction benchmark. Upgrade the readers before the supervisor. A release
+that predates version 2 treats the store as a version mismatch and moves it
+aside, so archive or migrate the history before a downgrade; the new code never
+rewrites an old document merely to read it.
 
 ### Upgrading an active file at restart
 
@@ -136,22 +138,25 @@ the dataset command cannot distinguish a pre-fix row from a fixed one, so it
 marks every version 2 row's label time unverified and the benchmark withholds
 it. The reports count those labels as `unverified_label_time`, and a history
 made only of them reports `insufficient data` rather than scoring an unsound
-release time. A history that is to be scored is best begun after a store format
-records each row's own label-time provenance; no historical row is repaired or
-re-stamped.
+release time. Version 3 is the first format that states a row's own label-time
+provenance, so a history recorded by this release is scored; no historical row
+is repaired or re-stamped.
 
 ### Store and snapshot versions
 
 | Format   | Version | What changed                                                                   |
 | -------- | ------- | ------------------------------------------------------------------------------ |
 | Store    | 2       | `admitted_at`, `outcome_reason` and `outcome_attribution` on an outcome row    |
+| Store    | 3       | `label_time_provenance`, written `verified` by the recorder that dates a row   |
 | Snapshot | 3       | `label_observed_verified` on every event, so a row states its label-time proof |
 
 A version 1 or 2 snapshot still loads, with every event's label time treated as
 unverified. A version 3 snapshot event that omits the marker is refused, and so
-is a marker that is not a boolean. A future version 3 store row that carries
-its own label-time provenance is the first source the dataset command can emit
-as verified; the store format itself is unchanged by this guide.
+is a marker that is not a boolean. A version 3 store row states its provenance
+exactly: one that omits the marker is corrupt, and a version 1 or 2 row decodes
+it as absent, which is unproven rather than false. The encoder refuses to write
+a verified row into an older document, because that document has nowhere to
+state it.
 
 ## Reading the status line
 

@@ -2637,6 +2637,14 @@ reason = "Matching grouped import blocks: each names the package modules its own
 members = ["tests/test_sccache_real_binary.py", "tests/sccache_outcome_observer_support.py"]
 reason = "Matching controlled-run scaffolding: the two opt-in host checks each build their own private toolchain and sequence, and a shared helper would couple two independent acceptance paths."
 
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_record_codec.py", "buildlimits/outcome_archive.py", "buildlimits/predict/dataset_cli.py", "tests/test_outcome_archive_settlement.py", "tests/predict_test_helpers.py", "tests/test_outcome_retention_compaction.py"]
+reason = "Matching grouped import blocks: each module names the package modules its own call sites read, and the coincidence is the package's flat module layout rather than shared logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_recorder_effects.py", "buildlimits/outcome_recorder_reading.py"]
+reason = "Matching grouped import blocks in two recorder modules that share the same event vocabulary because they cooperate on one reading; a re-export would hide which names each actually uses."
+
 [[tool.duplication_gate.unit]]
 unit = "tests/test_predict_dataset_cli_journal.py"
 reason = "The four report cases share only the one-record journal window they count; each asserts a different contract (a failed reading, a gate-only window, a truncated window, a complete window), so the shared call shape is the fixture, not the specification."

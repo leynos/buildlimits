@@ -19,6 +19,7 @@ from buildlimits.utc_text import utc_text
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+    from buildlimits.predict.accounting import HistoryLoss, StoreAccounting
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.journal_provenance import (
         JournalProvenance,
@@ -46,6 +47,7 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
         observer.requests,
         observer.outcomes,
         observer.record_omitted,
+        observer.record_omitted_unrecorded,
         observer.store_records,
         observer.store_discarded,
         observer.readings,
@@ -110,12 +112,24 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
 
 
 def _report_diagnostics(snapshot: Snapshot) -> None:
-    """Print the bounded label-loss counts behind the snapshot's labels."""
-    diagnostics = snapshot.diagnostics
-    if diagnostics is None:
+    """Print the retained-store counts, then the journal's own evidence.
+
+    The journal block is reported whichever way the store block goes: it is
+    evidence about the recorder, not about the retained rows, so a snapshot
+    that predates the store accounting still carries counts worth reading.
+    """
+    if snapshot.diagnostics is None:
         print("label loss: no diagnostics recorded in this snapshot")
-        return
-    store = diagnostics.store
+    else:
+        _report_store(snapshot.diagnostics.store)
+    if snapshot.journal is not None:
+        _report_journal(snapshot.journal)
+    if snapshot.diagnostics is not None:
+        _report_history(snapshot.diagnostics.history)
+
+
+def _report_store(store: StoreAccounting) -> None:
+    """Print the retained rows by their closed vocabularies."""
     print(
         f"store rows: total={store.records_total} "
         f"outcomes={store.outcome_records} summaries={store.summary_records} "
@@ -133,9 +147,10 @@ def _report_diagnostics(snapshot: Snapshot) -> None:
     ):
         print(f"by {label}: {as_counts(counts)}")
     print(generation_unavailable_line())
-    if snapshot.journal is not None:
-        _report_journal(snapshot.journal)
-    history = diagnostics.history
+
+
+def _report_history(history: HistoryLoss) -> None:
+    """Print the closed-history inventory, or why it was not measured."""
     if history.active_only:
         print("closed history: not considered (the active file alone was read)")
         return
@@ -170,6 +185,7 @@ def _report_journal(note: JournalProvenance) -> None:
     print(
         f"observer: requests={observer.requests} outcomes={observer.outcomes} "
         f"record omitted={observer.record_omitted} "
+        f"omission not recorded={observer.record_omitted_unrecorded} "
         f"store appends={observer.store_records} "
         f"dropped={observer.store_discarded} readings={observer.readings} "
         f"skipped={observer.readings_skipped} failed={observer.readings_failed}"

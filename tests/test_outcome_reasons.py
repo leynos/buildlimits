@@ -11,7 +11,7 @@ _EVENT_BY_FIELD = {
     "cache_result": "cache_outcome",
     "outcome_attribution": "cache_outcome",
     "outcome_reason": "cache_outcome",
-    "record_omission": "cache_outcome",
+    "record_omitted": "cache_outcome",
     "store_reason": "outcome_store",
     "evaluation_reason": "outcome_reading",
     "store_operation": "outcome_store",

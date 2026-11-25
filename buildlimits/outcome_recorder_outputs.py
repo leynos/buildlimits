@@ -2,26 +2,22 @@
 
 The effect combinations one transition needs — joining a reducer step to its
 port response, attaching a reading reason, closing a terminal ticket — live in
-:mod:`buildlimits.outcome_recorder_effects`. This module owns the mapping from
-a retained launch to a journal event, a store row and a window summary.
+:mod:`buildlimits.outcome_recorder_effects`, which also owns the two typestate
+projections a transition needs. This module owns the mapping from a retained
+launch to a journal event, a store row and a window summary.
 """
 
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.outcome_attribution import WindowEntry
 from buildlimits.outcome_record_format import (
     OutcomeRecord,
     StoreRecord,
     WindowSummary,
 )
 from buildlimits.outcome_recorder_types import (
-    Disabled,
-    Idle,
     OutcomeEvent,
     Outputs,
-    Querying,
-    RecorderState,
 )
 
 if typ.TYPE_CHECKING:
@@ -29,9 +25,9 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_attribution import Attribution
+    from buildlimits.outcome_record_format import LabelTimeProvenance
     from buildlimits.outcome_recorder_types import (
         AttributionKind,
-        Progress,
         _Launch,
     )
     from buildlimits.outcome_stats import StatsReading
@@ -40,7 +36,6 @@ if typ.TYPE_CHECKING:
         OutcomeReason,
         RecordOmission,
     )
-    from buildlimits.outcome_window import OutcomeWindow
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -114,12 +109,24 @@ def _pair_events_and_records(
     """
     events: list[OutcomeEvent] = []
     records: list[StoreRecord] = []
+    # A row is proven only when the emission's own moment dated it. The
+    # completion fallback exists for a purely synthetic event that carries no
+    # wall clock, and a completion time is a lower bound on when the label
+    # became known, so that row must not claim provenance the shell never
+    # supplied.
+    provenance: LabelTimeProvenance | None = (
+        "verified" if observed_at is not None else None
+    )
     for launch in launches:
         details = details_for(launch)
         row_time = _row_time(launch, observed_at)
         omission = record_omission(launch, row_time)
         events.append(_event_for(launch, details, omission=omission))
-        record = None if omission != "none" else _record_for(launch, details, row_time)
+        record = (
+            None
+            if omission != "none"
+            else _record_for(launch, details, row_time, provenance=provenance)
+        )
         if record is not None:
             records.append(record)
     return Outputs(events=tuple(events), records=tuple(records))
@@ -273,8 +280,15 @@ def _record_for(
     launch: _Launch,
     details: _EventDetails,
     observed_at: dt.datetime | None,
+    *,
+    provenance: LabelTimeProvenance | None,
 ) -> OutcomeRecord | None:
     """Build a keyed store record when this launch has a key and timestamp.
+
+    ``provenance`` states whether the time in ``observed_at`` is proven to be
+    when the label became known. The recorder passes ``verified`` when the
+    emission's own moment dated the row, and ``None`` when the synthetic
+    completion fallback supplied it.
 
     Returns
     -------
@@ -304,6 +318,7 @@ def _record_for(
         outcome_reason=details.reason,
         outcome_attribution=details.attribution,
         admitted_at=launch.admitted_at,
+        label_time_provenance=provenance,
     )
 
 
@@ -346,47 +361,3 @@ def _window_summary(
             item.payload.parser_class == "cacheable" for item in launches
         ),
     )
-
-
-def _attribution_window(window: OutcomeWindow[_Launch]) -> tuple[WindowEntry, ...]:
-    """Project launch state into the attribution module's narrow input.
-
-    Returns
-    -------
-    tuple[WindowEntry, ...]
-        Group identifiers paired with their cleanliness observations.
-
-    Examples
-    --------
-    An empty recorder window projects to ``()``.
-    """
-    return tuple(
-        WindowEntry(entry.group_id, entry.is_clean) for entry in window.entries
-    )
-
-
-def _with_progress(
-    state: RecorderState, progress: Progress, *, straddled: bool = False
-) -> RecorderState:
-    """Replace shared progress without changing the recorder typestate.
-
-    Returns
-    -------
-    RecorderState
-        The same enabled or disabled variant with the supplied progress.
-
-    Examples
-    --------
-    Replacing progress on ``Idle()`` returns another idle state.
-    """
-    match state:
-        case Querying():
-            return dc.replace(
-                state,
-                progress=progress,
-                has_straddled_launch=state.has_straddled_launch or straddled,
-            )
-        case Disabled():
-            return dc.replace(state, progress=progress)
-        case Idle():
-            return Idle(progress)

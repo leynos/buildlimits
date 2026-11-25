@@ -65,6 +65,7 @@ def _diagnostics_document() -> dict[str, object]:
             "requests": 2,
             "outcomes": 2,
             "record_omitted": 0,
+            "record_omitted_unrecorded": 0,
             "store_records": 2,
             "store_discarded": 0,
             "readings": 1,
@@ -200,7 +201,13 @@ def _observer_block(document: dict[str, object]) -> dict[str, object]:
 
 
 def test_the_observer_states_omitted_outcomes_and_their_reasons() -> None:
-    """An outcome published without a row is counted by cause, not lost."""
+    """An outcome published without a row is counted by cause, not lost.
+
+    The reconciliation the bullet states is the one the counts can prove: an
+    appended row, a pre-store omission, a discarded write and an outstanding
+    queued write. An appended row and its window summary are not the same
+    thing, so the summary is never counted as an outcome row.
+    """
     document = _diagnostics_document()
     observer = _observer_block(document)
     observer["record_omitted"] = 1
@@ -211,11 +218,35 @@ def test_the_observer_states_omitted_outcomes_and_their_reasons() -> None:
         "- Observer outcomes without a store row:",
     )
 
-    assert line == (
-        "- Observer outcomes without a store row: 1, by reason "
-        "key_unavailable=1; a published outcome reconciles as an appended row "
-        "plus an omitted one"
-    ), "the omitted total, its reason and the reconciliation rule are stated"
+    assert line.startswith(
+        "- Observer outcomes without a store row: 1, by reason key_unavailable=1."
+    ), "the omitted total and its reason are stated"
+    assert line.endswith(
+        "Published outcomes are accounted for by appended outcome rows, "
+        "pre-store omissions, discarded writes and outstanding queued writes; "
+        "a reading's window summary is not an outcome row"
+    ), "the identity the counts prove is stated, and a summary is not an outcome"
+
+
+def test_the_observer_marks_omission_evidence_an_older_recorder_omitted() -> None:
+    """An event without an omission field is unknown, not a measured ``none``.
+
+    A window of pre-marker events would otherwise print a zero omitted total
+    that looks exactly like a window whose outcomes were all stored, which is
+    the one reading the evidence cannot support.
+    """
+    document = _diagnostics_document()
+    observer = _observer_block(document)
+    observer["record_omitted_unrecorded"] = 2
+
+    line = _line_starting(
+        render_markdown(document),
+        "- Observer outcomes without a store row:",
+    )
+
+    assert "2 published outcomes carried no omission field" in line, (
+        "the unrecorded count is named as unknown rather than zero"
+    )
 
 
 def test_the_observer_names_the_operations_that_are_not_appends() -> None:

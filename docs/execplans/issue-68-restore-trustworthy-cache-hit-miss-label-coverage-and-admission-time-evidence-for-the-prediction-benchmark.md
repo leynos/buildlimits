@@ -13,9 +13,11 @@ The benchmark algorithms in
 Implemented on the issue branch, including the review follow-ups recorded in
 [Label timing and the store-format upgrade](#label-timing-and-the-store-format-upgrade),
 in
-[Review follow-up: inventory, quarantine and report honesty](#review-follow-up-inventory-quarantine-and-report-honesty)
-and in
+[Review follow-up: inventory, quarantine and report honesty](#review-follow-up-inventory-quarantine-and-report-honesty),
+in
 [Review follow-up: label-time provenance, omitted outcomes and append totals](#review-follow-up-label-time-provenance-omitted-outcomes-and-append-totals)
+and in
+[Review follow-up: the store states its own provenance](#review-follow-up-the-store-states-its-own-provenance)
 below. The live host service has not been upgraded: the before/after report
 below distinguishes the old recorder's retained history from the new code's
 controlled evidence, and says plainly where an operator action is still
@@ -87,10 +89,11 @@ only information available before admission.
 
 ## What changed
 
-- The store format is version 2. An outcome row carries `admitted_at` (UTC,
-  captured where admission is decided), `outcome_reason` and
-  `outcome_attribution`. Version 1 rows stay readable and decode those fields as
-  `None`; they are never scored.
+- The store format is version 3. An outcome row carries `admitted_at` (UTC,
+  captured where admission is decided), `outcome_reason`, `outcome_attribution`
+  and `label_time_provenance`. Version 1 rows stay readable and decode those
+  fields as `None`; a version 2 row decodes the provenance marker as `None`.
+  Both are emitted unverified and never scored.
 - The snapshot carries bounded diagnostics: retained rows by result, reason,
   attribution, origin, parser class, child sighting and sccache version;
   admission-time coverage; the eligible cacheable denominator; and closed
@@ -207,10 +210,12 @@ carrying a usable admission time, and the mixed, timeout and restart reasons
 counted separately.
 
 Unit and property tests cover the closed reason breakdowns, the reconciliation
-of every denominator, version 1 compatibility, the admission-time round trip,
-and the gate changes. The benchmark tests show that the same store shape
-without admission times predicts nothing, while a store whose rows carry them
-meets the gate and is scored.
+of every denominator, version 1 and 2 compatibility, the admission-time round
+trip, and the gate changes. A verified synthetic snapshot can pass both gates,
+but admission coverage alone does not make a store history scorable: the rows
+must also prove their label-time provenance. A version 1 or 2 store row carries
+no admission time and no proof, so it predicts nothing and its labels are
+withheld; only a version 3 row, written by the fixed recorder, carries both.
 
 ## After: the same host data, extracted by the new code
 
@@ -376,8 +381,9 @@ The snapshot format is version 3, and each event carries an explicit
 snapshot-wide `label_time_provenance` name because the fact is a property of
 one row: a snapshot that later holds rows of mixed provenance can state both,
 which a single document-wide marker cannot. The dataset command emits every
-version 2 store row as unverified; a future version 3 store row that carries
-its own marker is the first source that can emit a verified event.
+version 2 store row as unverified; the version 3 store row that carries its own
+marker, added by the later review round below, is the first source that can
+emit a verified event.
 
 `events.scored_label` returns None for an unverified hit or miss, so training,
 scoring and the phase schedule all withhold it through one rule. The replay
@@ -399,10 +405,12 @@ writer's discard breakdown never saw those outcomes, so the difference between
 published events and stored rows stayed a hypothesis. The recorder now computes
 one closed `RecordOmission` reason per launch and copies it onto the event, and
 `ObserverAccounting.record_omitted` sums them by reason. The events and the
-rows are built from the same launch in one transition, so the reconciliation is
-a property of the code: published outcomes = appended rows + omitted ones by
-cause. Both reports print the total and its breakdown, and the journal codec
-requires the map to sum to it.
+rows are built from the same launch in one transition, so an omitted outcome
+and its missing row are one decision, not a difference inferred from two
+totals. Both reports print the total and its breakdown, and the journal codec
+requires the map to sum to it. The later review round below corrected the
+sentence those reports state and made an absent reason count as unrecorded
+rather than as a measured zero.
 
 ### The append total counts appends only
 
@@ -429,6 +437,72 @@ diagnostics decoder's accept-and-refuse contract over generated counts, and the
 recorder's rule that every completion sharing one reading moment records that
 moment.
 
+## Review follow-up: the store states its own provenance
+
+A second review round found that two of the previous round's fixes could not
+take effect, and that several statements overstated what the other changes
+bought. ADR 011 records the store decision as D9.
+
+### The omission reason reaches the journal at all
+
+`outcome_telemetry` published `record_omitted` as a field of every
+`cache_outcome` event, but the metrics schema listed it among the counters.
+`Metrics.emit` refuses a token under a counter's kind, so it dropped the field
+from every event and the observer could never reconcile published outcomes with
+appended rows. The field is now a schema token with the closed `RecordOmission`
+vocabulary. One event describes one outcome, so an omission count is derived
+from the events rather than published beside them, and no counter field is
+needed. A test emits an event through the real schema and asserts the reason
+survives, and a second asserts an unknown reason is refused while the loss is
+counted.
+
+### A current row can be labelled, dated and scored
+
+The previous round made every store row unverified, which was correct for
+history already written but left no path by which a correctly recorded row
+could ever be scored. The store is now version 3 and an outcome row carries
+`label_time_provenance`, written `verified` by the recorder that dates a row at
+its statistics reading. Version 1 and 2 rows decode it as `None`, so their
+treatment is unchanged and nothing is retroactively promoted. The accepted row
+shape is fixed by the document's own version, so a version 3 row that omits the
+marker is corrupt, and `encode_line` refuses to write a verified row into an
+older document. `tests/test_predict_label_provenance.py` drives one delayed
+reading through the real encoder and codec at both versions: the version 2
+history withholds the label and the version 3 history releases it to a later
+admission.
+
+### Reports no longer skip or overstate their evidence
+
+- The plain dataset report returned early when a snapshot carried no
+  store-diagnostics block, which also suppressed the journal's observer counts.
+  The journal block is now reported whichever way the store block goes, and a
+  test covers each branch.
+- An older `cache_outcome` event without an omission field contributed zero,
+  so a window of them read exactly like a window whose outcomes were all stored.
+  `ObserverAccounting.record_omitted_unrecorded` counts them, both reports
+  name the count, and the journal codec requires the omitted and unrecorded
+  totals together to fit inside the outcomes the window held.
+- The reconciliation sentence claimed a published outcome reconciles as one
+  appended row plus one omitted one. That is not the identity the counts prove:
+  a failed append lands in `store_discarded` with a reason, a successful solo
+  reading appends an outcome row *and* a window summary, and a queued write may
+  be outstanding. Code, ADR and test now state the correct identity and that a
+  summary is not an outcome row.
+- The users' guide and this plan implied that recording new rows, or admission
+  times, restores benchmark eligibility. A verified synthetic snapshot can pass
+  both gates, but store-derived history also needs a source that proves its
+  label-time provenance, and admission coverage alone is not enough.
+
+### Further compatibility and schema coverage
+
+`tests/test_predict_snapshot_diagnostics.py` parameterizes the diagnostics
+round trip over versions 2 and 3, so the legacy shape is genuinely exercised
+rather than a version 3 document with a downgraded header. The store-shape,
+metrics-report and archive-plan fixtures were updated for the wider row:
+`outcome_archive_helpers.segment_bytes_for` derives a segment bound from the
+row the fixture writes, so a field added to the row can no longer repartition a
+scenario about the plan's shape.
+
 ## Limitations
 
 - sccache 0.14 exposes no supported per-request hit/miss signal. Its
@@ -438,19 +512,17 @@ moment.
   be added behind the observation port in
   [ADR 007](../adrs/adr-0007-cache-outcome-observation-port.md).
 - The live supervisor still runs the previous recorder. New rows with
-  admission times and reason evidence require an operator upgrade and restart;
-  this change does not modify the service.
+  admission times, reason evidence and label-time provenance require an
+  operator upgrade and restart; this change does not modify the service.
 - Version 1 history remains unscorable by design. No admission time is derived
   from `observed_at - runtime_seconds`, and no missing hit is read as a miss.
 - Version 2 rows written by the earlier build of this branch carry a
   launch-derived `observed_at` that may precede the label's true knowledge
   time. They remain readable, but the dataset command emits their label times
-  as unverified and the replay withholds them, because the store format version
-  cannot identify which code dated a row. A store-derived history therefore
-  reports `insufficient data` with the withheld count until a store format
-  records each row's own label-time provenance; the snapshot's
-  `label_observed_verified` marker is the one place that decision changes. No
-  historical row is repaired.
+  as unverified and the replay withholds them, because the format version
+  cannot identify which code dated a row. No historical row is repaired or
+  re-stamped. Version 3 rows state their provenance, so a history recorded by
+  the fixed recorder is scored, but no older row can be promoted into one.
 - A published outcome that produced no store row is counted by cause, not
   recovered: its row is gone by design, because a launch with no key cannot be
   correlated with its admission. The count makes the loss visible rather than
@@ -460,9 +532,10 @@ moment.
   budget are updated accordingly.
 - Label loss by sccache generation is reported as unavailable. A store row's
   key carries the server version, not the generation the recorder observed, and
-  no v3 row field was added: a field only future rows would carry could not be
+  no field for it was added: a field only future rows would carry could not be
   reconciled with the retained history, so the dimension is named rather than
-  guessed.
+  guessed. The label-time provenance field was added for the different reason
+  that a row can state a fact about itself without any cross-row reconciliation.
 
 ## Verification
 
@@ -490,8 +563,9 @@ packaged `minimum_labelled_events=2000`. A snapshot of 2,000 verified labels
 with no usable admission time reports `insufficient admission times`, and the
 same labels with usable admission times are scored. A history with exactly five
 usable admission times reports `insufficient held-out evidence`, so a handful
-of paired rows is not treated as a verdict. A store-derived history is withheld
-as `insufficient data` whatever its admission coverage, because a version 2 row
-proves no label time; the run names the withheld count. The label gate counted
-the labelled rows correctly in every run, so a status that differs is the other
-evidence's doing.
+of paired rows is not treated as a verdict. A version 2 store-derived history
+is withheld as `insufficient data` whatever its admission coverage, because
+that row proves no label time; the run names the withheld count. Version 3 rows
+do prove theirs, so the same gates admit a history the fixed recorder wrote.
+Both cases keep the label gate counting labelled rows correctly, so a status
+that differs is the other evidence's doing.

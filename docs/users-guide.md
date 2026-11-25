@@ -573,11 +573,11 @@ cannot be decoded, because it cannot show that the store is within the cap.
 An archive preserves the source segment's record schema and the salt
 identifier, so decompressing one yields the segment's JSON Lines content byte
 for byte apart from a repaired torn tail. A segment written by the current
-release therefore archives its version 2 fields unchanged, while a segment that
-still holds version 1 rows archives those rows unchanged; readers must accept
-both, and a version 1 reader cannot read every archive. Archived records keep
-the same privacy boundary as the active store: they contain the same redacted
-fields and no raw arguments, paths or compiler output.
+release therefore archives its version 3 fields unchanged, while a segment that
+still holds version 1 or 2 rows archives those rows unchanged; readers must
+accept all three, and a reader of an earlier version cannot read every archive.
+Archived records keep the same privacy boundary as the active store: they
+contain the same redacted fields and no raw arguments, paths or compiler output.
 
 `build-limits-cache-replay` and `build-limits-predict-dataset` can read the
 whole retained history. `--history` reads archived, sealed and active history
@@ -771,32 +771,38 @@ and reading skips and failures. The benchmark's `results.md` carries the same
 sufficiency block. The counts keep their denominators separate—all admitted
 requests, cache-eligible compilations, retained outcome rows and scored
 outcomes—so a small labelled share is visible rather than hidden behind one
-ratio. A published outcome reconciles as an appended row plus an omitted one,
-and the observer states both figures.
+ratio. Published outcomes are accounted for by appended outcome rows, pre-store
+omissions, discarded writes and outstanding queued writes; a reading's window
+summary is not an outcome row. The observer also says when the omission
+evidence is incomplete: an event written before the reason existed counts as
+unrecorded rather than as a measured `none`.
 
 An outcome row records the UTC wall-clock moment the supervisor admitted the
 compilation. That time is read where admission is decided, not derived from the
 later label time; a row without one, including every row written before the
-version 2 store, remains unscorable. The store format is version 2 and the
-snapshot format is version 3. Version 1 documents still load, with the new
-evidence reported as `unrecorded` or absent rather than guessed, and a version
-1 or 2 snapshot loads with its events' label times treated as unverified. A
-version 3 snapshot event states `label_observed_verified`; one that omits it,
-or sets it to a non-boolean, is refused. A history whose rows predate the
-admission field therefore reports `insufficient admission times` until new rows
-are recorded.
+version 2 store, remains unscorable. The store format is version 3 and the
+snapshot format is version 3. Version 1 and 2 documents still load, with the
+newer evidence reported as `unrecorded` or absent rather than guessed, and a
+version 1 or 2 snapshot loads with its events' label times treated as
+unverified. A version 3 snapshot event states `label_observed_verified`; one
+that omits it, or sets it to a non-boolean, is refused. A history whose rows
+predate the admission field reports `insufficient admission times`. Recording
+new rows is not by itself enough either: a row is scored only when it also
+proves when its label became known, which the version 3 store states and no
+earlier version does. Admission coverage alone cannot make a history scorable.
 
 A hit or miss label is dated when the statistics reading that produced it
 returned, not when the compilation finished. sccache exposes no label before
 that reading, so the recorded time is the earliest moment the label could have
-been known, and the benchmark never releases it earlier than that. Rows written
-by an earlier build of the version 2 store may carry a completion-derived time
-instead. A version 2 store row cannot prove which code dated it, so the dataset
-command marks every one of its label times unverified. The benchmark withholds
-an unverified label rather than scoring it, and reports the count as
-`unverified_label_time` in both the command's output and `results.md`. A
-snapshot's own event carries the same marker, so a history with verified times
-is scored exactly as before.
+been known, and the benchmark never releases it earlier than that. The version
+3 store row states `label_time_provenance: "verified"`, because the recorder
+that wrote it is the one that dates every row at its reading. A version 1 or 2
+row cannot prove which code dated it, so the dataset command marks every one of
+its label times unverified. The benchmark withholds an unverified label rather
+than scoring it, and reports the count as `unverified_label_time` in both the
+command's output and `results.md`. A snapshot's own event carries the same
+marker, so a store history recorded by the current release is scored, and an
+older one is withheld until new rows replace it.
 
 When a restart finds an active store whose header names an older format, it
 closes or rewrites that file before recording resumes, so no new-format row is
