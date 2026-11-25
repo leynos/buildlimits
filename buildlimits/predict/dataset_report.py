@@ -22,7 +22,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.predict.accounting import HistoryLoss, StoreAccounting
-    from buildlimits.predict.dataset import Snapshot
+    from buildlimits.predict.dataset import Snapshot, SnapshotStats
     from buildlimits.predict.journal_provenance import (
         JournalProvenance,
         ObserverAccounting,
@@ -76,14 +76,31 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
     """Print what the snapshot holds, including its gaps and label loss."""
     stats = snapshot.stats()
     print(f"wrote {output}")
+    _print_history(stats, gaps=len(snapshot.gaps))
+    _print_window(stats)
+    _print_evidence(stats)
+    _report_diagnostics(snapshot)
+    _warn_about_missing_evidence(stats)
+
+
+def _print_history(stats: SnapshotStats, *, gaps: int) -> None:
+    """Print the event, label and gap totals."""
     print(
         f"events={stats.events} labelled={stats.labelled} "
-        f"identities={stats.identities} gaps={len(snapshot.gaps)}"
+        f"identities={stats.identities} gaps={gaps}"
     )
+
+
+def _print_window(stats: SnapshotStats) -> None:
+    """Print the span the history covers, or say it covers none."""
     if stats.span_start is None or stats.span_end is None:
         print("window: no events recorded")
-    else:
-        print(f"window {utc_text(stats.span_start)} to {utc_text(stats.span_end)}")
+        return
+    print(f"window {utc_text(stats.span_start)} to {utc_text(stats.span_end)}")
+
+
+def _print_evidence(stats: SnapshotStats) -> None:
+    """Print the decision, availability and scored coverage this run measured."""
     print(
         f"admission times: recorded={stats.admission_recorded} "
         f"usable={stats.admission_usable} missing={stats.admission_missing} "
@@ -96,7 +113,15 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
         f"duplicate attempts={stats.duplicates} "
         f"conflicting attempts={stats.conflicts}"
     )
-    _report_diagnostics(snapshot)
+
+
+def _warn_about_missing_evidence(stats: SnapshotStats) -> None:
+    """Name on stderr which gate a thin history will fail, and why.
+
+    Each sentence states the consequence rather than the metric, because this
+    is the operator's only warning before the benchmark reports an
+    insufficient-evidence status instead of a verdict.
+    """
     if stats.labelled == 0:
         print(
             "no attributed hit or miss was recorded, so the benchmark will "

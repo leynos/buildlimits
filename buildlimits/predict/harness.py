@@ -20,41 +20,21 @@ from buildlimits.predict.events import (
 from buildlimits.predict.history import (
     admission_schedule,
     features,
-    label_batches,
     prediction_moments,
     released_labels,
     unverified_label_count,
 )
+from buildlimits.predict.phases import Split, phases, split
 from buildlimits.predict.predictors import single_predictors, update_all
 from buildlimits.predict.timing import TimingAudit, audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    import datetime as dt
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Event
     from buildlimits.predict.metrics import Phase
     from buildlimits.predict.predictors import Predictor
-
-
-@dc.dataclass(frozen=True, slots=True)
-class Split:
-    """Where the tuning period ends and the held-out period begins.
-
-    Attributes
-    ----------
-    train_labelled : int
-        Labelled events that may inform tuning and weight fitting.
-    heldout_labelled : int
-        Labelled events reserved for the final comparison.
-    boundary : datetime | None
-        Label time of the first held-out event, or None without one.
-    """
-
-    train_labelled: int
-    heldout_labelled: int
-    boundary: dt.datetime | None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -172,7 +152,7 @@ def walk_forward(
         load_window_seconds=config.load_window_seconds,
         usable=timing.usable,
     )
-    phases = _phases(stream, timing, train_fraction=config.train_fraction)
+    assigned = phases(stream, timing, train_fraction=config.train_fraction)
     replay = _replay(
         single_predictors(config),
         rows,
@@ -189,9 +169,9 @@ def walk_forward(
     return Walk(
         events=stream,
         rows=rows,
-        phases=phases,
+        phases=assigned,
         series=series,
-        split=_split(stream, phases),
+        split=split(stream, assigned),
         moments=moments,
         timing=timing,
         labelled=sum(1 for event in stream if event.label != "unknown"),
@@ -331,70 +311,3 @@ def _predict_row(
         answer = predictor.predict(known)
         answers.elapsed[predictor.name][index] = answers.timer() - started
         answers.probabilities[predictor.name][index] = answer
-
-
-def _phases(
-    events: cabc.Sequence[Event],
-    timing: TimingAudit,
-    *,
-    train_fraction: float,
-) -> tuple[Phase | None, ...]:
-    """Label each event with the phase its verified label time belongs to.
-
-    The boundary falls between label batches, never inside one, so every row
-    the observer accepted at one reading stays on one side of it. A batch that
-    reaches the target lands wholly in the tuning period, which can leave the
-    tuning share slightly above the configured fraction. With too few labels to
-    reach the boundary every batch is tuning; at a fraction of zero every batch
-    is held out. An event without a verified availability time cannot be placed
-    in either period: its label was never shown to be knowable, so it is never
-    trained on or scored.
-
-    Returns
-    -------
-    tuple[Phase | None, ...]
-        One phase per event, or None where no eligible label arrived.
-    """
-    # Only a verified, correlated label can be scored, so only it consumes a
-    # phase slot.
-    batches = label_batches(events)
-    total = sum(
-        1
-        for batch in batches
-        for index in batch
-        if timing.usable[index] and scored_label(events[index]) is not None
-    )
-    target = int(total * train_fraction)
-    phases: list[Phase | None] = [None] * len(events)
-    kept = 0
-    for batch in batches:
-        if label_moment(events[batch[0]]) is None:
-            continue
-        phase: Phase = "train" if kept < target else "held-out"
-        for index in batch:
-            if not timing.usable[index] or scored_label(events[index]) is None:
-                continue
-            phases[index] = phase
-            kept += 1
-    return tuple(phases)
-
-
-def _split(events: cabc.Sequence[Event], phases: cabc.Sequence[Phase | None]) -> Split:
-    """Summarize the tuning/held-out boundary.
-
-    Returns
-    -------
-    Split
-        Counts on both sides and the first held-out availability time.
-    """
-    boundary_index = next(
-        (index for index, phase in enumerate(phases) if phase == "held-out"), None
-    )
-    train = sum(1 for phase in phases if phase == "train")
-    return Split(
-        train_labelled=train,
-        heldout_labelled=sum(1 for phase in phases if phase == "held-out"),
-        boundary=(
-            None if boundary_index is None else label_moment(events[boundary_index])
-        ),
-    )

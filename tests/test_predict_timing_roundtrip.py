@@ -45,7 +45,7 @@ def test_an_old_format_snapshot_round_trips_without_fabricated_timing(
 ) -> None:
     """A version 2 document keeps its rows and gains no invented moments."""
     path = tmp_path / "history.jsonl"
-    save_snapshot(path, snapshot((event(0, admitted=1.0, available=5.0),)))
+    save_snapshot(path, snapshot((event(0, moments=(1.0, 5.0)),)))
     document = typ.cast(
         "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
     )
@@ -74,11 +74,9 @@ def test_an_old_format_snapshot_round_trips_without_fabricated_timing(
 def test_the_benchmark_reports_each_gate_separately() -> None:
     """Dataset counts separate labels, decisions, availability and scoring."""
     stats = snapshot((
-        event(0, admitted=1.0, available=5.0),
-        event(1, admitted=None, available=6.0),
-        dc.replace(
-            event(2, admitted=3.0, available=6.0), label_observed_verified=False
-        ),
+        event(0, moments=(1.0, 5.0)),
+        event(1, moments=(None, 6.0)),
+        dc.replace(event(2, moments=(3.0, 6.0)), label_observed_verified=False),
     )).stats()
 
     assert stats.labelled == 3, "every row carries a hit or miss label"
@@ -94,7 +92,7 @@ def test_the_benchmark_reports_each_gate_separately() -> None:
 def test_an_empty_history_reports_no_measured_count() -> None:
     """An empty snapshot reports zeroes, never a guessed or borrowed figure."""
     stats: SnapshotStats = Snapshot(
-        created_at=event(0, admitted=0.0, available=0.0).observed_at,
+        created_at=event(0, moments=(0.0, 0.0)).observed_at,
         source=snapshot(()).source,
         journal=None,
         events=(),
@@ -133,9 +131,9 @@ def test_the_report_states_the_scored_population_and_its_exclusions() -> None:
 
 def test_a_duplicate_and_a_conflict_are_counted_apart() -> None:
     """The report distinguishes an idempotent retry from a contradiction."""
-    original = event(0, admitted=1.0, available=5.0, attempt="same")
+    original = event(0, moments=(1.0, 5.0), attempt="same")
     retried = typ.cast("typ.Any", original)
-    conflicting = event(1, admitted=1.0, available=5.0, label="miss", attempt="other")
+    conflicting = event(1, moments=(1.0, 5.0), label="miss", attempt="other")
 
     stats = snapshot((original, retried, conflicting)).stats()
 
@@ -150,7 +148,7 @@ def test_a_duplicate_attempt_is_not_counted_as_missing_availability() -> None:
     Both rows carry a verified availability, so the availability counter must
     stay at zero and the duplicate must appear only in its own count.
     """
-    original = event(0, admitted=1.0, available=5.0, attempt="same")
+    original = event(0, moments=(1.0, 5.0), attempt="same")
     retried = typ.cast("typ.Any", original)
 
     stats = snapshot((original, retried)).stats()

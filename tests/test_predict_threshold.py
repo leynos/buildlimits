@@ -96,8 +96,7 @@ def _labelled_events(count: int, *, usable: int) -> tuple[Event, ...]:
         events.append(
             hand_event(
                 index,
-                admitted_at=admitted,
-                observed_at=observed,
+                moments=(admitted, observed),
                 label="hit" if index % 2 else "miss",
             )
         )

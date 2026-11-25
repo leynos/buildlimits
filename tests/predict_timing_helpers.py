@@ -29,11 +29,10 @@ def at(seconds: float) -> dt.datetime:
     return EPOCH + dt.timedelta(seconds=seconds)
 
 
-def event(  # ruff: ignore[too-many-arguments]  # one value per event fact; pylint: disable=too-many-arguments
+def event(
     index: int,
     *,
-    admitted: float | None,
-    available: float | None,
+    moments: tuple[float | None, float | None],
     label: str = "hit",
     attempt: str | None = None,
 ) -> Event:
@@ -44,11 +43,24 @@ def event(  # ruff: ignore[too-many-arguments]  # one value per event fact; pyli
     accepted. An event with no availability moment is written unverified, so it
     releases nothing.
 
+    Parameters
+    ----------
+    index : int
+        The stream position, which also supplies the default attempt token.
+    moments : tuple[float | None, float | None]
+        The decision and availability moments in seconds, or None where the
+        source recorded none.
+    label : str
+        The outcome label.
+    attempt : str | None
+        The attempt token, defaulting to this stream position.
+
     Returns
     -------
     Event
         The verified event.
     """
+    admitted, available = moments
     moment = None if available is None else at(available)
     return Event(
         identity=f"{index:064d}"[:64],
@@ -74,13 +86,13 @@ def reviewer_stream() -> tuple[Event, ...]:
     """
     return (
         # A: admitted at 1, completes at 2, attribution accepted at 5.
-        event(0, admitted=1.0, available=5.0),
+        event(0, moments=(1.0, 5.0)),
         # B: decided at 3, its own label accepted later.
-        event(1, admitted=3.0, available=9.0, label="miss"),
+        event(1, moments=(3.0, 9.0), label="miss"),
         # C: decided at 6, after A became available but B had not.
-        event(2, admitted=6.0, available=12.0),
+        event(2, moments=(6.0, 12.0)),
         # D: decided at exactly 5, the availability instant itself.
-        event(3, admitted=5.0, available=20.0, label="miss"),
+        event(3, moments=(5.0, 20.0), label="miss"),
     )
 
 

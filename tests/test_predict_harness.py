@@ -31,19 +31,13 @@ def _causal(
     index: int, *, observed_at: dt.datetime, label: Label, early: dt.timedelta = MINUTE
 ) -> Event:
     """Return one event admitted ``early`` before its own label."""
-    return hand_event(
-        index, observed_at=observed_at, admitted_at=observed_at - early, label=label
-    )
+    return hand_event(index, moments=(observed_at - early, observed_at), label=label)
 
 
 def test_the_replay_keeps_store_order_when_timestamps_step_back() -> None:
     """A backward clock step never reorders the records the store wrote."""
-    first = hand_event(
-        0, admitted_at=EPOCH, observed_at=EPOCH + 10 * MINUTE, label="hit"
-    )
-    stepped = hand_event(
-        1, admitted_at=EPOCH + MINUTE, observed_at=EPOCH + 5 * MINUTE, label="miss"
-    )
+    first = hand_event(0, moments=(EPOCH, EPOCH + 10 * MINUTE), label="hit")
+    stepped = hand_event(1, moments=(EPOCH + MINUTE, EPOCH + 5 * MINUTE), label="miss")
 
     walk = walk_forward((first, stepped), load_config())
 
@@ -54,11 +48,9 @@ def test_the_replay_keeps_store_order_when_timestamps_step_back() -> None:
 def test_predictions_follow_admission_order_not_store_order() -> None:
     """The event admitted first is answered first, whatever the store order."""
     later = hand_event(
-        5, admitted_at=EPOCH + 10 * MINUTE, observed_at=EPOCH + 20 * MINUTE, label="hit"
+        5, moments=(EPOCH + 10 * MINUTE, EPOCH + 20 * MINUTE), label="hit"
     )
-    earlier = hand_event(
-        6, admitted_at=EPOCH, observed_at=EPOCH + 2 * MINUTE, label="miss"
-    )
+    earlier = hand_event(6, moments=(EPOCH, EPOCH + 2 * MINUTE), label="miss")
 
     walk = walk_forward((later, earlier), load_config())
     probabilities = walk.series["base-rate"].probabilities
@@ -72,11 +64,11 @@ def test_predictions_follow_admission_order_not_store_order() -> None:
 def test_labels_observed_with_an_admission_cannot_inform_it() -> None:
     """A row is answered before any label from its own moment is released."""
     stamp = EPOCH + 5 * MINUTE
-    first = hand_event(
-        0, admitted_at=stamp, observed_at=stamp, label="hit", attempt="g-first"
+    first = dc.replace(
+        hand_event(0, moments=(stamp, stamp), label="hit"), attempt="g-first"
     )
-    second = hand_event(
-        0, admitted_at=stamp, observed_at=stamp, label="hit", attempt="g-second"
+    second = dc.replace(
+        hand_event(0, moments=(stamp, stamp), label="hit"), attempt="g-second"
     )
     later = _causal(2, observed_at=stamp + 10 * MINUTE, label="miss", early=MINUTE)
 
@@ -93,7 +85,7 @@ def test_labels_observed_with_an_admission_cannot_inform_it() -> None:
 def test_the_replay_counts_the_labels_it_delivers_and_the_ones_it_cannot() -> None:
     """A label informs a prediction only when it arrives strictly earlier."""
     first = _causal(0, observed_at=EPOCH, label="hit")
-    second = hand_event(1, admitted_at=EPOCH, observed_at=EPOCH, label="hit")
+    second = hand_event(1, moments=(EPOCH, EPOCH), label="hit")
     third = _causal(2, observed_at=EPOCH + 5 * MINUTE, label="miss", early=MINUTE)
 
     walk = walk_forward((first, second, third), load_config())
@@ -108,17 +100,13 @@ def test_the_replay_counts_the_labels_it_delivers_and_the_ones_it_cannot() -> No
 
 def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
     """The reviewer's case: a label observed at minute 10 is not had at minute 2."""
-    slow = hand_event(
-        7, admitted_at=EPOCH, observed_at=EPOCH + 30 * MINUTE, label="hit"
-    )
-    middle = hand_event(
-        7, admitted_at=EPOCH + MINUTE, observed_at=EPOCH + 10 * MINUTE, label="miss"
-    )
+    slow = hand_event(7, moments=(EPOCH, EPOCH + 30 * MINUTE), label="hit")
+    middle = hand_event(7, moments=(EPOCH + MINUTE, EPOCH + 10 * MINUTE), label="miss")
     at_two = hand_event(
-        7, admitted_at=EPOCH + 2 * MINUTE, observed_at=EPOCH + 50 * MINUTE, label="hit"
+        7, moments=(EPOCH + 2 * MINUTE, EPOCH + 50 * MINUTE), label="hit"
     )
     after = hand_event(
-        7, admitted_at=EPOCH + 31 * MINUTE, observed_at=EPOCH + 60 * MINUTE, label="hit"
+        7, moments=(EPOCH + 31 * MINUTE, EPOCH + 60 * MINUTE), label="hit"
     )
 
     walk = walk_forward((middle, slow, at_two, after), load_config())
@@ -137,7 +125,7 @@ def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
 def test_an_event_without_an_admission_time_is_never_predicted() -> None:
     """A missing timestamp is not evidence that the label arrived early."""
     known = _causal(0, observed_at=EPOCH, label="hit")
-    missing = hand_event(1, admitted_at=None, observed_at=EPOCH + MINUTE, label="miss")
+    missing = hand_event(1, moments=(None, EPOCH + MINUTE), label="miss")
 
     walk = walk_forward((known, missing), load_config())
 
@@ -154,9 +142,7 @@ def test_an_event_without_an_admission_time_is_never_predicted() -> None:
 
 def test_an_admission_recorded_after_its_label_is_unusable() -> None:
     """A decision taken once the outcome was known cannot be predicted."""
-    event = hand_event(
-        0, admitted_at=EPOCH + 5 * MINUTE, observed_at=EPOCH, label="hit"
-    )
+    event = hand_event(0, moments=(EPOCH + 5 * MINUTE, EPOCH), label="hit")
 
     walk = walk_forward((event,), load_config())
 

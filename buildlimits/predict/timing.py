@@ -187,18 +187,34 @@ def _attempt_verdicts(
     conflicts = duplicates = 0
     reasons: dict[int, ExclusionReason] = {}
     for indices in attempts.values():
-        if len(indices) < _MINIMUM_GROUP:
-            continue
-        first = _fingerprint(stream[indices[0]])
-        if all(_fingerprint(stream[index]) == first for index in indices[1:]):
-            for index in indices[1:]:
-                reasons[index] = "duplicate_attempt"
-            duplicates += len(indices) - 1
-            continue
-        for index in indices:
-            reasons[index] = "conflicting_attempt"
-        conflicts += len(indices)
+        group_conflicts, group_duplicates, group_reasons = _classify_attempt(
+            stream, indices
+        )
+        conflicts += group_conflicts
+        duplicates += group_duplicates
+        reasons.update(group_reasons)
     return conflicts, duplicates, reasons
+
+
+def _classify_attempt(
+    stream: cabc.Sequence[Event], indices: cabc.Sequence[int]
+) -> tuple[int, int, dict[int, ExclusionReason]]:
+    """Classify the rows that name one attempt identity.
+
+    Returns
+    -------
+    tuple[int, int, dict[int, ExclusionReason]]
+        The conflicting and duplicate row counts for this identity, and the
+        reason assigned to each excluded index.
+    """
+    if len(indices) < _MINIMUM_GROUP:
+        return 0, 0, {}
+    first = _fingerprint(stream[indices[0]])
+    if all(_fingerprint(stream[index]) == first for index in indices[1:]):
+        duplicate: ExclusionReason = "duplicate_attempt"
+        return 0, len(indices) - 1, dict.fromkeys(indices[1:], duplicate)
+    conflict: ExclusionReason = "conflicting_attempt"
+    return len(indices), 0, dict.fromkeys(indices, conflict)
 
 
 def _fingerprint(event: Event) -> tuple[object, ...]:

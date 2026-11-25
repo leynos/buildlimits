@@ -114,14 +114,25 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
     """
     document["snapshot_version"] = version
     if version < PROVENANCE_VERSION:
-        for event in events_of(document):
-            event.pop("label_observed_verified", None)
+        _drop_event_fields(document, ("label_observed_verified",))
     if version < GENERATION_VERSION:
-        store = store_block(document)
-        store.pop("by_generation", None)
-        store.pop("labels_by_generation", None)
+        _drop_generation_maps(document)
     if version < CORRELATION_VERSION:
-        for event in events_of(document):
-            for field_name in _CORRELATION_FIELDS:
-                event.pop(field_name, None)
+        _drop_event_fields(document, _CORRELATION_FIELDS)
     return document
+
+
+def _drop_event_fields(
+    document: dict[str, object], field_names: tuple[str, ...]
+) -> None:
+    """Remove the named fields from every event in a snapshot document."""
+    for event in events_of(document):
+        for field_name in field_names:
+            event.pop(field_name, None)
+
+
+def _drop_generation_maps(document: dict[str, object]) -> None:
+    """Remove the per-generation maps a version 3 document lacked."""
+    store = store_block(document)
+    store.pop("by_generation", None)
+    store.pop("labels_by_generation", None)

@@ -40,8 +40,10 @@ def _eight_events(admissions: tuple[dt.datetime | None, ...]) -> tuple[Event, ..
     return tuple(
         hand_event(
             index,
-            observed_at=EPOCH + index * dt.timedelta(seconds=30),
-            admitted_at=admissions[index],
+            moments=(
+                admissions[index],
+                EPOCH + index * dt.timedelta(seconds=30),
+            ),
             label="hit" if index % 2 else "miss",
         )
         for index in range(8)
@@ -150,20 +152,16 @@ def test_a_late_label_cannot_reach_back_into_an_adaptive_answer() -> None:
     it does change the final weights, which proves the flip was real.
     """
     events = (
-        hand_event(0, admitted_at=EPOCH, observed_at=EPOCH + 30 * MINUTE, label="hit"),
-        hand_event(
-            1, admitted_at=EPOCH + MINUTE, observed_at=EPOCH + 10 * MINUTE, label="miss"
-        ),
+        hand_event(0, moments=(EPOCH, EPOCH + 30 * MINUTE), label="hit"),
+        hand_event(1, moments=(EPOCH + MINUTE, EPOCH + 10 * MINUTE), label="miss"),
         hand_event(
             2,
-            admitted_at=EPOCH + 2 * MINUTE,
-            observed_at=EPOCH + 50 * MINUTE,
+            moments=(EPOCH + 2 * MINUTE, EPOCH + 50 * MINUTE),
             label="hit",
         ),
         hand_event(
             3,
-            admitted_at=EPOCH + 31 * MINUTE,
-            observed_at=EPOCH + 60 * MINUTE,
+            moments=(EPOCH + 31 * MINUTE, EPOCH + 60 * MINUTE),
             label="hit",
         ),
     )

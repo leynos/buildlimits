@@ -9,6 +9,7 @@ is refused. Two launches finishing out of order no longer create such a step:
 they share the reading's moment, which the last test below pins.
 """
 
+import dataclasses as dc
 import datetime as dt
 from pathlib import Path
 
@@ -49,21 +50,26 @@ def _backward() -> tuple[Event, Event]:
     is asked.
     """
     return (
-        hand_event(
-            0,
-            admitted_at=EPOCH,
-            observed_at=EPOCH + dt.timedelta(minutes=10),
-            label="hit",
+        dc.replace(
+            hand_event(
+                0,
+                moments=(EPOCH, EPOCH + dt.timedelta(minutes=10)),
+                label="hit",
+            ),
             attempt="first",
         ),
         # Appended second, and admitted after the first, but its own reading
         # was stamped before the first one's: each admission still precedes its
         # own acceptance, so this is a clock step rather than a bad row.
-        hand_event(
-            1,
-            admitted_at=EPOCH + dt.timedelta(minutes=1),
-            observed_at=EPOCH + dt.timedelta(minutes=5),
-            label="hit",
+        dc.replace(
+            hand_event(
+                1,
+                moments=(
+                    EPOCH + dt.timedelta(minutes=1),
+                    EPOCH + dt.timedelta(minutes=5),
+                ),
+                label="hit",
+            ),
             attempt="second",
         ),
     )
@@ -78,15 +84,13 @@ def _unverified() -> tuple[Event, Event]:
     return (
         hand_event(
             0,
-            admitted_at=None,
-            observed_at=EPOCH + dt.timedelta(minutes=10),
+            moments=(None, EPOCH + dt.timedelta(minutes=10)),
             label="hit",
             verified=False,
         ),
         hand_event(
             1,
-            admitted_at=None,
-            observed_at=EPOCH + dt.timedelta(minutes=5),
+            moments=(None, EPOCH + dt.timedelta(minutes=5)),
             label="hit",
             verified=False,
         ),
@@ -96,14 +100,16 @@ def _unverified() -> tuple[Event, Event]:
 def _forward() -> tuple[Event, Event]:
     """Return two events the store could have appended in this order."""
     return (
-        hand_event(
-            0, admitted_at=EPOCH, observed_at=EPOCH, label="hit", attempt="first"
-        ),
-        hand_event(
-            1,
-            admitted_at=EPOCH + dt.timedelta(minutes=5),
-            observed_at=EPOCH + dt.timedelta(minutes=10),
-            label="hit",
+        dc.replace(hand_event(0, moments=(EPOCH, EPOCH), label="hit"), attempt="first"),
+        dc.replace(
+            hand_event(
+                1,
+                moments=(
+                    EPOCH + dt.timedelta(minutes=5),
+                    EPOCH + dt.timedelta(minutes=10),
+                ),
+                label="hit",
+            ),
             attempt="second",
         ),
     )
@@ -164,14 +170,12 @@ def test_rows_sharing_one_reading_load_and_score(tmp_path: Path) -> None:
     shared = (
         hand_event(
             0,
-            admitted_at=EPOCH,
-            observed_at=label,
+            moments=(EPOCH, label),
             label="hit",
         ),
         hand_event(
             1,
-            admitted_at=EPOCH + dt.timedelta(minutes=1),
-            observed_at=label,
+            moments=(EPOCH + dt.timedelta(minutes=1), label),
             label="miss",
         ),
     )

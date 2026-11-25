@@ -48,15 +48,16 @@ def _walk_around_reading(
     from_reading = record_events(records, now=DELAYED_READING_AT, version=version)
     between = hand_event(
         9,
-        admitted_at=LAUNCH_COMPLETIONS[1],
-        observed_at=DELAYED_READING_AT,
+        moments=(LAUNCH_COMPLETIONS[1], DELAYED_READING_AT),
         label="hit",
         verified=False,
     )
     after = hand_event(
         10,
-        admitted_at=DELAYED_READING_AT + dt.timedelta(minutes=1),
-        observed_at=DELAYED_READING_AT + dt.timedelta(minutes=2),
+        moments=(
+            DELAYED_READING_AT + dt.timedelta(minutes=1),
+            DELAYED_READING_AT + dt.timedelta(minutes=2),
+        ),
         label="miss",
     )
     stream = (*from_reading, between, after)
@@ -131,8 +132,10 @@ def test_an_unverified_label_at_the_same_moment_is_never_released() -> None:
     from_reading = record_events(records, now=DELAYED_READING_AT, version=2)
     after = hand_event(
         10,
-        admitted_at=DELAYED_READING_AT + dt.timedelta(minutes=1),
-        observed_at=DELAYED_READING_AT + dt.timedelta(minutes=2),
+        moments=(
+            DELAYED_READING_AT + dt.timedelta(minutes=1),
+            DELAYED_READING_AT + dt.timedelta(minutes=2),
+        ),
         label="miss",
     )
 

@@ -322,20 +322,20 @@ def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
     events = (
         hand_event(
             0,
-            admitted_at=EPOCH,
-            observed_at=EPOCH + dt.timedelta(seconds=5),
+            moments=(EPOCH, EPOCH + dt.timedelta(seconds=5)),
             label="hit",
         ),
         hand_event(
             1,
-            admitted_at=None,
-            observed_at=EPOCH + dt.timedelta(seconds=10),
+            moments=(None, EPOCH + dt.timedelta(seconds=10)),
             label="miss",
         ),
         hand_event(
             2,
-            admitted_at=EPOCH + dt.timedelta(seconds=15),
-            observed_at=EPOCH + dt.timedelta(seconds=20),
+            moments=(
+                EPOCH + dt.timedelta(seconds=15),
+                EPOCH + dt.timedelta(seconds=20),
+            ),
             label="hit",
         ),
     )

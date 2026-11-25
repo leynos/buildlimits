@@ -24,7 +24,7 @@ from hypothesis import strategies as st
 from predict_test_helpers import hand_event
 from predict_timing_helpers import at, config, event, reviewer_stream
 
-from buildlimits.predict.events import EPOCH, label_moment
+from buildlimits.predict.events import EPOCH, Event, label_moment
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.history import (
     label_batches,
@@ -56,7 +56,7 @@ def test_a_decision_before_a_label_became_available_cannot_learn_it() -> None:
 
 def test_a_decision_after_the_acceptance_learns_the_label() -> None:
     """The same label is available to a decision strictly later than 5."""
-    later = event(9, admitted=5.5, available=30.0, label="miss")
+    later = event(9, moments=(5.5, 30.0), label="miss")
     walk = walk_forward((*reviewer_stream(), later), config())
 
     assert typ.cast("typ.Any", walk.rows[4]).load == 1, (
@@ -69,10 +69,8 @@ def test_a_decision_after_the_acceptance_learns_the_label() -> None:
 
 def test_a_label_is_never_released_at_its_completion_time() -> None:
     """Completion is retained for provenance and never used as availability."""
-    slow_accept = dc.replace(
-        event(0, admitted=1.0, available=5.0), completed_at=at(2.0)
-    )
-    between = event(1, admitted=3.0, available=9.0, label="miss")
+    slow_accept = dc.replace(event(0, moments=(1.0, 5.0)), completed_at=at(2.0))
+    between = event(1, moments=(3.0, 9.0), label="miss")
 
     walk = walk_forward((slow_accept, between), config())
 
@@ -82,22 +80,33 @@ def test_a_label_is_never_released_at_its_completion_time() -> None:
     assert slow_accept.completed_at == at(2.0), "the completion time is retained"
 
 
+def _attempt(
+    index: int,
+    *,
+    moments: tuple[dt.datetime | None, dt.datetime],
+    label: str,
+    attempt: str,
+) -> Event:
+    """Return one hand-built event naming a chosen attempt token.
+
+    The token is part of the scenario, so it is stated here rather than
+    derived, and two events built this way never collapse into a duplicate.
+
+    Returns
+    -------
+    Event
+        The verified event carrying ``attempt``.
+    """
+    return dc.replace(
+        hand_event(index, moments=moments, label=typ.cast("typ.Any", label)),
+        attempt=attempt,
+    )
+
+
 def test_concurrent_identical_invocations_keep_their_own_timing() -> None:
     """Two attempts for one identity never share a completion or availability."""
-    first = hand_event(
-        0,
-        admitted_at=at(1.0),
-        observed_at=at(9.0),
-        label="hit",
-        attempt="attempt-a",
-    )
-    second = hand_event(
-        0,
-        admitted_at=at(2.0),
-        observed_at=at(4.0),
-        label="miss",
-        attempt="attempt-b",
-    )
+    first = _attempt(0, moments=(at(1.0), at(9.0)), label="hit", attempt="attempt-a")
+    second = _attempt(0, moments=(at(2.0), at(4.0)), label="miss", attempt="attempt-b")
 
     walk = walk_forward((first, second), config())
     verdict = audit((first, second))
@@ -130,8 +139,7 @@ def test_availability_never_depends_on_reversed_launch_order(
     events = tuple(
         event(
             position,
-            admitted=-1.0,
-            available=float(finish),
+            moments=(-1.0, float(finish)),
             attempt=f"attempt-{position}",
         )
         for position, finish in enumerate(finishes)
@@ -150,7 +158,7 @@ def test_availability_never_depends_on_reversed_launch_order(
 
 def test_an_exact_duplicate_append_is_an_idempotent_duplicate() -> None:
     """A retried append with identical evidence does not create a second label."""
-    original = event(0, admitted=1.0, available=5.0)
+    original = event(0, moments=(1.0, 5.0))
     retried = dc.replace(original, observed_at=original.observed_at)
 
     verdict = audit((original, retried))
@@ -168,8 +176,8 @@ def test_an_exact_duplicate_append_is_an_idempotent_duplicate() -> None:
 
 def test_rows_that_disagree_about_one_attempt_are_unusable_together() -> None:
     """Nothing says which copy of a contradictory attempt the observer accepted."""
-    first = event(0, admitted=1.0, available=5.0, label="hit", attempt="same")
-    second = event(0, admitted=1.0, available=5.0, label="miss", attempt="same")
+    first = event(0, moments=(1.0, 5.0), label="hit", attempt="same")
+    second = event(0, moments=(1.0, 5.0), label="miss", attempt="same")
 
     verdict = audit((first, second))
 
@@ -185,9 +193,9 @@ def test_rows_that_disagree_about_one_attempt_are_unusable_together() -> None:
 
 def test_a_restart_generation_separates_reused_group_identifiers() -> None:
     """The same attempt token in a new supervisor is not the same attempt."""
-    before = event(0, admitted=1.0, available=5.0, attempt="g1")
+    before = event(0, moments=(1.0, 5.0), attempt="g1")
     after = dc.replace(
-        event(0, admitted=1.0, available=5.0, attempt="g1"),
+        event(0, moments=(1.0, 5.0), attempt="g1"),
         supervisor_generation="generation-b",
     )
 
@@ -200,13 +208,13 @@ def test_a_restart_generation_separates_reused_group_identifiers() -> None:
 def test_an_unverified_row_is_excluded_rather_than_backdated() -> None:
     """A row from an older recorder carries no availability and is unscorable."""
     unverified = dc.replace(
-        hand_event(0, admitted_at=at(1.0), observed_at=at(5.0), label="hit"),
+        hand_event(0, moments=(at(1.0), at(5.0)), label="hit"),
         completed_at=None,
         label_observed_verified=False,
         attempt=None,
         supervisor_generation=None,
     )
-    verified = event(1, admitted=2.0, available=6.0)
+    verified = event(1, moments=(2.0, 6.0))
 
     verdict = audit((unverified, verified))
 
@@ -220,7 +228,7 @@ def test_an_unverified_row_is_excluded_rather_than_backdated() -> None:
 
 def test_a_label_accepted_before_its_decision_is_excluded() -> None:
     """A physically impossible ordering is reported, never scored."""
-    impossible = event(0, admitted=9.0, available=5.0)
+    impossible = event(0, moments=(9.0, 5.0))
 
     verdict = audit((impossible,))
 
@@ -232,9 +240,7 @@ def test_a_label_accepted_before_its_decision_is_excluded() -> None:
 
 def test_a_completion_after_its_acceptance_is_excluded() -> None:
     """A completion stamp later than the accepted reading is contradictory."""
-    contradictory = dc.replace(
-        event(0, admitted=1.0, available=5.0), completed_at=at(9.0)
-    )
+    contradictory = dc.replace(event(0, moments=(1.0, 5.0)), completed_at=at(9.0))
 
     verdict = audit((contradictory,))
 
@@ -245,8 +251,8 @@ def test_a_completion_after_its_acceptance_is_excluded() -> None:
 
 def test_a_batch_is_one_accepted_reading_not_one_completion_time() -> None:
     """Rows accepted by one reading share a batch whatever their completions."""
-    first = dc.replace(event(0, admitted=1.0, available=5.0), completed_at=at(2.0))
-    second = dc.replace(event(1, admitted=2.0, available=5.0), completed_at=at(3.0))
+    first = dc.replace(event(0, moments=(1.0, 5.0)), completed_at=at(2.0))
+    second = dc.replace(event(1, moments=(2.0, 5.0)), completed_at=at(3.0))
 
     assert label_batches((first, second)) == ((0, 1),), (
         "one accepted reading places both rows in one batch"
@@ -267,7 +273,7 @@ def test_each_gate_has_its_own_closed_reason(
     admitted: float | None, available: float | None, reason: str | None
 ) -> None:
     """The exclusion vocabulary is exhaustive and mutually exclusive."""
-    verdict = audit((event(0, admitted=admitted, available=available),))
+    verdict = audit((event(0, moments=(admitted, available)),))
 
     assert verdict.reasons == (reason,), "one closed reason per row"
 
@@ -277,8 +283,7 @@ def test_an_unknown_outcome_is_predictable_but_never_scored() -> None:
     events = tuple(
         event(
             index,
-            admitted=float(index),
-            available=float(index) + 0.5,
+            moments=(float(index), float(index) + 0.5),
             label="unknown",
         )
         for index in range(4)
@@ -294,9 +299,9 @@ def test_an_unknown_outcome_is_predictable_but_never_scored() -> None:
 
 def test_a_clock_step_never_releases_a_label_early() -> None:
     """A backward availability stamp is refused rather than sorted around."""
-    forward = event(0, admitted=0.0, available=10.0, attempt="early")
+    forward = event(0, moments=(0.0, 10.0), attempt="early")
     stepped = dc.replace(
-        event(1, admitted=1.0, available=5.0, attempt="late"),
+        event(1, moments=(1.0, 5.0), attempt="late"),
         completed_at=at(5.0),
         observed_at=at(5.0),
     )
@@ -315,8 +320,8 @@ def test_a_clock_step_never_releases_a_label_early() -> None:
 
 def test_the_events_in_a_stream_keep_their_own_identity() -> None:
     """A shared cache key is not a shared invocation."""
-    first = hand_event(0, admitted_at=at(1.0), observed_at=at(5.0), label="hit")
-    second = hand_event(0, admitted_at=at(2.0), observed_at=at(6.0), label="miss")
+    first = hand_event(0, moments=(at(1.0), at(5.0)), label="hit")
+    second = hand_event(0, moments=(at(2.0), at(6.0)), label="miss")
 
     assert first.identity == second.identity, "the cache key is identical"
     assert first.attempt != second.attempt, "the attempt is not"
@@ -333,9 +338,9 @@ def test_a_label_unavailable_at_its_prediction_never_trains_a_predictor() -> Non
     before its own reading is accepted, and the second row is admitted after;
     only the second prediction may reflect the first outcome.
     """
-    early = event(0, admitted=1.0, available=9.0, label="hit", attempt="early")
-    later = event(0, admitted=4.0, available=12.0, label="miss", attempt="later")
-    after = event(0, admitted=13.0, available=20.0, label="miss", attempt="after")
+    early = event(0, moments=(1.0, 9.0), label="hit", attempt="early")
+    later = event(0, moments=(4.0, 12.0), label="miss", attempt="later")
+    after = event(0, moments=(13.0, 20.0), label="miss", attempt="after")
 
     walk = walk_forward((early, later, after), config())
     last_outcome = walk.series["last-outcome"].probabilities
@@ -355,10 +360,10 @@ def test_a_label_unavailable_at_its_prediction_never_trains_a_predictor() -> Non
 def test_an_unverified_label_cannot_train_either() -> None:
     """An unverified row supplies no training example, even with a label."""
     unverified = dc.replace(
-        event(0, admitted=1.0, available=5.0, label="hit"),
+        event(0, moments=(1.0, 5.0), label="hit"),
         label_observed_verified=False,
     )
-    verifiable = event(0, admitted=10.0, available=20.0, label="miss", attempt="b")
+    verifiable = event(0, moments=(10.0, 20.0), label="miss", attempt="b")
 
     walk = walk_forward((unverified, verifiable), config())
 

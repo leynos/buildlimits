@@ -42,6 +42,21 @@ MINIMUM_BLOCKS = 2
 
 
 @dc.dataclass(frozen=True, slots=True)
+class _EvidenceCounts:
+    """The population counts every status and verdict sentence is decided from.
+
+    They travel together because each gate is read against the others: a label
+    shortage, a decision shortage and an availability shortage are told apart
+    by comparing these three numbers, so passing them separately invites a
+    caller to pair one gate's denominator with another gate's numerator.
+    """
+
+    labelled: int
+    predictable: int
+    unavailable_availability: int
+
+
+@dc.dataclass(frozen=True, slots=True)
 class Evaluation:
     """Every comparison the benchmark reports.
 
@@ -172,21 +187,12 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     metrics = all_metrics(walk, ensembles, config)
     ablated = ablation_metrics(walk, ablations, config)
     compared = compare(walk, ensembles, config)
-    labelled = walk.labelled
-    predictable = sum(
-        1
-        for phase, row in zip(walk.phases, walk.rows, strict=True)
-        if phase is not None and row is not None
+    counts = _EvidenceCounts(
+        labelled=walk.labelled,
+        predictable=_predictable_count(walk),
+        unavailable_availability=walk.unavailable_availability,
     )
-    unavailable_availability = walk.unavailable_availability
-    withheld = walk.unverified_label_time
-    status = _status(
-        labelled,
-        predictable,
-        unavailable_availability,
-        compared.against_base_rate,
-        config,
-    )
+    status = _status(counts, compared.against_base_rate, config)
     return Evaluation(
         status=status,
         walk=walk,
@@ -199,21 +205,35 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         best_single=compared.best_single,
         against_best_single=compared.against_best_single,
         verdict=_verdict(
-            labelled,
-            predictable,
-            unavailable_availability,
+            counts,
             compared.against_base_rate,
             config,
-            withheld=withheld,
+            withheld=walk.unverified_label_time,
         ),
         minimum_scored_events=config.minimum_scored_events,
     )
 
 
-def _status(  # ruff: ignore[too-many-arguments,too-many-positional-arguments]  # one value per evidence gate; pylint: disable=too-many-arguments,too-many-positional-arguments
-    labelled: int,
-    predictable: int,
-    unavailable_availability: int,
+def _predictable_count(walk: Walk) -> int:
+    """Count the events that carry both a phase and a feature row.
+
+    An event is only predictable when the replay both placed it in a period and
+    measured it at its admission, so the two columns are read together.
+
+    Returns
+    -------
+    int
+        The number of predictable events.
+    """
+    return sum(
+        1
+        for phase, row in zip(walk.phases, walk.rows, strict=True)
+        if phase is not None and row is not None
+    )
+
+
+def _status(
+    counts: _EvidenceCounts,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
 ) -> str:
@@ -236,10 +256,10 @@ def _status(  # ruff: ignore[too-many-arguments,too-many-positional-arguments]  
         ``insufficient label-availability times`` or ``insufficient held-out
         evidence``.
     """
-    if labelled < config.minimum_labelled_events:
+    if counts.labelled < config.minimum_labelled_events:
         return STATUS_INSUFFICIENT
-    if predictable == 0:
-        if unavailable_availability:
+    if counts.predictable == 0:
+        if counts.unavailable_availability:
             return STATUS_INSUFFICIENT_AVAILABILITY
         return STATUS_INSUFFICIENT_ADMISSION
     if not any(_is_evidence(interval, config) for interval in against_base.values()):
@@ -263,10 +283,8 @@ def _is_evidence(interval: Interval | None, config: Config) -> bool:
     )
 
 
-def _verdict(  # ruff: ignore[too-many-arguments,too-many-positional-arguments]  # one value per evidence gate; pylint: disable=too-many-arguments,too-many-positional-arguments
-    labelled: int,
-    predictable: int,
-    unavailable_availability: int,
+def _verdict(
+    counts: _EvidenceCounts,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
     *,
@@ -276,53 +294,81 @@ def _verdict(  # ruff: ignore[too-many-arguments,too-many-positional-arguments] 
 
     A predictor may only be said to beat the base rate when its interval lies
     wholly below zero *and* it was paired over enough held-out rows, spread
-    over at least two blocks, for that interval to mean anything. That
-    interval has already been widened for the family of comparisons, so the
-    claim as a whole holds at the configured level.
+    over at least two blocks, for that interval to mean anything; the interval
+    is already widened for the family of comparisons.
 
     A history whose labels were withheld because their recorded time is
-    unverified must not read as one that simply carried few labels. The
+    unverified must not read as one that simply carried few labels: the
     insufficient-data sentence names the withheld count beside the verified
-    one, so the reader can tell which shortage the run met.
+    one.
 
     Returns
     -------
     str
         The verdict.
     """
-    status = _status(
-        labelled, predictable, unavailable_availability, against_base, config
-    )
+    status = _status(counts, against_base, config)
+    if status != STATUS_OK:
+        return _insufficient_verdict(status, counts, config, withheld=withheld)
+    improving = _improving_predictors(against_base, config)
+    if not improving:
+        return "nothing beats the base rate on the held-out period"
+    return "beats the base rate on the held-out period: " + ", ".join(sorted(improving))
+
+
+def _insufficient_verdict(
+    status: str,
+    counts: _EvidenceCounts,
+    config: Config,
+    *,
+    withheld: int,
+) -> str:
+    """Name the gate an insufficient run met, in its own sentence.
+
+    Returns
+    -------
+    str
+        The sentence for the supplied insufficient-evidence status.
+    """
     if status == STATUS_INSUFFICIENT:
         return (
-            f"insufficient data: {labelled} labelled events, "
+            f"insufficient data: {counts.labelled} labelled events, "
             f"{config.minimum_labelled_events} required" + _withheld_note(withheld)
         )
     if status == STATUS_INSUFFICIENT_ADMISSION:
         return (
-            f"insufficient admission times: {labelled} labelled events, "
-            f"{predictable} with an admission time at or before their own label"
+            f"insufficient admission times: {counts.labelled} labelled events, "
+            f"{counts.predictable} with an admission time at or before their "
+            "own label"
         )
     if status == STATUS_INSUFFICIENT_AVAILABILITY:
         return (
-            f"insufficient label-availability times: {labelled} labelled "
-            f"events, {unavailable_availability} with an admission time but no "
-            "verified label-availability time"
+            f"insufficient label-availability times: {counts.labelled} labelled "
+            f"events, {counts.unavailable_availability} with an admission time "
+            "but no verified label-availability time"
         )
-    if status == STATUS_INSUFFICIENT_HELDOUT:
-        return (
-            "insufficient held-out evidence: no predictor was paired over "
-            f"{config.minimum_scored_events} rows in two or more blocks of "
-            f"{config.block_size}"
-        )
-    improving = [
+    return (
+        "insufficient held-out evidence: no predictor was paired over "
+        f"{config.minimum_scored_events} rows in two or more blocks of "
+        f"{config.block_size}"
+    )
+
+
+def _improving_predictors(
+    against_base: cabc.Mapping[str, Interval | None], config: Config
+) -> list[str]:
+    """Return the predictors whose interval lies wholly below zero.
+
+    Returns
+    -------
+    list[str]
+        The predictor names, unsorted.
+    """
+    return [
         name
         for name, interval in against_base.items()
         if interval is not None and _is_evidence(interval, config) and interval.high < 0
     ]
-    if not improving:
-        return "nothing beats the base rate on the held-out period"
-    return "beats the base rate on the held-out period: " + ", ".join(sorted(improving))
 
 
 def _withheld_note(withheld: int) -> str:

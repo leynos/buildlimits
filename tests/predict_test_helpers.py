@@ -47,14 +47,12 @@ never an assumed default.
 """
 
 
-def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario value; pylint: disable=too-many-arguments
+def hand_event(
     index: int,
     *,
-    observed_at: dt.datetime,
-    admitted_at: dt.datetime | None,
+    moments: tuple[dt.datetime | None, dt.datetime],
     label: Label,
     verified: bool = True,
-    attempt: str | None = None,
 ) -> Event:
     """Return one hand-built verified event for an ordering or weighting case.
 
@@ -64,13 +62,16 @@ def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario 
     moment its label was known, so it is proof rather than a store row's lower
     bound. A test about the unverified case passes ``verified=False``. The
     attempt identity is derived from the event's own content, so two different
-    events never collide and an exact repeat is an idempotent duplicate.
+    events never collide and an exact repeat is an idempotent duplicate. A test
+    that needs a chosen token replaces it, which states that fact where it
+    matters.
 
     Returns
     -------
     Event
         The event, with the git origin and a one-second runtime.
     """
+    admitted_at, observed_at = moments
     derived = hashlib.sha256(
         f"{index}|{admitted_at}|{observed_at}|{label}".encode()
     ).hexdigest()[:16]
@@ -83,7 +84,7 @@ def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario 
         runtime_seconds=1.0,
         label_observed_verified=verified,
         completed_at=observed_at,
-        attempt=f"a{derived}" if attempt is None else attempt,
+        attempt=f"a{derived}",
         supervisor_generation="test-generation",
     )
 

@@ -175,31 +175,62 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
     Returns
     -------
     dict[str, object]
-        JSON-compatible fields prefixed with the record kind.
-
-    Raises
-    ------
-    ValueError
-        If the row states evidence its document version cannot carry.
+        JSON-compatible fields prefixed with the record kind. An outcome row
+        whose evidence its version cannot state is refused by
+        :func:`_outcome_fields`.
     """
     fields = dc.asdict(record)
     fields["observed_at"] = timestamp_text(record.observed_at)
     if isinstance(record, OutcomeRecord):
-        fields["admitted_at"] = (
-            None if record.admitted_at is None else timestamp_text(record.admitted_at)
-        )
-        if record.completed_at is not None:
-            fields["completed_at"] = timestamp_text(record.completed_at)
-        for name, introduced in _FIELD_INTRODUCED.items():
-            if version < introduced and getattr(record, name) is not None:
-                msg = f"an older document cannot state {name.replace('_', ' ')}"
-                raise ValueError(msg)
-        allowed = _ROW_FIELDS_BY_VERSION.get(version)
-        if allowed is None:
-            msg = "store record version is not supported"
-            raise ValueError(msg)
-        fields = {name: value for name, value in fields.items() if name in allowed}
+        fields = _outcome_fields(fields, record, version)
     return {"kind": kind, **fields}
+
+
+def _outcome_fields(
+    fields: dict[str, object], record: OutcomeRecord, version: int
+) -> dict[str, object]:
+    """Restrict one outcome row to the shape its document version can state.
+
+    The version decides which fields the document holds, so a row is reduced to
+    that shape here rather than written with evidence its own reader would
+    refuse.
+
+    Returns
+    -------
+    dict[str, object]
+        The canonicalized fields the version accepts.
+
+    Raises
+    ------
+    ValueError
+        If the row claims evidence the version cannot carry, or the version is
+        not supported.
+    """
+    fields["admitted_at"] = (
+        None if record.admitted_at is None else timestamp_text(record.admitted_at)
+    )
+    if record.completed_at is not None:
+        fields["completed_at"] = timestamp_text(record.completed_at)
+    _require_expressible(record, version)
+    allowed = _ROW_FIELDS_BY_VERSION.get(version)
+    if allowed is None:
+        msg = "store record version is not supported"
+        raise ValueError(msg)
+    return {name: value for name, value in fields.items() if name in allowed}
+
+
+def _require_expressible(record: OutcomeRecord, version: int) -> None:
+    """Refuse a row that claims evidence its document version cannot state.
+
+    Raises
+    ------
+    ValueError
+        If a field the row carries was introduced after the document version.
+    """
+    for name, introduced in _FIELD_INTRODUCED.items():
+        if version < introduced and getattr(record, name) is not None:
+            msg = f"an older document cannot state {name.replace('_', ' ')}"
+            raise ValueError(msg)
 
 
 def _summary_counts(summary: WindowSummary) -> tuple[int, ...]:
