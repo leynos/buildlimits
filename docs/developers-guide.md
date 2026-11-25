@@ -512,53 +512,6 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_shell_status`                                                             | Returns the retention document an operator reads, reporting `snapshot_unavailable` when the read fails; called by `supervisor_outcomes.OutcomeShell.retention`                                         |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                                                                                                                              |
 | `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                                                                                                                    |
-||||||| parent of c14d80c (Document the timing contract and report the scored population)
-| Module                                                                             | Responsibility                                                                                                                                              |
-| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                                                                                 |
-| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views                                                              |
-| `supervisor`                                                                       | Event loop that carries out admission's effects                                                                                                             |
-| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions                                                                          |
-| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                                                                         |
-| `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                                                                           |
-| `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes                                                                    |
-| `supervisor_observability`                                                         | Wires cached pressure, periodic gauges and drain observation into existing owners                                                                           |
-| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                                                                        |
-| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                                                                             |
-| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                                                                            |
-| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                                                                               |
-| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                                                                        |
-| `request_observation`                                                              | The metric and journal dependencies one request table reports through                                                                                       |
-| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                                                                        |
-| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                                                                          |
-| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                                                                               |
-| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                                                                            |
-| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                                                                             |
-| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution                                                                          |
-| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                                                                            |
-| `pool`                                                                             | The token device, read on a thread of its own                                                                                                               |
-| `sccache`, `sccache_cgroup`, `server_watch`                                        | The managed cache's reachability, control-group reads and accounting; `SERVER_DRAIN` release                                                                |
-| `cache_backend`, `cache_backends`, `cache_modes`                                   | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary                                                             |
-| `kache`, `kache_guard`, `compiler_argv`                                            | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal                                                             |
-| `server_drain`                                                                     | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work                                                                        |
-| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                                                                                    |
-| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting                                                                       |
-| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`                                                             |
-| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier, diagnostic process trees and shared `/proc` identity parsing                                                      |
-| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                                                                               |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc                                                                          |
-| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                                                                           |
-| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                                                                               |
-| `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                                                                          |
-| `outcome_replay`, `outcome_replay_scoring`                                         | H2 and H3 report types with their threshold verdicts, and the streaming folds that count their evidence                                                     |
-| `outcome_replay_cli`                                                               | The replay command over the local outcome store                                                                                                             |
-| `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report; its domain modules import no file-system, JSON or command module (see §2.3) |
-| `predict.predictors`                                                               | The `Predictor` protocol: predict at one admission moment, learn from a delivered label                                                                     |
-| `predict.paths`                                                                    | `same_file`: whether two paths name one file, including through a symbolic link                                                                             |
-| `predict.dataset_inputs`                                                           | The files a dataset snapshot reads, and whether the output would replace or sit beside one                                                                  |
-| `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
-| `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
-| `predict.timing`                                                                   | Closed timing, availability and attempt-correlation audit, with `exclusions` and `scored` derivations                                                       |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
 | `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
@@ -650,6 +603,8 @@ Each module owns one decision. This table is the single module inventory.
 | `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                                                                         |
 
 _Table 2: Package modules._
+=======
+>>>>>>> f019d74 (Record the version 5 reconciliation in the plan and the ADR)
 
 Four seams let a test replace one resource boundary without a live host.
 `OutcomeDependencies` groups the optional collaborators the enabled shell
@@ -1141,17 +1096,17 @@ one.
 every row emitted for that launch. `observed_at` is the time the label or
 refusal became known, and the recorder takes it from the event that caused the
 emission: the poll result whose query returned, the gate that opened, or the
-stop that closed recording. A group's completion time is carried on `Ended`
-and on the retained launch as evidence, and is never a row's label time,
-because sccache exposes no label until the statistics query that reads it
-returns. Every row one reading emits, its window summary included, shares that
-reading's moment, so two launches finishing out of order cannot produce a store
-whose recorded clock runs backwards. `_row_time` falls back to the launch's
-completion only for a purely synthetic event that carries no wall clock at
-all. `observed_at` is never reduced by `runtime_seconds` to manufacture an
-admission time. The dataset adapter maps the value onto `Event.admitted_at`,
-and `Snapshot.stats()` counts the labelled, decision-timed, availability-timed
-and scored populations separately. The correlation pair
+stop that closed recording. A group's completion time is carried on `Ended` and
+on the retained launch as evidence, and is never a row's label time, because
+sccache exposes no label until the statistics query that reads it returns.
+Every row one reading emits, its window summary included, shares that reading's
+moment, so two launches finishing out of order cannot produce a store whose
+recorded clock runs backwards. `_row_time` falls back to the launch's
+completion only for a purely synthetic event that carries no wall clock at all.
+`observed_at` is never reduced by `runtime_seconds` to manufacture an admission
+time. The dataset adapter maps the value onto `Event.admitted_at`, and
+`Snapshot.stats()` counts the labelled, decision-timed, availability-timed and
+scored populations separately. The correlation pair
 `(supervisor_generation, attempt)` is what tells one invocation from another,
 and `predict.timing.audit` classifies each event against the decision,
 availability and correlation gates with a closed exclusion vocabulary.

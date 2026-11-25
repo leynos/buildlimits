@@ -32,17 +32,17 @@ later statistics reading, which disables recording while admission continues.
 The store format is version 5 and the snapshot format is version 5. An outcome
 row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`
 and `outcome_attribution` (version 2), the `label_time_provenance` marker that
-says whether its label time is proven (version 3), the `generation_digest`
-that names the sccache generation its reading observed (version 4), and the
-UTC `completed_at` moment with the bounded `attempt` and
-`supervisor_generation` correlation tokens (version 5). A snapshot adds the
-bounded label-loss diagnostics, including the per-generation breakdown, and,
-per event, the `label_observed_verified` marker that carries the same
-statement as the row's provenance, plus the completion moment and correlation
-pair. Version 1 to 4 stores and snapshots remain readable, and their rows
-report the newer evidence as `unrecorded` or absent, so a history written
-before the markers existed contributes no proven labels, admission times,
-generation counts or correlations to the prediction benchmark.
+says whether its label time is proven (version 3), the `generation_digest` that
+names the sccache generation its reading observed (version 4), and the UTC
+`completed_at` moment with the bounded `attempt` and `supervisor_generation`
+correlation tokens (version 5). A snapshot adds the bounded label-loss
+diagnostics, including the per-generation breakdown, and, per event, the
+`label_observed_verified` marker that carries the same statement as the row's
+provenance, plus the completion moment and correlation pair. Version 1 to 4
+stores and snapshots remain readable, and their rows report the newer evidence
+as `unrecorded` or absent, so a history written before the markers existed
+contributes no proven labels, admission times, generation counts or
+correlations to the prediction benchmark.
 
 The compatibility promise covers documents a **release** wrote. Snapshots taken
 by intermediate revisions of this branch before the omission fields existed

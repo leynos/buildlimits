@@ -831,11 +831,11 @@ A hit or miss label is dated when the statistics reading that produced it
 returned, not when the compilation finished. sccache exposes no label before
 that reading, so the recorded time is the earliest moment the label could have
 been known, and the benchmark never releases it earlier than that. The current
-store row states `label_time_provenance: "verified"`, because the recorder
-that wrote it is the one that dates every row at its reading. A version 1 or 2
-row cannot prove which code dated it, so the dataset command marks every one of
-its label times unverified. The benchmark withholds an unverified label rather
-than scoring it, and reports the count as `unverified_label_time` in both the
+store row states `label_time_provenance: "verified"`, because the recorder that
+wrote it is the one that dates every row at its reading. A version 1 or 2 row
+cannot prove which code dated it, so the dataset command marks every one of its
+label times unverified. The benchmark withholds an unverified label rather than
+scoring it, and reports the count as `unverified_label_time` in both the
 command's output and `results.md`. A snapshot's own event carries the same
 marker, so a store history recorded by the current release is scored, and an
 older one is withheld until new rows replace it.
@@ -902,9 +902,9 @@ reported as unreadable rather than scored. A history with a handful of usable
 admission times, below the configured held-out minimum, produces
 `insufficient held-out evidence` rather than a verdict. The report never pads
 the history with synthetic rows to reach a threshold, and a negative comparison
-is printed as found rather than explained away. Both commands exit with status 0
-on success, 1 when the snapshot or store cannot be read or the output cannot be
-written, and 2 on invalid usage or an unreadable configuration.
+is printed as found rather than explained away. Both commands exit with status
+0 on success, 1 when the snapshot or store cannot be read or the output cannot
+be written, and 2 on invalid usage or an unreadable configuration.
 
 ### Adapter environment
 

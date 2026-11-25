@@ -55,20 +55,17 @@ conflicting one.
 
 ## Decision
 
-### D1: version 3 rows carry the complete timing group
+### D1: version 5 rows carry the correlation group
 
-An `outcome` row gains four fields. They are written together or not at all;
-the encoder writes the version 2 shape when the group is incomplete, so a row
-can never claim evidence it does not have.
+An `outcome` row gains three fields. `attempt` and `supervisor_generation` are
+one identity and are written together or not at all; `completed_at` travels
+beside them and is independently optional, because a group still running when
+its row was written has no completion time. A row that states half a pair is
+refused rather than written, because nothing could join it to an invocation.
 
 - `completed_at`: the UTC moment this launch's group completion was handled.
   It is retained for provenance and retention and is never a prediction or a
   release moment.
-- `label_available_at`: the UTC moment the observer accepted the reading that
-  justifies the label. For an accepted attribution this is the poll boundary at
-  which the statistics result and the server generation were both observed. For
-  a refusal it is the moment the refusal was decided. It is never the group's
-  completion time.
 - `attempt`: the bounded admission group identifier for this one invocation.
   Production identifiers are `g<N>` within one supervisor process.
 - `supervisor_generation`: a bounded random token minted once per supervisor
@@ -76,10 +73,11 @@ can never claim evidence it does not have.
   new token, so a reused group identifier can never join a row written by an
   earlier process.
 
-`observed_at` keeps its historical meaning. A version 3 row sets it to its own
-group's completion-handling time when one was observed, else to the moment the
-row's outcome was decided. The recorder no longer selects one launch's
-timestamp for a whole window.
+The label-availability boundary is not a separate column. It is the row's
+`observed_at`, which the recorder dates at the statistics reading that produced
+the label, and `label_time_provenance` states whether that time is proof. That
+marker already existed in version 3; duplicating the moment would let the two
+columns disagree, so they are one value and one statement about it.
 
 ### D2: the decision boundary is marked where admission is applied
 
@@ -91,14 +89,16 @@ has not marked an admission is still filled in before its fork, but an
 already-marked entry is never re-stamped. Re-stamping would describe process
 placement rather than the decision.
 
-### D3: availability is captured at the poll boundary
+### D3: the row's moment is the reading's own, never a launch's
 
 `PollResult` carries a UTC reading paired with its monotonic time. The recorder
 driver is the only place that pairs them; the pure reducer never reads a clock.
 When the reducer accepts a statistics result, every row of that window takes
-the same availability moment. When it refuses a reading, the refusal's own
-boundary is the row's availability. When a launch overflows the window, the
-launch event that caused the overflow supplies the moment.
+the same moment: the poll boundary at which the reading returned. When it
+refuses a reading, the refusal's own boundary is that moment. When a launch
+overflows the window, the launch event that caused the overflow supplies it.
+`_row_time` falls back to a launch's completion only for a purely synthetic
+event that carries no wall clock at all.
 
 ### D4: correlation is joined by `(supervisor_generation, attempt)`
 
@@ -112,15 +112,22 @@ Both tokens are bounded and validated against a path-free character set, so the
 existing redaction contract holds. Neither reveals a path, an argument, a
 process identifier or a host name.
 
-### D5: the snapshot is version 3 and the replay uses verified availability
+A row that proved its time but names no invocation still releases: the marker
+and the pair answer different questions, and requiring both would make every
+version 3 or 4 row unscorable for a fact it never could have carried. Such a
+row takes no part in duplicate or conflict detection, and the audit reports it
+as uncorrelated rather than inventing an identity.
 
-The snapshot event gains `completed_at`, `label_available_at`, `attempt` and
-`supervisor_generation`. Version 1 and 2 documents still load, with the new
-fields absent. The replay releases a label at its verified availability time
-and nowhere else: `observed_at` is never a release time. An event with no
-verified availability is not released, not predicted and not scored. The
-training/held-out split and the equal-time batching both use availability, so
-rows accepted at one reading land in one batch.
+### D5: the snapshot is version 5 and carries the correlation group
+
+The snapshot event gains `completed_at`, `attempt` and `supervisor_generation`,
+and keeps `label_observed_verified` as the statement about its time. Version 1
+to 4 documents still load, with the newer fields absent. The replay releases a
+label at its verified time and nowhere else: an unverified `observed_at` is
+never a release time. An event with no verified time is not released, not
+predicted and not scored. The training/held-out split and the equal-time
+batching both use that verified moment, so rows accepted at one reading land in
+one batch.
 
 ### D6: chronology is checked on availability, in append order
 
@@ -152,25 +159,27 @@ benchmark's sufficiency block both print those counts. The benchmark adds an
 strict-before rule: a decision at exactly the availability instant does not see
 that label.
 
-Availability is verified as a whole group. A row that names an availability
-moment without its attempt and generation cannot be correlated to one
-invocation, so `predict.events.label_moment` returns nothing for it and it
-releases no label. The same rule decides what a duplicate or a conflict is: two
-rows join only within one generation.
+Availability is verified by the row's provenance marker, and the correlation
+pair decides identity. `predict.events.label_moment` returns the verified
+moment and nothing for an unproven row; the pair is what makes a duplicate or a
+conflict, and two rows join only within one generation. Keeping the two rules
+apart is what lets an older verified row still score while an uncorrelated row
+is reported as uncorrelated.
 
 ## Consequences
 
 - A controlled cold/warm run through the real sccache observer now produces
-  rows whose `label_available_at` is later than `completed_at` and whose
-  `admitted_at` precedes both. The extraction reports a scored population that
-  is smaller than its labelled population, and says why.
+  rows whose label moment is the reading that accepted it and whose
+  `admitted_at` precedes it, with the completion moment beside them. The
+  extraction reports a scored population that is smaller than its labelled
+  population, and says why.
 - Version 1 and 2 history remains readable and contributes no labels to the
-  benchmark. An operator who wants usable evidence must run the version 3
-  recorder; no historical row is retroactively repaired.
-- A row grows by the four timing fields, up to about 140 bytes for the longest
-  attempt and generation tokens. Segment boundaries and archive sizes move
-  again; the retention and archive tests use the encoder's own size rather than
-  a hard-coded row size.
+  benchmark. An operator who wants usable evidence must run a recorder that
+  writes the provenance marker; no historical row is retroactively repaired.
+- A row grows by the three correlation fields, up to about 140 bytes for the
+  longest attempt and generation tokens. Segment boundaries and archive sizes
+  move again; the retention and archive tests use the encoder's own size rather
+  than a hard-coded row size.
 - A duplicate append is no longer double-counted in a predictor's history. A
   conflicting pair is visibly excluded rather than silently scored twice.
 - The store's append order is still the only record order; nothing sorts by a

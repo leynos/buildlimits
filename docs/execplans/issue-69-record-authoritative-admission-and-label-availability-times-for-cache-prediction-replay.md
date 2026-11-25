@@ -14,10 +14,10 @@ this is bounded instrumentation, schema and replay-integration work.
 
 ## Status
 
-Implemented on the issue #69 branch, rebased onto the issue #68 branch. The
-live host service has not been upgraded; a controlled real-sccache run is the
-evidence that new rows carry the timing group, and no historical row is
-retroactively repaired.
+Implemented on the issue #69 branch, rebased onto the rewritten issue #68
+branch. The live host service has not been upgraded; a controlled real-sccache
+run is the evidence that new rows carry the correlation group, and no
+historical row is retroactively repaired.
 
 All six commit gates pass at the final commit: `check-fmt`, `lint` (ruff,
 interrogate, both Pylint sweeps, Ambrleaks, Skylos, Nose duplication and the
@@ -27,52 +27,39 @@ host checks also pass: `test-sccache-host` against the real sccache 0.14.0, and
 
 One lesson worth recording: `make test` collects the package's doctests as well
 as `tests/`, so a focused `pytest tests/...` run during development does not
-see an example that the format change invalidated. Four examples needed the
-current version and a complete timing group; they are part of the commit that
-fixed them, not a follow-up.
+see an example that the format change invalidated. Examples that pin a format
+version must be updated with the version, not in a follow-up.
 
-### Resolved: reconciled with the issue #68 label-reading fix
+### Resolved: reconciled with the issue #68 label-time and loss accounting
 
-After this branch was cut, the issue #68 branch gained its own fix for the same
-`observed_at` defect: `Launched`, `Ended`, `GateOpen` and `PollResult` carry an
-`observed_at`, and the recorder stamps each row from the event that produced
-it, so `observed_at` itself becomes the moment the reading returned. That is
-the same boundary this branch calls `label_available_at`.
+The issue #68 branch was rewritten while this branch was in review. Its new
+history solves the same `observed_at` defect in its own idiom, and adds label
+loss accounting this branch does not carry. The second rebase reconciled the
+two designs rather than choosing one:
 
-The two designs are not interchangeable. The issue #68 fix reinterprets
-`observed_at` for every row that already exists, and rows the earlier build
-wrote carry a completion stamp there, so the field can no longer distinguish a
-verified reading moment from a historical completion stamp. This branch keeps
-every moment distinct: `observed_at` keeps its historical provenance,
-`label_available_at` is written only when the observer accepted the reading, and
-`attempt` plus `supervisor_generation` say which invocation the row belongs
-to. A version 1 or 2 row is then explicitly unscorable rather than
-reinterpreted.
+- The base dates every row at the statistics reading that produced it, and
+  states whether that time is proof with `label_time_provenance` (`verified`)
+  on a store row and `label_observed_verified` on a snapshot event. This branch
+  adopted that marker and dropped its own `label_available_at` column: the two
+  always carried the same value, and one column plus one statement about it
+  cannot disagree with itself.
+- The base's `generation_digest` names the sccache generation a reading
+  observed. It is a different correlation key from this branch's
+  `(supervisor_generation, attempt)` pair, which names the supervisor process
+  and the admission group, and both are kept.
+- What this branch adds on top is the part the base does not carry: the
+  per-attempt identity, the completion moment kept apart from the label moment,
+  the duplicate and conflict contract, and `predict.timing.audit` with its
+  closed exclusion vocabulary and scored-versus-labelled split.
+- The marker and the pair answer different questions, so verification depends
+  on the marker alone. Requiring the pair as well would make every version 3 or
+  4 row unscorable for a fact its release could never have written. A row that
+  proves its time but names no invocation still releases; it simply takes no
+  part in duplicate or conflict detection and is reported as uncorrelated.
 
-The branch is now rebased onto the issue #68 fix, and the resolution keeps both
-intentions:
-
-- The issue #68 plumbing is adopted rather than duplicated. `_EmissionMoment`,
-  `_row_time`, `_emit_unattributed` and `_emit_attribution` in
-  `outcome_recorder_outputs` remain the single place a row's moment is chosen,
-  and the shell's `observed_at` stamps on every recorder event remain the
-  moment source. This branch adds only the provenance the fix does not carry:
-  the `_TimingEvidence` value holding `completed_at`, `attempt` and
-  `supervisor_generation`.
-- `label_available_at` is written as the reading's own moment, so the release
-  boundary is the same one the issue #68 fix intends, while a row without a
-  supervisor generation keeps the version 2 shape and stays unscorable. That is
-  what preserves the "never backdate" rule for history the fix cannot vouch for.
-- The shared helpers the base introduced are reused rather than reimplemented:
-  `StoreHeader.version` (the file's own format, so a writer knows an older file
-  must be settled first), `outcome_recorder_effects`, and
-  `outcome_shell_dependencies`. The decoder, the recorder and the replay all
-  read one definition of the timing group from `outcome_record_timing`.
-
-Nothing from the issue #68 fix was dropped: its tests
-(`test_launches_that_finish_out_of_order_load_without_a_clock_refusal` and the
-recorder evidence suite) pass, with the shared `launch_payload` fixture
-modelling the generation a real supervisor always mints.
+The store and snapshot formats are therefore version 5: the base's version 4
+fields plus this branch's correlation group. Version 1 to 4 documents still
+load, and their newer evidence decodes as absent rather than guessed.
 
 ## The problem
 
@@ -97,31 +84,35 @@ attempt, and nothing could tell a retried append from a contradictory one.
 
 ## What changed
 
-- The store format is version 3. An outcome row adds `completed_at`,
-  `label_available_at`, `attempt` and `supervisor_generation` as one complete
-  timing group, written together or not at all. Version 1 and 2 rows stay
-  readable and keep their original fields.
+- The store format is version 5. Version 3 added `label_time_provenance`, the
+  token that says whether a row's own `observed_at` is the moment its label
+  became known; version 4 added `generation_digest`, the salted sccache
+  generation a reading observed; version 5 adds `completed_at`, `attempt` and
+  `supervisor_generation`. Versions 1 to 4 stay readable, and a field their
+  release could not write decodes as absent rather than guessed.
 - The supervisor marks the admission decision in its launch handler, before
   the stray-process guard or the fork. `Groups.place` only fills an entry a
   direct caller did not mark.
 - The recorder driver pairs the monotonic poll with the injected UTC clock, so
-  an accepted reading names the poll boundary as `label_available_at`. Each row
-  keeps its own `completed_at`; availability never depends on reversed launch
-  order.
+  every row one accepted reading emits shares that reading's moment. Each row
+  keeps its own `completed_at`; the label moment never depends on reversed
+  launch order.
 - A bounded `attempt` plus a per-process `supervisor_generation` identify one
   invocation. An exact repeated append is an idempotent duplicate; a
   contradictory pair is excluded rather than resolved.
-- The snapshot format is version 3 and carries every timing field. The replay
-  releases a label only at its verified availability time, never at
+- The snapshot format is version 5 and carries every event field. The replay
+  releases a label only at its verified moment, never at an unproven
   `observed_at`, and never releases, predicts or scores an unverified row.
-  Equal-time batching and the tuning/held-out split both use availability.
-- The snapshot loader refuses a history whose verified availability times
-  decrease in append order, on save as well as load. No monotonic absolute
-  value is persisted; readings from unrelated boot epochs cannot be compared.
+  Equal-time batching and the tuning/held-out split both use that moment.
+- The snapshot loader refuses an admission-bearing history whose verified
+  label times decrease in append order, on save as well as load. The check is
+  made over the rows the audit accepts, so a repeated attempt cannot fake a
+  step. No monotonic absolute value is persisted; readings from unrelated boot
+  epochs cannot be compared.
 - `SnapshotStats`, the dataset command and the benchmark report separately:
-  labelled records, records with recorded and usable decision timing, records
-  with recorded and usable availability, usable scored records, and exclusions
-  by closed reason. The benchmark adds an
+  labelled records, withheld unverified labels, records with usable decision
+  timings, the scored population and the exclusions by closed reason, plus the
+  duplicate and conflict counts. The benchmark adds an
   `insufficient label-availability times` status beside the existing admission
   and held-out statuses.
 
@@ -153,17 +144,17 @@ drives the supervisor's launch handler, the real reducer and the encoder. It
 pins that both clocks are read at the decision before placement advances them,
 that placement never re-stamps a marked entry, and that a poll without a UTC
 pairing leaves the row unverified. `tests/test_outcome_timing_rows.py` covers
-the row itself: that the timing group is written whole, that a payload without
-a generation keeps the version 2 shape, and that encode and decode round trip.
-`tests/test_outcome_timing_archive.py` pins archival preservation and the
-retention span.
+the row itself: that the correlation pair is written whole, that a payload
+without a generation writes an explicit null rather than an invented identity,
+and that encode and decode round trip. `tests/test_outcome_timing_archive.py`
+pins archival preservation and the retention span.
 
 One fixture decision is worth recording. A test that writes an older store
 format by stripping fields from a current row silently stops modelling that
 format once the row gains a field, and the resulting document is a hybrid no
 decoder accepts. `outcome_test_helpers.older_document_row` therefore derives
-each older shape from the timing group's own definition, so adding a timing
-field cannot leave a fixture behind, and both the upgrade fixtures and the
+each older shape from the encoder's own version table, so adding a field cannot
+leave a fixture behind, and both the upgrade fixtures and the
 benchmark-threshold history write their old rows through it.
 
 ### Controlled real-sccache evidence
@@ -172,19 +163,19 @@ benchmark-threshold history write their old rows through it.
 generation ports against sccache 0.14.0 and a private cache directory. One run
 of the controlled cold then warm compilation reported:
 
-| Row       | Attempt | `admitted_at` | `completed_at` | `label_available_at` |
-| --------- | ------- | ------------- | -------------- | -------------------- |
-| cold miss | `cold`  | 07.697935Z    | 07.933240Z     | 08.708561Z           |
-| warm hit  | `warm`  | 08.710275Z    | 08.782359Z     | 09.719281Z           |
+| Row       | Attempt | `admitted_at` | `completed_at` | label moment (`observed_at`) |
+| --------- | ------- | ------------- | -------------- | ---------------------------- |
+| cold miss | `cold`  | 07.697935Z    | 07.933240Z     | 08.708561Z                   |
+| warm hit  | `warm`  | 08.710275Z    | 08.782359Z     | 09.719281Z                   |
 
 Both rows are `solo`, carry the injected `observer-generation`, and satisfy
-`admitted_at <= completed_at <= label_available_at`. The availability moment
-lands 0.78 s and 0.94 s after completion: it is the poll at which the observer
-accepted the statistics reading, not the completion timestamp. That is the
-whole point of the change. The extraction over the same rows reports two
-labels, every retained row carrying a verified availability, and
-`unknown_outcome` as the only exclusion, because the mixed, timeout and restart
-rows carry no hit or miss label.
+`admitted_at <= completed_at <= observed_at`. The label moment lands 0.78 s and
+0.94 s after completion: it is the poll at which the observer accepted the
+statistics reading, not the completion timestamp, and the run marks it
+`verified`. That is the whole point of the change. The extraction over the same
+rows reports two labels, every retained row carrying a verified availability,
+and `unknown_outcome` as the only exclusion, because the mixed, timeout and
+restart rows carry no hit or miss label.
 
 This is a controlled measurement, not a live-host reading. It proves the new
 rows are trustworthy; it does not claim that the live service now records them.
@@ -193,12 +184,13 @@ and restarts it.
 
 ## Limitations
 
-- Version 1 and 2 history remains unscorable by design. No availability time is
+- Version 1 and 2 history remains unscorable by design. No label time is
   derived from a completion stamp, a runtime, a file modification time or a
-  journal match.
+  journal match, because none of them proves when the observer accepted the
+  reading.
 - The live supervisor still runs the previous recorder. New rows with the
-  timing group require an operator upgrade and restart; this change does not
-  modify the service.
+  correlation group require an operator upgrade and restart; this change does
+  not modify the service.
 - The availability moment is a conservative later bound: it is the poll at
   which the observer accepted the reading, not the instant the sccache child
   wrote its output. A later bound is safe for causality because it never
