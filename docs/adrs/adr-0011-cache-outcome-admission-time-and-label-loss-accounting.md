@@ -452,9 +452,12 @@ the shell never supplied.
     HMAC-SHA-256 over the recorder's `(invocation, pid, starttime)` identity,
     using the same per-store salt domain as the cache key, so no host path or
     process id is retained.
-  - The recorder writes it from `after_generation` on every row an attributing
-    or refusing reading emits; a reading whose generation was unavailable
-    writes null, and version 1 to 3 rows decode it as absent.
+  - The recorder writes it from the reading's observed boundary generation on
+    every row an attributing or refusing reading emits; version 1 to 3 rows
+    decode it as absent. Because a server can change inside a reading, the
+    boundary generation is an *observation of the window's end*, not proof of
+    which server handled each compilation: `generation_changed` windows write
+    null, since no single generation can be attributed to their rows.
   - `StoreAccounting` gains a bounded `by_generation` map (the same 64-entry
     cap as the other dimensions, with `unrecorded` for older rows) and the
     snapshot diagnostics gains the matching block, which the loader reconciles

@@ -274,7 +274,7 @@ def test_every_omission_token_reaches_the_observer_through_the_real_schema(
         "label_time_unavailable": 1,
     }, "both real reasons are counted by their closed token"
     assert set(observer.by_omission_reason) == set(reported), (
-        "an explicit none is a stored outcome, so it names no omission reason"
+        "an explicit none means no pre-store omission, so it names no reason"
     )
     assert observer.record_omitted == len(reported), (
         "the omitted total is the events that reported one"

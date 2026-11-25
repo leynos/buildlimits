@@ -98,9 +98,10 @@ def _pair_events_and_records(
     """Build each launch's event and row from one shared decision.
 
     The omission reason is computed once per launch and copied onto the event,
-    so the journal and the store cannot disagree about whether that outcome was
-    stored. Building both sides here rather than in two comprehensions is what
-    keeps the reconciliation a property of the code rather than a test.
+    so the journal and the store cannot disagree about whether a *pre-store*
+    omission applied to that outcome. That is all the pairing proves: the row
+    is a candidate the writer may still discard or leave queued, so the shared
+    reason is not evidence that the outcome reached the file.
 
     Returns
     -------
