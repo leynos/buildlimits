@@ -113,16 +113,17 @@ def test_an_empty_history_states_no_generation_buckets() -> None:
     )
 
 
-def test_the_generation_version_matches_the_snapshot_version() -> None:
-    """The two constants name one format, and must not drift apart.
+def test_the_generation_version_cannot_follow_the_snapshot_version() -> None:
+    """The maps arrived at their own version and stay defined after it.
 
     `diagnostics_generations` repeats the version rather than importing it, to
     avoid the cycle the module docstring records. A repeated constant can drift
-    silently, so this pins the pair: if the snapshot version moves, the
-    generation rule moves with it.
+    silently, so this pins the relationship: a later snapshot version may add
+    fields of its own, but the generation maps' own version can never move
+    past it, which would leave a current document that cannot state them.
     """
-    assert GENERATION_VERSION == SNAPSHOT_VERSION, (
-        "the generation maps arrive with the snapshot version that defines them"
+    assert GENERATION_VERSION <= SNAPSHOT_VERSION, (
+        "the generation maps cannot arrive after the current snapshot version"
     )
 
 

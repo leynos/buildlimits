@@ -175,7 +175,7 @@ identity.
 | Store    | 5       | `completed_at`, `attempt` and `supervisor_generation` on an outcome row                     |
 | Snapshot | 3       | `label_observed_verified` on every event, so a row states its label-time proof              |
 | Snapshot | 4       | `by_generation` and `labels_by_generation` in the diagnostics, the per-generation breakdown |
-| Snapshot | 5       | `completed_at`, `attempt` and `supervisor_generation` on every event                       |
+| Snapshot | 5       | `completed_at`, `attempt` and `supervisor_generation` on every event                        |
 
 A version 1 or 2 snapshot still loads, with every event's label time treated as
 unverified. A version 3 or later snapshot event that omits the marker is
