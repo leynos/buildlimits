@@ -56,11 +56,8 @@ def assert_extraction(records: list[StoreRecord], salt: Salt) -> None:
     assert stats.admission_usable == stats.events, (
         "each admission precedes its own label"
     )
-    assert stats.availability_recorded == stats.events, (
-        "every retained row records the poll boundary that accepted it"
-    )
-    assert stats.availability_usable == stats.events, (
-        "each availability follows its own admission"
+    assert stats.unverified_label_time == 0, (
+        "every retained row proves the poll boundary that accepted it"
     )
     assert stats.scored == 2, "only the controlled miss and hit are scorable"
     unscorable = sum(
@@ -73,8 +70,9 @@ def assert_extraction(records: list[StoreRecord], salt: Salt) -> None:
         "a row that was verified at the poll boundary"
     )
     assert all(
-        record.label_available_at is not None for record in outcomes(tuple(records))
-    ), "every real row carries the acceptance boundary"
+        record.label_time_provenance == "verified"
+        for record in outcomes(tuple(records))
+    ), "every real row proves the moment its label became known"
     assert snapshot.diagnostics is not None, "the accounting block is present"
     assert snapshot.diagnostics.store.by_result["hit"] == 1, "one real hit"
     assert snapshot.diagnostics.store.by_result["miss"] == 1, "one real miss"
@@ -96,11 +94,12 @@ def _assert_replay_trace(snapshot: object, records: list[StoreRecord]) -> None:
         The retained rows, in the order the recorder produced them.
     """
     from buildlimits.predict.dataset import Snapshot
+    from buildlimits.predict.events import label_moment
     from buildlimits.predict.harness import walk_forward
 
     typed = typ.cast("Snapshot", snapshot)
     walk = walk_forward(typed.events, load_config())
-    verified = [event for event in typed.events if event.label_available_at is not None]
+    verified = [event for event in typed.events if event.label_observed_verified]
 
     assert len(verified) == len(outcomes(tuple(records))), (
         "every retained invocation survives extraction with its availability"
@@ -113,7 +112,7 @@ def _assert_replay_trace(snapshot: object, records: list[StoreRecord]) -> None:
     )
     assert all(
         event.admitted_at is not None
-        and event.admitted_at <= typ.cast("dt.datetime", event.label_available_at)
+        and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
         for event in verified
     ), "each invocation's decision precedes the moment its label was accepted"
     assert sum(len(group) for group in walk.moments) == len(verified), (

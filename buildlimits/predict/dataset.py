@@ -101,48 +101,48 @@ class StoreHistory:
 class SnapshotStats:
     """What the snapshot's event stream really represents.
 
-    The timing counts separate the two independent gates a scorable record
-    must pass: a trustworthy decision time and a trustworthy label-availability
-    time. ``scored`` is the intersection, and ``excluded`` states why the rest
-    are not scored, so more labels alone never read as chronological validity.
+        The timing counts separate the two independent gates a scorable record
+        must pass: a trustworthy decision time and a trustworthy label-availability
+        time. ``scored`` is the intersection, and ``excluded`` states why the rest
+        are not scored, so more labels alone never read as chronological validity.
 
     Attributes
     ----------
-    events : int
-        Every event in the history.
-    labelled : int
-        Events carrying a hit or miss label.
-    labelled_fraction : float
-        The labelled share of the history, or zero for an empty one.
-    identities : int
-        Distinct compilation identities seen.
-    span_start : datetime | None
-        The earliest observation, or None for an empty history.
-    span_end : datetime | None
-        The latest observation, or None for an empty history.
-    admission_recorded : int
-        Events carrying an admission time.
-    admission_usable : int
-        Events whose admission time is at or before their verified
-        availability time, or before their historical label time where
-        availability was never verified.
-    admission_missing : int
-        Events carrying no admission time at all.
-    admission_unusable : int
-Events whose recorded admission time is after their label.
-    unverified_label_time : int
-        Hit or miss labels whose recorded observation time is unverified, so
-        the replay withholds them rather than scoring an unsound release time.
-    scored : int
-        Events that pass every timing, label and correlation gate.
-    excluded : Mapping[str, int]
-        Scored-population exclusions by closed reason.
-    duplicates : int
-        Rows that repeated an attempt with identical evidence.
-    conflicts : int
-        Rows whose attempt identity also appeared with different evidence.
-    gaps : tuple[Gap, ...]
-        Silences longer than the configured threshold.
+        events : int
+            Every event in the history.
+        labelled : int
+            Events carrying a hit or miss label.
+        labelled_fraction : float
+            The labelled share of the history, or zero for an empty one.
+        identities : int
+            Distinct compilation identities seen.
+        span_start : datetime | None
+            The earliest observation, or None for an empty history.
+        span_end : datetime | None
+            The latest observation, or None for an empty history.
+        admission_recorded : int
+            Events carrying an admission time.
+        admission_usable : int
+            Events whose admission time is at or before their verified
+            availability time, or before their historical label time where
+            availability was never verified.
+        admission_missing : int
+            Events carrying no admission time at all.
+        admission_unusable : int
+    Events whose recorded admission time is after their label.
+        unverified_label_time : int
+            Hit or miss labels whose recorded observation time is unverified, so
+            the replay withholds them rather than scoring an unsound release time.
+        scored : int
+            Events that pass every timing, label and correlation gate.
+        excluded : Mapping[str, int]
+            Scored-population exclusions by closed reason.
+        duplicates : int
+            Rows that repeated an attempt with identical evidence.
+        conflicts : int
+            Rows whose attempt identity also appeared with different evidence.
+        gaps : tuple[Gap, ...]
+            Silences longer than the configured threshold.
     """
 
     events: int

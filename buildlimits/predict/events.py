@@ -129,43 +129,42 @@ class Features:
 def label_moment(event: Event) -> dt.datetime | None:
     """Return when the event's label became knowable, if it was verified.
 
-``observed_at`` is a label time only when the recorder marked it verified,
-    because it dated that row at the statistics reading that produced the
-    label. For an unverified row the recorded time is a lower bound the
-    observer never accepted, so it releases nothing: reading it would let a
-    prediction use a label that had not been observed yet.
+    ``observed_at`` is a label time only when the recorder marked it verified,
+        because it dated that row at the statistics reading that produced the
+        label. For an unverified row the recorded time is a lower bound the
+        observer never accepted, so it releases nothing: reading it would let a
+        prediction use a label that had not been observed yet.
 
-    The marker and the correlation group answer different questions. The marker
-    proves *when* the label was known; ``attempt`` and ``supervisor_generation``
-    say *which invocation* the row belongs to. A row can prove its time without
-    naming an invocation, so an older verified row still releases; what it
-    cannot do is take part in duplicate or conflict detection, and the audit
-    reports it as uncorrelated rather than inventing an identity.
+        The marker and the correlation group answer different questions. The marker
+        proves *when* the label was known; ``attempt`` and ``supervisor_generation``
+        say *which invocation* the row belongs to. A row can prove its time without
+        naming an invocation, so an older verified row still releases; what it
+        cannot do is take part in duplicate or conflict detection, and the audit
+        reports it as uncorrelated rather than inventing an identity.
 
     Parameters
     ----------
-    event : Event
-        The recorded event.
+        event : Event
+            The recorded event.
 
     Returns
     -------
-    datetime | None
-        The verified availability time, or None when the source proved none.
+        datetime | None
+            The verified availability time, or None when the source proved none.
 
     Examples
     --------
-    >>> label_moment(Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)) is None
-    True
-    >>> label_moment(
-    ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-...           label_observed_verified=True)
-    ... ) == EPOCH
-    True
-    >>> label_moment(
-    ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-    ...           label_available_at=moment)
-    ... ) is None
-    True
+        >>> label_moment(Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)) is None
+        True
+        >>> label_moment(
+        ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
+        ...           label_observed_verified=True)
+        ... ) == EPOCH
+        True
+        >>> label_moment(
+        ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)
+        ... ) is None
+        True
     """
     return event.observed_at if event.label_observed_verified else None
 

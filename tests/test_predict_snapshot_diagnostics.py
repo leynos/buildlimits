@@ -28,6 +28,23 @@ from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 
+def _drop_from_events(document: dict[str, object], fields: tuple[str, ...]) -> None:
+    """Remove the named fields from every event in a snapshot document."""
+    for event in _events(document):
+        for name in fields:
+            event.pop(name, None)
+
+
+def _drop_generation_map(document: dict[str, object]) -> None:
+    """Remove the per-generation diagnostics map a version 3 document lacked."""
+    block = document.get("diagnostics")
+    if not isinstance(block, dict):
+        return
+    store = typ.cast("dict[str, object]", block).get("store")
+    if isinstance(store, dict):
+        typ.cast("dict[str, object]", store).pop("by_generation", None)
+
+
 def test_a_version_one_snapshot_loads_without_diagnostics(tmp_path: Path) -> None:
     """A snapshot written before the accounting block remains readable."""
     document = document_as_version(diagnostics_document(), 1)

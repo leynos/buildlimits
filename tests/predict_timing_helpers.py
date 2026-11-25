@@ -1,7 +1,7 @@
 """Builders for the cache-outcome timing contract tests.
 
-Each event carries a complete version 3 timing group, so a test can state exact
-decision, completion and acceptance moments and then assert what a later
+Each event carries a complete version 5 correlation group, so a test can state
+exact decision, completion and acceptance moments and then assert what a later
 decision could learn. The helpers are shared by the causal replay tests and the
 document round-trip tests, so "verified" has one definition.
 """
@@ -39,8 +39,10 @@ def event(  # ruff: ignore[too-many-arguments]  # one value per event fact; pyli
 ) -> Event:
     """Build one event with explicit decision and availability moments.
 
-    The historical observation time equals the availability time, which is what
-    a version 3 recorder writes for a row it accepted at one reading.
+    The observation time is the availability moment, and the row marks it
+    verified, which is what a version 5 recorder writes for a reading it
+    accepted. An event with no availability moment is written unverified, so it
+    releases nothing.
 
     Returns
     -------
@@ -55,8 +57,8 @@ def event(  # ruff: ignore[too-many-arguments]  # one value per event fact; pyli
         observed_at=moment if moment is not None else at(0),
         label=typ.cast("typ.Any", label),
         runtime_seconds=1.0,
+        label_observed_verified=moment is not None,
         completed_at=moment,
-        label_available_at=moment,
         attempt=f"g{index}" if attempt is None else attempt,
         supervisor_generation="generation-a",
     )

@@ -11,10 +11,6 @@ from buildlimits.outcome_record_format import (
     _KEY_FIELDS,
     _SUMMARY_COUNTS,
     _SUMMARY_FIELDS,
-    _V1_OUTCOME_FIELDS,
-    _V2_OUTCOME_FIELDS,
-    _V3_OUTCOME_FIELDS,
-    _V4_OUTCOME_FIELDS,
     FORMAT_NAME,
     FORMAT_VERSION,
     DecodedStore,
@@ -27,12 +23,12 @@ from buildlimits.outcome_record_format import (
     _text,
     _valid_outcome_fields,
 )
+from buildlimits.outcome_record_key import _validate_key
 from buildlimits.outcome_record_lines import (
     _parse_json_lines,
     _raw_json_row,
     _Unparsable,
 )
-from buildlimits.outcome_record_key import _validate_key
 from buildlimits.outcome_record_time import (
     INVALID_TIMESTAMP,
     optional_timestamp,
@@ -210,17 +206,17 @@ def _decode_outcome(
 ) -> OutcomeRecord | RecordFailure:
     """Decode one validated outcome mapping.
 
-A version 1 row has no admission or classification fields, and its absent
-    evidence decodes as None. Neither an older row nor an older document carries
-    the label-time provenance marker, the generation digest or the version 5
-    correlation pair, so each decodes as None, which is unproven, unattributed
-    and uncorrelated rather than false. A present but malformed timestamp,
-    marker, digest or token is corruption, not an absent value.
+    A version 1 row has no admission or classification fields, and its absent
+        evidence decodes as None. Neither an older row nor an older document carries
+        the label-time provenance marker, the generation digest or the version 5
+        correlation pair, so each decodes as None, which is unproven, unattributed
+        and uncorrelated rather than false. A present but malformed timestamp,
+        marker, digest or token is corruption, not an absent value.
 
     Returns
     -------
-    OutcomeRecord or RecordFailure
-        The typed outcome, or a corruption reason.
+        OutcomeRecord or RecordFailure
+            The typed outcome, or a corruption reason.
     """
     if frozenset(value) not in _ACCEPTED_OUTCOME_SHAPES.get(version, frozenset()):
         return RecordFailure("corrupt")
@@ -246,7 +242,7 @@ A version 1 row has no admission or classification fields, and its absent
         typ.cast("OutcomeReason | None", value.get("outcome_reason")),
         typ.cast("AttributionKind | None", value.get("outcome_attribution")),
         typ.cast("dt.datetime | None", admitted),
-typ.cast("LabelTimeProvenance | None", value.get("label_time_provenance")),
+        typ.cast("LabelTimeProvenance | None", value.get("label_time_provenance")),
         typ.cast("str | None", value.get("generation_digest")),
         typ.cast("dt.datetime | None", completed),
         typ.cast("str | None", value.get("attempt")),

@@ -9,7 +9,7 @@ import json
 import stat
 import typing as typ
 
-from outcome_test_helpers import VERSION_ONE, older_document_row
+from outcome_version_helpers import VERSION_ONE, VERSION_TWO, older_document_row
 
 from buildlimits import outcome_record_encode
 from buildlimits.outcome_record_format import StoreHeader, StoreRecord
@@ -24,7 +24,6 @@ if typ.TYPE_CHECKING:
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 DIGEST = "a" * 64
 
-import typing as typ
 __all__ = [
     "DIGEST",
     "NOW",
@@ -93,9 +92,7 @@ def version_two_document(
     }
     lines = [json.dumps(header, separators=(",", ":"))]
     for row in rows:
-        record = json.loads(outcome_record_encode.encode_line(row, version=2))
-        for field in _V3_ADDED_FIELDS:
-            record.pop(field, None)
+        record = older_document_row(row, version=VERSION_TWO)
         lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
     return ("\n".join(lines) + "\n").encode()
 

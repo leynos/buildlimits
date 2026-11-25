@@ -125,27 +125,6 @@ def admission_line(stats: cabc.Mapping[str, object]) -> str:
     )
 
 
-def availability_line(stats: cabc.Mapping[str, object]) -> str:
-    """Return the label-availability coverage bullet shared by both reports.
-
-    Returns
-    -------
-    str
-        The recorded, usable and missing availability counts in one line.
-
-    Examples
-    --------
-    >>> availability_line({"availability_recorded": 2, "availability_usable": 2,
-    ...                    "availability_missing": 0})  # doctest: +ELLIPSIS
-    '- Label availability: 2 recorded, 2 usable for a prediction, 0 missing'
-    """
-    return (
-        f"- Label availability: {as_count(stats['availability_recorded'])} "
-        f"recorded, {as_count(stats['availability_usable'])} usable for a "
-        f"prediction, {as_count(stats['availability_missing'])} missing"
-    )
-
-
 def as_counts(value: object) -> str:
     """Format a closed-vocabulary count map as stable key/count pairs.
 

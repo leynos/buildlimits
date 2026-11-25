@@ -24,7 +24,7 @@ from hypothesis import strategies as st
 from predict_test_helpers import hand_event
 from predict_timing_helpers import at, config, event, reviewer_stream
 
-from buildlimits.predict.events import EPOCH
+from buildlimits.predict.events import EPOCH, label_moment
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.history import (
     label_batches,
@@ -103,8 +103,8 @@ def test_concurrent_identical_invocations_keep_their_own_timing() -> None:
     verdict = audit((first, second))
 
     assert first.identity == second.identity, "both invocations share one key"
-    assert first.label_available_at == at(9.0), "the slow attempt keeps its own"
-    assert second.label_available_at == at(4.0), "the fast attempt keeps its own"
+    assert label_moment(first) == at(9.0), "the slow attempt keeps its own"
+    assert label_moment(second) == at(4.0), "the fast attempt keeps its own"
     assert verdict.reasons == (None, None), "neither row is a duplicate"
     assert typ.cast("typ.Any", walk.rows[1]).load == 0, (
         "the later decision precedes the slow attempt's acceptance"
@@ -140,11 +140,11 @@ def test_availability_never_depends_on_reversed_launch_order(
     verdict = audit(events)
 
     assert verdict.reasons == (None,) * len(events), "distinct attempts never collide"
-    assert [record.label_available_at for record in events] == [
+    assert [label_moment(record) for record in events] == [
         at(float(finish)) for finish in finishes
     ], "each row's acceptance is its own, whatever order the launches finished"
     assert sorted(
-        typ.cast("dt.datetime", record.label_available_at) for record in events
+        typ.cast("dt.datetime", label_moment(record)) for record in events
     ) == [at(float(finish)) for finish in ordered], "the set of moments is unchanged"
 
 
@@ -202,7 +202,7 @@ def test_an_unverified_row_is_excluded_rather_than_backdated() -> None:
     unverified = dc.replace(
         hand_event(0, admitted_at=at(1.0), observed_at=at(5.0), label="hit"),
         completed_at=None,
-        label_available_at=None,
+        label_observed_verified=False,
         attempt=None,
         supervisor_generation=None,
     )
@@ -297,7 +297,6 @@ def test_a_clock_step_never_releases_a_label_early() -> None:
     forward = event(0, admitted=0.0, available=10.0, attempt="early")
     stepped = dc.replace(
         event(1, admitted=1.0, available=5.0, attempt="late"),
-        label_available_at=at(5.0),
         completed_at=at(5.0),
         observed_at=at(5.0),
     )
@@ -322,7 +321,7 @@ def test_the_events_in_a_stream_keep_their_own_identity() -> None:
     assert first.identity == second.identity, "the cache key is identical"
     assert first.attempt != second.attempt, "the attempt is not"
     assert audit((first, second)).reasons == (None, None), "both rows are usable"
-    assert typ.cast("dt.datetime", first.label_available_at) > EPOCH, (
+    assert typ.cast("dt.datetime", label_moment(first)) > EPOCH, (
         "each row's availability is a real recorded moment"
     )
 
@@ -357,8 +356,7 @@ def test_an_unverified_label_cannot_train_either() -> None:
     """An unverified row supplies no training example, even with a label."""
     unverified = dc.replace(
         event(0, admitted=1.0, available=5.0, label="hit"),
-        attempt=None,
-        supervisor_generation=None,
+        label_observed_verified=False,
     )
     verifiable = event(0, admitted=10.0, available=20.0, label="miss", attempt="b")
 

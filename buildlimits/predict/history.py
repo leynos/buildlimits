@@ -296,31 +296,31 @@ def released_labels(
 ) -> list[tuple[dt.datetime, int]]:
     """Return every label a predictor may ever learn, in release order.
 
-    Only an event that could itself be predicted supplies a training row: a
-    label from an event with no admission time has no pre-admission feature row
-    to learn from, and manufacturing one would put a fabricated measurement
-into the model. The release time is the verified availability moment, never
-    the historical observation time: a row written by an older recorder proves
-    no availability and is never released, while an unverified recorded time is
-    a lower bound rather than proof and releasing it early is exactly the leak
-    this ordering prevents. Labels are ordered by availability and then by
-    store position, so an update order is always reproducible.
+        Only an event that could itself be predicted supplies a training row: a
+        label from an event with no admission time has no pre-admission feature row
+        to learn from, and manufacturing one would put a fabricated measurement
+    into the model. The release time is the verified availability moment, never
+        the historical observation time: a row written by an older recorder proves
+        no availability and is never released, while an unverified recorded time is
+        a lower bound rather than proof and releasing it early is exactly the leak
+        this ordering prevents. Labels are ordered by availability and then by
+        store position, so an update order is always reproducible.
 
     Parameters
     ----------
-    events : Sequence[Event]
-        The events in store append order.
+        events : Sequence[Event]
+            The events in store append order.
 
     Returns
     -------
-    list[tuple[datetime, int]]
-        Availability time and stream index of each eligible label.
+        list[tuple[datetime, int]]
+            Availability time and stream index of each eligible label.
 
     Examples
     --------
-    >>> from buildlimits.predict.events import EPOCH, Event
-    >>> released_labels((Event("a" * 64, "git", None, EPOCH, "hit", 0.1),))
-    []
+        >>> from buildlimits.predict.events import EPOCH, Event
+        >>> released_labels((Event("a" * 64, "git", None, EPOCH, "hit", 0.1),))
+        []
     """
     flags = _usable(events, usable)
     return sorted(

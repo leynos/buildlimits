@@ -81,14 +81,14 @@ def _unverified() -> tuple[Event, Event]:
             admitted_at=None,
             observed_at=EPOCH + dt.timedelta(minutes=10),
             label="hit",
-            available_at=None,
+            verified=False,
         ),
         hand_event(
             1,
             admitted_at=None,
             observed_at=EPOCH + dt.timedelta(minutes=5),
             label="hit",
-            available_at=None,
+            verified=False,
         ),
     )
 
@@ -126,7 +126,7 @@ def test_an_unverified_history_may_report_a_backward_clock(tmp_path: Path) -> No
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
     assert len(loaded.events) == 2, "the history is still readable"
-    assert all(event.label_available_at is None for event in loaded.events), (
+    assert not any(event.label_observed_verified for event in loaded.events), (
         "no verified label time can be ordered by the broken clock"
     )
 

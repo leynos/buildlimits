@@ -13,12 +13,14 @@ written in decision order rather than acceptance order.
 
 import datetime as dt
 import io
+import json
 import lzma
 import typing as typ
 from pathlib import Path
 
 import pytest
 from outcome_test_helpers import cache_key
+from outcome_version_helpers import VERSION_TWO, older_document_row
 from segment_test_helpers import document
 
 from buildlimits.outcome_archive_encode import read_archive_facts
@@ -38,21 +40,21 @@ COMPLETED = NOW + dt.timedelta(seconds=10)
 
 
 def _verified(index: int, *, accepted: dt.datetime = ACCEPTED) -> OutcomeRecord:
-    """Return one version 3 row with the complete timing group."""
+    """Return one version 5 row with its complete correlation group."""
     return OutcomeRecord(
         key=cache_key(),
         outcome="hit",
         origin="registry",
         runtime_seconds=1.0,
-        observed_at=COMPLETED,
+        observed_at=accepted,
         parser_class="cacheable",
         child_sighting="unavailable",
         child_samples=0,
         outcome_reason="none",
         outcome_attribution="solo",
         admitted_at=NOW,
+        label_time_provenance="verified",
         completed_at=COMPLETED,
-        label_available_at=accepted,
         attempt=f"g{index}",
         supervisor_generation="generation-a",
     )
@@ -117,7 +119,8 @@ def test_a_verified_row_round_trips_through_archival_unchanged() -> None:
     (restored,) = decoded.records
     assert isinstance(restored, OutcomeRecord), "the row is an outcome"
     assert restored == rows[0], "every field survives the archive exactly"
-    assert restored.label_available_at == ACCEPTED, "the acceptance time is preserved"
+    assert restored.observed_at == ACCEPTED, "the acceptance time is preserved"
+    assert restored.label_time_provenance == "verified", "the proof survives"
     assert restored.completed_at == COMPLETED, "the completion time stays distinct"
     assert restored.attempt == "g1", "the attempt identity is preserved"
     assert restored.supervisor_generation == "generation-a", "so is the generation"
@@ -132,7 +135,7 @@ def test_a_legacy_row_gains_no_fabricated_timing() -> None:
     (restored,) = decoded.records
     assert isinstance(restored, OutcomeRecord), "the row is an outcome"
     assert restored.completed_at is None, "no completion time is invented"
-    assert restored.label_available_at is None, "no availability is invented"
+    assert restored.label_time_provenance is None, "no label time is proven"
     assert restored.attempt is None, "no attempt identity is invented"
     assert restored.supervisor_generation is None, "no generation is invented"
     assert restored.admitted_at == NOW - dt.timedelta(seconds=5), (
@@ -155,15 +158,15 @@ def test_archival_keeps_append_order_rather_than_sorting_by_time() -> None:
     first, second = typ.cast("tuple[OutcomeRecord, ...]", decoded.records)
     assert first.attempt == "g1", "the first appended row is still first"
     assert second.attempt == "g2", "the second appended row is still second"
-    assert typ.cast("dt.datetime", first.label_available_at) > typ.cast(
-        "dt.datetime", second.label_available_at
-    ), "their acceptance times are genuinely out of order"
+    assert first.observed_at > second.observed_at, (
+        "their acceptance times are genuinely out of order"
+    )
 
 
 def test_archive_facts_use_the_observation_span_not_the_acceptance_span(
     tmp_path: Path,
 ) -> None:
-    """Retention measures the historical observation times it always measured."""
+    """Retention measures the label moments the rows recorded."""
     rows = (_verified(1), _legacy(1))
     path = tmp_path / "segment.jsonl.xz"
     path.write_bytes(_archive_bytes(rows))
@@ -174,8 +177,8 @@ def test_archive_facts_use_the_observation_span_not_the_acceptance_span(
     assert facts.first_observed_at == NOW + dt.timedelta(seconds=1), (
         "the earliest historical observation is named"
     )
-    assert facts.last_observed_at == COMPLETED, (
-        "the latest historical observation is named, never the acceptance time"
+    assert facts.last_observed_at == ACCEPTED, (
+        "the latest label moment is named, which is the reading that accepted it"
     )
 
 
@@ -192,13 +195,10 @@ def test_compression_preserves_the_document_bytes_exactly(preset: int) -> None:
 def test_a_version_two_header_still_decodes_the_rows_it_holds() -> None:
     """A version 2 document reads, and its rows state no verified availability."""
     rows = (_legacy(1),)
-    body = "\n".join(
-        line
-        for line in document(rows).decode("utf-8").splitlines()
-        if not line.startswith('{"format"')
+    body = json.dumps(
+        older_document_row(rows[0], version=VERSION_TWO), separators=(",", ":")
     )
     header = StoreHeader("salt-1", NOW)
-    import json
 
     legacy_header = json.dumps({
         "format": "buildlimits-cache-outcomes",
@@ -212,4 +212,4 @@ def test_a_version_two_header_still_decodes_the_rows_it_holds() -> None:
     assert isinstance(decoded, DecodedStore), "the version 2 document decodes"
     (restored,) = decoded.records
     assert isinstance(restored, OutcomeRecord), "the row is an outcome"
-    assert restored.label_available_at is None, "it carries no verified availability"
+    assert restored.label_time_provenance is None, "it cannot prove its label time"

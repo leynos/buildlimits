@@ -201,7 +201,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         verdict=_verdict(
             labelled,
             predictable,
-unavailable_availability,
+            unavailable_availability,
             compared.against_base_rate,
             config,
             withheld=withheld,

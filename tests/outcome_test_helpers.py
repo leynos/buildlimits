@@ -15,7 +15,6 @@ if typ.TYPE_CHECKING:
     from types import ModuleType
 
     from buildlimits.outcome_key import CacheKey
-    from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_vocabulary import CacheResult
 
 
@@ -166,68 +165,6 @@ def stats_text(**changes: int) -> str:
     for field in ("cache_hits", "cache_misses", "cache_errors"):
         raw[field] = {"counts": {"Rust": raw[field]}, "adv_counts": {}}
     return json.dumps({"version": "0.14.0", "stats": raw})
-
-
-VERSION_ONE = 1
-"""The oldest store format, which predates admission and classification."""
-
-VERSION_TWO = 2
-"""The admission format, which predates the label-time provenance marker."""
-
-VERSION_THREE = 3
-"""The provenance format, which predates the generation digest."""
-
-VERSION_FOUR = 4
-"""The digest format, which predates the version 5 correlation group."""
-
-OLDER_VERSIONS = (VERSION_ONE, VERSION_TWO, VERSION_THREE, VERSION_FOUR)
-
-
-def older_document_row(row: StoreRecord, *, version: int) -> dict[str, object]:
-    """Encode one row in the shape an older release wrote it.
-
-    A fixture that exercises the upgrade rules must reproduce bytes an older
-    release really produced, not the current encoder's output with a version
-    number changed. The shape each version accepted is the encoder's own table,
-    so this helper cannot fall behind: when a field is added, the versions
-    before it drop it here without any list being edited. That matters because
-    the decoder accepts each shape by its exact field set, so a fixture that
-    kept one newer field would produce a hybrid no reader accepts.
-
-    Parameters
-    ----------
-    row : StoreRecord
-        The store record to encode.
-    version : int
-        The format version whose shape the row should take, one of
-        :data:`OLDER_VERSIONS`.
-
-    Returns
-    -------
-    dict[str, object]
-        The row's JSON object restricted to that version's fields.
-
-    Raises
-    ------
-    ValueError
-        If ``version`` is not an older format version.
-
-    Examples
-    --------
-    >>> row = attributed_record(observed_at=STORE_EPOCH)
-    >>> "admitted_at" in older_document_row(row, version=VERSION_ONE)
-    False
-    >>> "admitted_at" in older_document_row(row, version=VERSION_TWO)
-    True
-    """
-    from buildlimits.outcome_record_encode import _ROW_FIELDS_BY_VERSION, encode_line
-
-    allowed = _ROW_FIELDS_BY_VERSION.get(version)
-    if version not in OLDER_VERSIONS or allowed is None:
-        msg = f"version {version} is not an older store format"
-        raise ValueError(msg)
-    document = typ.cast("dict[str, object]", json.loads(encode_line(row)))
-    return {name: value for name, value in document.items() if name in allowed}
 
 
 def cache_key() -> CacheKey:

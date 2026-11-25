@@ -32,6 +32,8 @@ from buildlimits.outcome_record_key import (
 )
 from buildlimits.outcome_record_timing import (
     valid_evidence as _valid_timing_evidence,
+)
+from buildlimits.outcome_record_timing import (
     valid_fields as _valid_timing_fields,
 )
 
@@ -264,10 +266,6 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
     ))
 
 
-
-
-
-
 def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
     """Check decoded outcome values against their closed vocabularies.
 
@@ -292,8 +290,6 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         _optional_digest(value.get("generation_digest")),
         _valid_timing_fields(value),
     ))
-
-
 
 
 def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:

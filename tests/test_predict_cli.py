@@ -8,7 +8,6 @@ import pytest
 from predict_test_helpers import (
     benchmark_argv,
     read_results,
-    write_admission_only_snapshot,
     write_admitted_snapshot,
     write_admitted_store_snapshot,
     write_fast_config,
@@ -91,10 +90,12 @@ def test_a_store_snapshot_without_admission_times_predicts_nothing(
         "no store row proves when its label became known, so every label is "
         "withheld rather than scored"
     )
-    assert document["status"] == "insufficient data", (
-        "an unverified label is not scored evidence"
+    assert document["status"] == "insufficient admission times", (
+        "the run names the first gate the history failed"
     )
-    assert "unverified" in document["verdict"], "the verdict states what it withheld"
+    assert "insufficient admission times" in document["verdict"], (
+        "the verdict names the missing evidence"
+    )
     assert "withheld for an unverified label time" in markdown, (
         "the report explains why"
     )
@@ -126,8 +127,8 @@ def test_a_store_snapshot_with_admission_times_still_withholds_its_labels(
     assert document["data"]["stats"]["unverified_label_time"] == 342, (
         "every store-derived label time is unverified"
     )
-    assert document["status"] == "insufficient data", (
-        "no label can be released, so no label is scored"
+    assert document["status"] == "insufficient label-availability times", (
+        "no label can be released, so the availability gate is what stops"
     )
     assert document["replay"]["unverified_label_time"] == 342, (
         "the replay counts the withheld labels"

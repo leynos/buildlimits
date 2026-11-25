@@ -21,7 +21,11 @@ from outcome_recorder_test_helpers import (
 
 from buildlimits.outcome_record_codec import decode_lines
 from buildlimits.outcome_record_encode import encode_line
-from buildlimits.outcome_record_format import DecodedStore, OutcomeRecord
+from buildlimits.outcome_record_format import (
+    FORMAT_VERSION,
+    DecodedStore,
+    OutcomeRecord,
+)
 from buildlimits.outcome_recorder import Ended, Launched
 from buildlimits.outcome_recorder_types import LaunchPayload
 
@@ -113,11 +117,11 @@ def test_a_launch_row_carries_the_attempt_and_generation() -> None:
     assert record.attempt == "g7", "the attempt is the admission group"
     assert record.supervisor_generation == "generation-a", "the clock domain is named"
     assert record.completed_at == OBSERVED_AT, "its own completion time is retained"
-    assert record.observed_at == record.label_available_at, (
-        "the row's observation time is the reading that justified it"
+    assert record.observed_at == OBSERVED_AT + dt.timedelta(seconds=45), (
+        "the row is dated at the poll boundary, not the launch's completion time"
     )
-    assert record.label_available_at == OBSERVED_AT + dt.timedelta(seconds=45), (
-        "availability is the poll boundary, not the launch's completion time"
+    assert record.label_time_provenance == "verified", (
+        "and the row states that the time is proof"
     )
     assert record.admitted_at == DECISION_AT, "the decision time is unchanged"
 
@@ -136,8 +140,8 @@ def test_a_payload_without_a_generation_writes_no_correlation() -> None:
     assert record.observed_at == OBSERVED_AT, "the reading moment is still recorded"
 
 
-def test_an_unpaired_poll_still_dates_the_row_at_its_reading() -> None:
-    """A reading with no paired wall clock still dates its row at itself."""
+def test_an_unpaired_poll_dates_the_row_at_the_launch_completion() -> None:
+    """Without a paired wall clock the row falls back to its own completion."""
     (record,) = _window_output(
         launches=(("g8", OBSERVED_AT),),
         generation="generation-a",
@@ -145,13 +149,14 @@ def test_an_unpaired_poll_still_dates_the_row_at_its_reading() -> None:
         stats=(1, 1, 1),
     )
 
-    assert record.label_available_at == OBSERVED_AT, (
-        "the reading's own moment is the availability, even when no wall clock "
-        "was supplied for the poll"
+    assert record.observed_at == OBSERVED_AT, (
+        "the launch's own completion dates the row when no wall clock was "
+        "supplied for the poll"
     )
     assert record.completed_at == OBSERVED_AT, "its own completion is retained"
-    assert record.observed_at == record.label_available_at, (
-        "the row's observation time and its availability agree"
+    assert record.attempt == "g8", "the payload still names the invocation"
+    assert record.supervisor_generation == "generation-a", (
+        "and the generation whose clock dated it"
     )
 
 
@@ -176,8 +181,11 @@ def test_availability_is_never_taken_from_another_launch_in_the_window() -> None
         "the slow attempt keeps its own"
     )
     assert rows["fast"].completed_at == fast_completion, "so does the fast one"
-    assert all(row.label_available_at == acceptance for row in rows.values()), (
-        "one accepted reading gives every row of the window the same availability"
+    assert all(row.observed_at == acceptance for row in rows.values()), (
+        "one accepted reading dates every row of the window"
+    )
+    assert all(row.label_time_provenance == "verified" for row in rows.values()), (
+        "and each row states that its time is proof"
     )
 
 
@@ -207,7 +215,7 @@ def _stored_record(
         completed_at=(
             OBSERVED_AT - dt.timedelta(seconds=3) if completed is None else completed
         ),
-        label_available_at=OBSERVED_AT,
+        label_time_provenance="verified",
         attempt="g1",
         supervisor_generation=generation,
     )
@@ -224,7 +232,7 @@ def test_a_complete_timing_group_is_written_and_read_back() -> None:
     """The encoder writes the full group and the decoder restores it exactly."""
     record = _stored_record()
     header = (
-        '{"format":"buildlimits-cache-outcomes","version":3,'
+        f'{{"format":"buildlimits-cache-outcomes","version":{FORMAT_VERSION},'
         '"salt_id":"s","written_at":"2026-01-01T00:00:00Z"}'
     )
 

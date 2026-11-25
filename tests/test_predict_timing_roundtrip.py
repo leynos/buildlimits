@@ -8,6 +8,7 @@ separately, and the rendered report prints them.
 The causal replay scenarios are in ``test_predict_timing_causal.py``.
 """
 
+import dataclasses as dc
 import json
 import typing as typ
 from pathlib import Path
@@ -52,16 +53,18 @@ def test_an_old_format_snapshot_round_trips_without_fabricated_timing(
     row = typ.cast("dict[str, object]", typ.cast("list[object]", document["events"])[0])
     for absent in (
         "completed_at",
-        "label_available_at",
         "attempt",
         "supervisor_generation",
+        "label_observed_verified",
     ):
         row.pop(absent)
     path.write_text(json.dumps(document), encoding="utf-8")
 
     loaded = load_snapshot(path)
 
-    assert loaded.events[0].label_available_at is None, "no availability is invented"
+    assert loaded.events[0].label_observed_verified is False, (
+        "no availability is invented"
+    )
     assert loaded.events[0].attempt is None, "no attempt identity is invented"
     stats = loaded.stats()
     assert stats.scored == 0, "an old-format row is unscorable"
@@ -73,12 +76,14 @@ def test_the_benchmark_reports_each_gate_separately() -> None:
     stats = snapshot((
         event(0, admitted=1.0, available=5.0),
         event(1, admitted=None, available=6.0),
-        event(2, admitted=3.0, available=None),
+        dc.replace(
+            event(2, admitted=3.0, available=6.0), label_observed_verified=False
+        ),
     )).stats()
 
     assert stats.labelled == 3, "every row carries a hit or miss label"
     assert stats.admission_recorded == 2, "two rows record a decision"
-    assert stats.availability_recorded == 2, "two rows record availability"
+    assert stats.unverified_label_time == 1, "one row cannot prove its label time"
     assert stats.scored == 1, "only the row that passes both gates is scored"
     assert stats.excluded == {
         "no_admission_time": 1,
@@ -99,7 +104,7 @@ def test_an_empty_history_reports_no_measured_count() -> None:
     assert stats.events == 0, "no events"
     assert stats.scored == 0, "nothing scored"
     assert stats.excluded == {}, "no exclusion reason without a row"
-    assert stats.availability_recorded == 0, "no availability was recorded"
+    assert stats.unverified_label_time == 0, "no label was withheld"
 
 
 def test_the_report_states_the_scored_population_and_its_exclusions() -> None:
@@ -110,18 +115,16 @@ def test_the_report_states_the_scored_population_and_its_exclusions() -> None:
         "labelled": 3,
         "admission_recorded": 3,
         "admission_usable": 2,
-        "availability_recorded": 1,
-        "availability_usable": 1,
-        "availability_missing": 2,
+        "unverified_label_time": 2,
         "scored": 1,
         "excluded": {"no_availability_time": 2},
     })
 
     markdown = render_markdown(document)
 
-    assert (
-        "- Label availability: 1 recorded, 1 usable for a prediction, 2 missing"
-    ) in markdown, "availability has its own coverage line"
+    assert "- Labels withheld for an unverified label time: 2" in markdown, (
+        "the report states the labels it withheld"
+    )
     assert (
         "- Scored records: 1 (exclusions: no_availability_time=2; "
         "0 duplicate attempts, 0 conflicting attempts)"
@@ -152,7 +155,6 @@ def test_a_duplicate_attempt_is_not_counted_as_missing_availability() -> None:
 
     stats = snapshot((original, retried)).stats()
 
-    assert stats.availability_recorded == 2, "both rows carry an availability"
-    assert stats.availability_missing == 0, "neither row is missing one"
+    assert stats.unverified_label_time == 0, "both rows prove their label time"
     assert stats.duplicates == 1, "the retry is counted as a duplicate"
     assert stats.excluded == {"duplicate_attempt": 1}, "under its own reason"

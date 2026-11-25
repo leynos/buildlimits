@@ -279,7 +279,7 @@ def test_writer_moves_a_version_mismatch_aside_once(tmp_path: Path) -> None:
     salt = file_salt(_salt_path(path))
     assert isinstance(salt, Salt), "the fixture uses a readable salt"
     future = (
-'{"format":"buildlimits-cache-outcomes","version":6,'
+        '{"format":"buildlimits-cache-outcomes","version":6,'
         f'"salt_id":"{salt.salt_id}","written_at":"2026-10-25T00:00:00Z"}}\n'
     ).encode()
     _write_private_file(path, future)

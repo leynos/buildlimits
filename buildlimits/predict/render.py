@@ -134,7 +134,7 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         ),
         f"- Window: {stats['span_start'] or MISSING} to {stats['span_end'] or MISSING}",
         (f"- Gaps over threshold: {len(typ.cast('list[object]', stats['gaps']))}"),
-_split_line(typ.cast("dict[str, object]", document["split"])),
+        _split_line(typ.cast("dict[str, object]", document["split"])),
         _replay_line(typ.cast("dict[str, object]", document["replay"])),
         admission_line(stats),
         (

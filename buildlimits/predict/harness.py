@@ -1,17 +1,10 @@
 """The prequential walk over one event stream, ordered by admission time.
 
-Every prediction is made at its event's admission moment. Before a moment is
-answered, exactly the eligible labels whose observation time is strictly
-earlier are delivered; a label observed at the same instant waits for a later
-moment. Events sharing an admission moment are answered in full before any
-label from that moment can count, so simultaneous outcomes cannot inform each
-other.
-
-An event without a usable admission time is never predicted, and its label
-never trains a predictor: a missing timestamp is not evidence that the label
-arrived before the decision. Nothing is sorted into a different window behind
-the store's back; admission times order the predictions, and store order breaks
-ties.
+Every prediction is made at its event's admission moment, and only labels
+verified strictly earlier are delivered first. An event without a usable
+admission time is never predicted and never trains a predictor: a missing
+timestamp is not evidence that the label arrived before the decision. Store
+order breaks ties, so nothing is re-sorted behind the store's back.
 """
 
 import dataclasses as dc
@@ -121,8 +114,7 @@ class Walk:
     unapplied_labels : int
         Eligible labels that arrived too late to inform any prediction.
     unverified_label_time : int
-        Hit or miss labels withheld because their recorded observation time is
-        unverified. They are neither released nor scored.
+        Hit or miss labels withheld: their recorded time is unproven.
     """
 
     events: tuple[Event, ...]
@@ -363,7 +355,7 @@ def _phases(
     tuple[Phase | None, ...]
         One phase per event, or None where no eligible label arrived.
     """
-# Only a verified, correlated label can be scored, so only it consumes a
+    # Only a verified, correlated label can be scored, so only it consumes a
     # phase slot.
     batches = label_batches(events)
     total = sum(

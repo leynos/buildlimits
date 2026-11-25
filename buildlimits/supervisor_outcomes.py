@@ -8,6 +8,7 @@ import typing as typ
 from buildlimits import (
     outcome_key,
     outcome_resources,
+    outcome_shell_keys,
     outcome_shell_stats,
     outcome_shell_status,
     outcome_store_salt,

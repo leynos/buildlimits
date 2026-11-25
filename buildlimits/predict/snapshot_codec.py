@@ -39,15 +39,18 @@ _TIMING_EVENT_FIELDS = frozenset({
     "attempt",
     "supervisor_generation",
 })
-_EVENT_FIELDS = frozenset({
-    "identity",
-    "origin",
-    "admitted_at",
-    "observed_at",
-    "label",
-    "runtime_seconds",
-    "label_observed_verified",
-}) | _TIMING_EVENT_FIELDS
+_EVENT_FIELDS = (
+    frozenset({
+        "identity",
+        "origin",
+        "admitted_at",
+        "observed_at",
+        "label",
+        "runtime_seconds",
+        "label_observed_verified",
+    })
+    | _TIMING_EVENT_FIELDS
+)
 # A version 1 row written before the admission field existed omits it, and a
 # version 1 or 2 row predates the label-time provenance marker. The loader
 # accepts those shapes only for the versions that wrote them: version 3 and
@@ -79,16 +82,16 @@ _TOKEN_CHARS = frozenset(
 def event_to_dict(event: Event) -> dict[str, object]:
     """Return the stable snapshot shape for one event.
 
-The label-time provenance marker is written for every row, so a document
-    the current writer produces always says whether its times are proof. Every
-    version 5 field is written, including an explicit null where the source
-    recorded no correlation. A reader therefore never mistakes an absent field
-    for a version it does not understand.
+    The label-time provenance marker is written for every row, so a document
+        the current writer produces always says whether its times are proof. Every
+        version 5 field is written, including an explicit null where the source
+        recorded no correlation. A reader therefore never mistakes an absent field
+        for a version it does not understand.
 
     Returns
     -------
-    dict[str, object]
-        Every field, with timestamps in canonical UTC text.
+        dict[str, object]
+            Every field, with timestamps in canonical UTC text.
     """
     return {
         "identity": event.identity,
@@ -153,7 +156,7 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         One decoded JSON line, of any shape.
     version : int
         The snapshot version that supplied the line. A version 1 row may omit
-``admitted_at`` because that field was not always written; a version 2
+        ``admitted_at`` because that field was not always written; a version 2
         row must name it. Neither may name the label-time provenance marker,
         because neither format defined it: their events decode as unverified,
         never as proof the row does not carry. A version 3 or 4 row predates
