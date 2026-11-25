@@ -515,6 +515,23 @@ Each module owns one decision. This table is the single module inventory.
 
 _Table 2: Package modules._
 
+Four seams let a test replace one resource boundary without a live host.
+`OutcomeDependencies` groups the optional collaborators the enabled shell
+accepts — `environment`, `writer`, `statistics`, `server`, `reaper` and
+`wall_clock` — and each defaults to `None`, meaning the shell builds its own.
+`OutcomeRecorder` takes two callables of its own: `wall_clock`, which stamps
+the moment a port result became known so a reading's evidence and the recorder
+share one time source, and `generation_digest`, which turns the server identity
+the port read into the salted correlation key a row carries. The digest seam is
+a callback rather than a captured value because the store salt arrives
+asynchronously; a shell without one states no generation rather than an unkeyed
+one. `PeerServerProcess` accepts a `generation_port` that returns the server
+identity directly, which is how a test proves a generation-change refusal
+without a restarting process. `predict.accounting.HistoryLoss` is the value,
+not a seam: it records what closed history an extraction could and could not
+see, so a test can state an active-only read, a failed inventory or a retention
+floor without constructing a store.
+
 Outcome recording is a shell around those decisions. `supervisor_placement`
 calls `outcomes.launched` only after `Groups.release` succeeds. For an emptied
 scope, `group_recovery.empty_groups` captures its cache and exit facts before
@@ -1672,6 +1689,9 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `test_sccache_real_binary.py`             | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API                                                                      |
 | `test_kache_real_binary.py`               | Opt-in real-kache acceptance test: health, a composed compilation and its miss-then-hit record                                                                          |
 | `outcome_store_helpers.py`                | Store rows, salts and asynchronous writer outcomes for outcome-store tests                                                                                              |
+| `outcome_reading_test_helpers.py`         | `delayed_reading_rows` (one statistics reading over completed cached launches) and `outcome_rows` (a reading's keyed rows, its window summary excluded)                 |
+| `segment_test_helpers.py`                 | Segment fixtures with their version-specific field sets, so a test that claims an older document's behaviour writes that document's real shape                          |
+| `sccache_outcome_observer_support.py`     | The launcher, toolchain and controlled-window drivers the opt-in real-sccache observer test runs against a live server                                                  |
 | `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                                                                   |
 | `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                                                                 |
 | `outcome_sealing_helpers.py`              | Decoded store views and the writer harness the sealing tests drive                                                                                                      |
@@ -1708,6 +1728,18 @@ skips that test when either precondition is absent. It compares its readings
 with the committed JSONL fixture. Set
 `BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
 the resulting diff before committing it.
+
+`tests/test_sccache_outcome_observer.py` runs beside that real-binary test
+under the same marker and the same opt-in variable, so `make test-sccache-host`
+runs both. It drives the recorder's controlled windows against a live server: a
+cold then warm compilation must yield exactly one `miss` and one `hit`, a
+concurrent pair must stay `unattributed` with `mixed_window`, a declined probe
+must be `declined`, a stalled query must be `timeout`, and a restart between
+the two boundaries must be `generation_changed`. Each case carries
+`pytest.mark.timeout(180)`, because a live sccache can take that long to answer
+under load; a shorter bound would fail the check for being slow rather than
+wrong. Both tests skip unless the opt-in variable is set on Linux with a
+supported binary.
 
 `make test-kache-host` sets `BUILD_LIMITS_KACHE_HOST_CHECK=1` and selects the
 `kache_host_check` marker. The test requires Linux and a binary whose version

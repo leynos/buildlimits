@@ -16,7 +16,6 @@ from buildlimits.predict.accounting import (
 )
 from buildlimits.predict.diagnostics_generations import (
     GENERATION_MAPS,
-    GENERATION_VERSION,
     require_generation_labels,
     unrecorded_generations,
 )
@@ -91,9 +90,7 @@ def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | 
     }
 
 
-def diagnostics_from_dict(
-    value: object, *, label: str, version: int = GENERATION_VERSION
-) -> Diagnostics:
+def diagnostics_from_dict(value: object, *, label: str) -> Diagnostics:
     """Validate one decoded diagnostics block and restore its counts.
 
     Every breakdown must sum to the per-compilation row count, so a corrupted
@@ -118,33 +115,50 @@ def diagnostics_from_dict(
     if not isinstance(store_value, dict) or not isinstance(history_value, dict):
         msg = f"{label} diagnostics must hold store and history objects"
         raise TypeError(msg)
-    store = _store_accounting_from(
-        typ.cast("dict[str, object]", store_value), label, version=version
-    )
+    store = _store_accounting_from(typ.cast("dict[str, object]", store_value), label)
     return Diagnostics(store=store, history=_history_loss_from(history_value, label))
 
 
-def _is_required_map(name: str, value: dict[str, object], version: int) -> bool:
+def _require_generation_maps_together(value: dict[str, object], label: str) -> None:
+    """Require the two generation maps either both present or both absent.
+
+    They are written together and partition the same buckets, so a document
+    holding exactly one is not a shape any release produced: it claims the
+    dimension while withholding half of it. Refusing keeps the absence rule
+    meaning what it says, that a history without the dimension predates it.
+
+    Raises
+    ------
+    TypeError
+        If exactly one of the pair is present.
+    """
+    present = {name for name in GENERATION_MAPS if name in value}
+    if len(present) != 1:
+        return
+    missing = sorted(GENERATION_MAPS - present)
+    msg = f"{label} states a generation map without {missing[0]}"
+    raise TypeError(msg)
+
+
+def _is_required_map(name: str, value: dict[str, object]) -> bool:
     """Report whether one breakdown must be present in this document.
 
     Every breakdown but the generation pair has always been written, so its
-    absence is corruption. The two generation maps arrived with version 4, and a
-    document written before them genuinely has no measurement to read: their
-    absence is a fact about the history, not damage to the document.
+    absence is corruption. The generation pair arrived latest, and a document
+    written before it genuinely has no measurement to read: absence is a fact
+    about the history, not damage to the document. `_require_generation_maps_
+    together` has already refused the half-stated case, so a generation map is
+    either required because it is present, or excused because neither is.
 
     Returns
     -------
     bool
         Whether the map must be decoded from the document itself.
     """
-    if name in value:
-        return True
-    return name not in GENERATION_MAPS or version >= GENERATION_VERSION
+    return name in value or name not in GENERATION_MAPS
 
 
-def _store_accounting_from(
-    value: dict[str, object], label: str, *, version: int = GENERATION_VERSION
-) -> StoreAccounting:
+def _store_accounting_from(value: dict[str, object], label: str) -> StoreAccounting:
     """Validate the retained-store counts and their reconciliation.
 
     A snapshot written before the generation dimension existed has no
@@ -169,15 +183,16 @@ def _store_accounting_from(
         for name in _STORE_COUNT_FIELDS
     }
     outcome_records = counts["outcome_records"]
+    _require_generation_maps_together(value, label)
     maps = {
         name: checked_counts(value.get(name), label=f"{label} {name}")
         for name in _STORE_MAP_FIELDS
-        if _is_required_map(name, value, version)
+        if _is_required_map(name, value)
     }
     label_maps = {
         name: checked_counts(value.get(name), label=f"{label} {name}")
         for name in _LABEL_MAP_FIELDS
-        if _is_required_map(name, value, version)
+        if _is_required_map(name, value)
     }
     if "by_generation" not in maps:
         # An older snapshot cannot carry the dimension, and its rows cannot

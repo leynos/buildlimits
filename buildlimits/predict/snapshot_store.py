@@ -5,7 +5,6 @@ every field the report later reads. A hand-edited or truncated file is refused
 with the field that is wrong rather than surfacing as a confusing report.
 """
 
-import dataclasses as dc
 import itertools
 import json
 import math
@@ -125,32 +124,17 @@ def load_snapshot(path: Path) -> Snapshot:
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
         diagnostics=_diagnostics_from(
-            path,
-            document,
-            _DocumentedHistory(decoded_source, decoded_events, version),
+            path, document, source=decoded_source, events=decoded_events
         ),
     )
-
-
-@dc.dataclass(frozen=True, slots=True)
-class _DocumentedHistory:
-    """The already-decoded parts of one snapshot document.
-
-    ``source`` and ``events`` are what the document states about its history,
-    and ``version`` is the shape it was written with. They travel together
-    because a diagnostics block must describe all three at once: the same
-    records, the same labels, and a version whose fields it can carry.
-    """
-
-    source: Source
-    events: tuple[Event, ...]
-    version: int
 
 
 def _diagnostics_from(
     path: Path,
     document: cabc.Mapping[str, object],
-    parts: _DocumentedHistory,
+    *,
+    source: Source,
+    events: cabc.Sequence[Event],
 ) -> Diagnostics | None:
     """Rebuild the optional label-loss diagnostics and join them to the history.
 
@@ -171,9 +155,9 @@ def _diagnostics_from(
     value = document.get("diagnostics")
     if value is None:
         return None
-    diagnostics = diagnostics_from_dict(value, label=str(path), version=parts.version)
-    require_diagnostics_match(path, parts.source, diagnostics)
-    require_event_labels_match(path, parts.events, diagnostics)
+    diagnostics = diagnostics_from_dict(value, label=str(path))
+    require_diagnostics_match(path, source, diagnostics)
+    require_event_labels_match(path, events, diagnostics)
     return diagnostics
 
 

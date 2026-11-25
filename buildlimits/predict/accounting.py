@@ -193,6 +193,9 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
                 cacheable_labels += int(_is_label(record))
         else:
             summaries += 1
+    by_generation, labels_by_generation = _frozen_generations(
+        counters.generation, counters.generation_labels
+    )
     return StoreAccounting(
         records_total=outcomes + summaries,
         outcome_records=outcomes,
@@ -204,8 +207,8 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
         by_parser_class=_frozen(counters.parser),
         by_child_sighting=_frozen(counters.sighting),
         by_server_version=_frozen(counters.version),
-        by_generation=_frozen(counters.generation),
-        labels_by_generation=_frozen(counters.generation_labels),
+        by_generation=by_generation,
+        labels_by_generation=labels_by_generation,
         admission_recorded=admitted,
         admission_missing=outcomes - admitted,
         labels=counters.result["hit"] + counters.result["miss"],
@@ -280,6 +283,41 @@ def _frozen(counts: collections.Counter[str]) -> dict[str, int]:
         count for _, count in ordered[_MAX_MAP_ENTRIES - 1 :]
     )
     return dict(sorted(kept.items()))
+
+
+def _frozen_generations(
+    rows: collections.Counter[str], labels: collections.Counter[str]
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Return both generation maps on one shared, bounded key set.
+
+    The two maps partition different totals but must name the same generations:
+    a labelled bucket the row map had dropped would be a bucket the row map
+    cannot explain, and the loader refuses such a document. Retaining each map
+    independently lets that happen as soon as a generation carries labels
+    without carrying many rows, so the keys are chosen once, by row count, and
+    both maps merge everything outside that choice into ``other``.
+
+    Sums survive the merge because every dropped row and every dropped label
+    lands in the same bucket, so each map still reconciles with its own total.
+
+    Returns
+    -------
+    tuple[dict[str, int], dict[str, int]]
+        The row map and the labelled map, with identical keys.
+    """
+    ordered = sorted(rows.items(), key=lambda item: (-item[1], item[0]))
+    if len(ordered) <= _MAX_MAP_ENTRIES:
+        return dict(sorted(ordered)), dict(sorted(labels.items()))
+    retained = {name for name, _ in ordered[: _MAX_MAP_ENTRIES - 1]}
+    row_map = dict(ordered[: _MAX_MAP_ENTRIES - 1])
+    label_map = {name: count for name, count in labels.items() if name in retained}
+    row_map["other"] = row_map.get("other", 0) + sum(
+        count for name, count in rows.items() if name not in retained
+    )
+    label_map["other"] = label_map.get("other", 0) + sum(
+        count for name, count in labels.items() if name not in retained
+    )
+    return dict(sorted(row_map.items())), dict(sorted(label_map.items()))
 
 
 def checked_counts(value: object, *, label: str) -> dict[str, int]:

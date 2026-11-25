@@ -2701,3 +2701,19 @@ reason = "The two guarded reads describe the same precedence over one block: act
 [[tool.duplication_gate.allow]]
 members = ["tests/test_outcome_recorder_evidence.py", "tests/test_predict_label_provenance.py"]
 reason = "Matching test preambles: each names the reading scaffold and prediction helpers it uses, and a shared re-export would hide which dependencies each suite actually needs."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_predict_snapshot_diagnostics.py",
+    "tests/test_predict_generation_diagnostics.py",
+]
+reason = "Matching import preludes: the two modules read the same snapshot document, so both name pytest, the shared diagnostics fixtures and the loader. Sharing the prelude through a re-export module would hide which fixtures each test actually uses."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/render_helpers.py::data_section",
+    "buildlimits/predict/render.py::_predictors",
+    "tests/predict_diagnostics_helpers.py::events_of",
+    "tests/test_predict_snapshot_store.py::_journal",
+]
+reason = "A shared one-line shape rather than shared logic: each reads a named key out of a document mapping and narrows it. The bodies coincide because the idiom is generic, and they answer different questions about different documents."
