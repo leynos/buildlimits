@@ -2026,6 +2026,9 @@ dictionary and `typos.local.toml`, then checks every tracked file. Never edit
 `typos.toml` by hand; commit it when the gate regenerates it. Put narrow
 repository-specific exceptions in `typos.local.toml`.
 
+The builder requires Python 3.14 or newer, so the Makefile passes
+`--python 3.14` to `uv tool run`; keep it when the interpreter matrix changes.
+
 [rfc]: https://github.com/leynos/dev-env-rocky/blob/main/docs/rfc-concurrent-build-limits.md
 [adr-011]: https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md
 [adr-012]: https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-012-compile-admission-collection.md
