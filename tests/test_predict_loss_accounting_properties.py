@@ -163,6 +163,7 @@ def _counts(**overrides: object) -> dict[str, object]:
         "by_parser_class": {"cacheable": 3},
         "by_child_sighting": {"unavailable": 3},
         "by_server_version": {"0.14.0": 3},
+        "by_generation": {"unrecorded": 3},
     }
     block.update(overrides)
     return block
@@ -222,6 +223,7 @@ def test_generated_reconciling_counts_survive_the_round_trip(
         "by_parser_class": {"cacheable": outcomes} if outcomes else {},
         "by_child_sighting": {"unavailable": outcomes} if outcomes else {},
         "by_server_version": {"0.14.0": outcomes} if outcomes else {},
+        "by_generation": {"unrecorded": outcomes} if outcomes else {},
     })
     document = {
         "store": store,

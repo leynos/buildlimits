@@ -19,6 +19,9 @@ from buildlimits.outcome_record_key import (
     _optional_choice as _optional_choice,
 )
 from buildlimits.outcome_record_key import (
+    _optional_digest as _optional_digest,
+)
+from buildlimits.outcome_record_key import (
     _text as _text,
 )
 from buildlimits.outcome_record_key import (
@@ -40,8 +43,8 @@ type ChildSighting = typ.Literal["seen", "ambiguous", "not_seen", "unavailable"]
 type LabelTimeProvenance = typ.Literal["verified"]
 
 FORMAT_NAME = "buildlimits-cache-outcomes"
-FORMAT_VERSION = 3
-SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, FORMAT_VERSION})
+FORMAT_VERSION = 4
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, 3, FORMAT_VERSION})
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 # The largest document an in-place compaction may write. A policy that lets
@@ -107,6 +110,13 @@ class OutcomeRecord:
         the statistics reading that produced the label. ``None`` means the row
         predates the marker (a version 1 or 2 row) and proves nothing: either
         release it as a lower bound or withhold it, never treat it as proof.
+    generation_digest : str | None
+        A salted digest naming the sccache server generation the recording
+        reading observed. ``None`` means no single generation can be attributed
+        to this row: it predates the field, its window changed or lost the
+        server identity, or the row was emitted without a reading at all. It is
+        a correlation key only, so the digest separates label loss per
+        generation without ever naming a process.
     """
 
     key: CacheKey
@@ -121,6 +131,7 @@ class OutcomeRecord:
     outcome_attribution: AttributionKind | None = None
     admitted_at: dt.datetime | None = None
     label_time_provenance: LabelTimeProvenance | None = None
+    generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -170,10 +181,12 @@ class DecodedStore:
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}
 _IDENTITY_FIELDS = {field.name for field in dc.fields(ToolchainIdentity)}
 _OUTCOME_FIELDS = {field.name for field in dc.fields(OutcomeRecord)} | {"kind"}
-# Version 2 rows predate the label-time provenance marker; version 1 rows also
-# predate admission-time and classification evidence. Both stay readable, and
-# every absent field decodes as None rather than a guessed proof or label.
-_V2_OUTCOME_FIELDS = _OUTCOME_FIELDS - {"label_time_provenance"}
+# Version 3 rows predate the generation digest; version 2 rows also predate the
+# label-time provenance marker; version 1 rows also predate admission-time and
+# classification evidence. All stay readable, and every absent field decodes as
+# None rather than a guessed generation, proof or label.
+_V3_OUTCOME_FIELDS = _OUTCOME_FIELDS - {"generation_digest"}
+_V2_OUTCOME_FIELDS = _V3_OUTCOME_FIELDS - {"label_time_provenance"}
 _V1_OUTCOME_FIELDS = _V2_OUTCOME_FIELDS - {
     "outcome_reason",
     "outcome_attribution",
@@ -188,6 +201,7 @@ _V1_OUTCOME_FIELDS = _V2_OUTCOME_FIELDS - {
 _ACCEPTED_OUTCOME_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     1: frozenset({frozenset(_V1_OUTCOME_FIELDS)}),
     2: frozenset({frozenset(_V1_OUTCOME_FIELDS), frozenset(_V2_OUTCOME_FIELDS)}),
+    3: frozenset({frozenset(_V2_OUTCOME_FIELDS), frozenset(_V3_OUTCOME_FIELDS)}),
     FORMAT_VERSION: frozenset({frozenset(_OUTCOME_FIELDS)}),
 }
 _SUMMARY_FIELDS = {field.name for field in dc.fields(WindowSummary)} | {"kind"}
@@ -213,6 +227,7 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
         _optional_utc(record.admitted_at),
         _optional_choice(record.label_time_provenance, _PROVENANCES),
+        _optional_digest(record.generation_digest),
     ))
 
 
@@ -237,6 +252,7 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
         _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
         _optional_choice(value.get("label_time_provenance"), _PROVENANCES),
+        _optional_digest(value.get("generation_digest")),
     ))
 
 

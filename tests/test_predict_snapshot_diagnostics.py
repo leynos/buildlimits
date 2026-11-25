@@ -18,10 +18,14 @@ from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.dataset import StoreHistory, build_snapshot
 from buildlimits.predict.records import decode_history
-from buildlimits.predict.snapshot_codec import SNAPSHOT_VERSION, snapshot_to_dict
+from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
+_PROVENANCE_VERSION = 3
+"""The first snapshot version whose events state a label-time provenance."""
+_GENERATION_VERSION = 4
+"""The first snapshot version whose diagnostics state a per-generation map."""
 
 
 def _history(*records: object) -> StoreHistory:
@@ -55,12 +59,19 @@ def _as_version(document: dict[str, object], version: int) -> dict[str, object]:
     A test that loads an older document must reproduce what that release really
     wrote, not a current row with a downgraded header. Version 1 or 2 predates
     the label-time provenance marker, so the marker is dropped with the header;
-    the current version states it, so the row keeps it.
+    version 3 states the marker but predates the per-generation breakdown, so
+    that map is dropped; the current version states both, so it keeps them.
     """
     document["snapshot_version"] = version
-    if version < SNAPSHOT_VERSION:
+    if version < _PROVENANCE_VERSION:
         for event in _events(document):
             event.pop("label_observed_verified", None)
+    if version < _GENERATION_VERSION:
+        block = document.get("diagnostics")
+        if isinstance(block, dict):
+            store = typ.cast("dict[str, object]", block).get("store")
+            if isinstance(store, dict):
+                typ.cast("dict[str, object]", store).pop("by_generation", None)
     return document
 
 
@@ -87,15 +98,15 @@ def test_an_older_event_time_is_never_read_as_verified(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize("version", [2, 3])
+@pytest.mark.parametrize("version", [2, 3, 4])
 def test_a_versioned_snapshot_round_trips_its_diagnostics(
     tmp_path: Path, version: int
 ) -> None:
     """The retained-store and history-loss counts survive each document shape.
 
-    Version 2 predates the label-time provenance marker and version 3 states
-    it, so a round trip must be exercised at both shapes rather than at the
-    current one alone.
+    Version 2 predates the label-time provenance marker, version 3 states it,
+    and version 4 adds the per-generation breakdown, so a round trip must be
+    exercised at each shape rather than at the current one alone.
     """
     snapshot = build_snapshot(
         _history(

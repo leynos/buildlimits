@@ -208,9 +208,9 @@ def _decode_outcome(
 
     A version 1 row has no admission or classification fields, and its absent
     evidence decodes as None. Neither an older row nor an older document carries
-    the label-time provenance marker, so it decodes as None, which is unproven
-    rather than false. A present but malformed timestamp or marker is
-    corruption, not an absent value.
+    the label-time provenance marker or the generation digest, so both decode as
+    None, which is unproven and unattributed rather than false. A present but
+    malformed timestamp, marker or digest is corruption, not an absent value.
 
     Returns
     -------
@@ -241,6 +241,7 @@ def _decode_outcome(
         typ.cast("AttributionKind | None", value.get("outcome_attribution")),
         typ.cast("dt.datetime | None", admitted),
         typ.cast("LabelTimeProvenance | None", value.get("label_time_provenance")),
+        typ.cast("str | None", value.get("generation_digest")),
     )
 
 

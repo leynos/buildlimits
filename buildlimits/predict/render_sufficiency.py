@@ -24,6 +24,12 @@ from buildlimits.predict.report_blocks import report_data
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+_DIGEST_LENGTH = 64
+"""The length of a salted digest, as every other digest in the store states."""
+
+_SHORT_DIGEST_LENGTH = 12
+"""How much of a digest a report prints; enough to tell generations apart."""
+
 
 def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
     """Return the counts that explain what the labels rest on.
@@ -97,9 +103,47 @@ def _diagnostics_lines(diagnostics: cabc.Mapping[str, object]) -> list[str]:
         f"- By attribution: {as_counts(store['by_attribution'])}",
         f"- By origin: {as_counts(store['by_origin'])}",
         f"- By parser class: {as_counts(store['by_parser_class'])}",
-        f"- Label loss {generation_unavailable_line()}",
+        _generation_line(store),
         _closed_history_line(history),
     ]
+
+
+def _generation_line(store: cabc.Mapping[str, object]) -> str:
+    """Return the per-generation label-loss bullet for one store block.
+
+    A snapshot written before the dimension existed carries no map, and a
+    document whose store holds no rows carries an empty one. Both are reported
+    as unavailable rather than as a measured zero, because neither shows which
+    generation produced any label. A present map is printed as measured counts,
+    with the digest shortened so a report names a generation without repeating
+    64 characters per row; the store still holds the full key.
+
+    Returns
+    -------
+    str
+        A measured breakdown, or the statement of why none is available.
+    """
+    counts = store.get("by_generation")
+    if not isinstance(counts, dict) or not counts:
+        return f"- Label loss {generation_unavailable_line()}"
+    measured = {
+        _short_digest(key): value
+        for key, value in typ.cast("dict[str, object]", counts).items()
+    }
+    return f"- By generation: {as_counts(measured)}"
+
+
+def _short_digest(key: str) -> str:
+    """Return the short form of one generation bucket name.
+
+    Returns
+    -------
+    str
+        The first twelve characters of a digest, or the bucket name unchanged
+        when it is not a digest. ``unrecorded`` must stay recognizable: it is
+        the count of rows that name no generation, not a generation of its own.
+    """
+    return key[:_SHORT_DIGEST_LENGTH] if len(key) == _DIGEST_LENGTH else key
 
 
 def _closed_history_line(history: cabc.Mapping[str, object]) -> str:

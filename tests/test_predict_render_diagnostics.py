@@ -15,6 +15,18 @@ from buildlimits.predict.formatting import TRUNCATED_OBSERVER_NOTE
 from buildlimits.predict.render import render_markdown
 
 
+def _store_block(document: dict[str, object]) -> dict[str, object]:
+    """Return the document's retained-store block for shape rewriting.
+
+    Returns
+    -------
+    dict[str, object]
+        The mutable block the current document carries.
+    """
+    diagnostics = typ.cast("dict[str, object]", data_section(document)["diagnostics"])
+    return typ.cast("dict[str, object]", diagnostics["store"])
+
+
 def _diagnostics_document() -> dict[str, object]:
     """Return a document whose store, history and observer counts are measured."""
     document = empty_document()
@@ -277,16 +289,51 @@ def test_the_observer_names_the_operations_that_are_not_appends() -> None:
     assert "records appended" not in markdown, "no label calls a mixed total appends"
 
 
-def test_the_missing_generation_dimension_is_named() -> None:
-    """A dimension no row can carry is stated as unavailable, with its reason."""
+def test_a_history_without_generation_evidence_names_the_gap() -> None:
+    """A store block with no map is stated as unavailable, with its reason.
+
+    The diagnostic document this test renders carries the maps a release
+    wrote before the generation dimension existed. Printing a measured zero
+    would claim no loss was observed, when the truth is that the evidence was
+    never written.
+    """
     markdown = render_markdown(_diagnostics_document())
 
     line = next(
         line for line in markdown.splitlines() if "by generation: unavailable" in line
     )
-    assert "sccache version" in line and "server generation" in line, (
-        "the reason names what the row does carry"
+    assert "no stored generation digest" in line, (
+        "the reason names the evidence the snapshot lacks"
     )
+
+
+def test_a_present_generation_map_is_printed_as_measured_counts() -> None:
+    """A store block that does carry the dimension prints its counts, shortened.
+
+    The digest is a correlation key, not a name a human reads, so the report
+    prints a short prefix while the store keeps the full value. The absent
+    bucket must stay recognizable: it counts rows that name no generation.
+    """
+    document = _diagnostics_document()
+    store = _store_block(document)
+    store["by_generation"] = {
+        "a" * 64: 3,
+        "b" * 64: 2,
+        "unrecorded": 1,
+    }
+
+    markdown = render_markdown(document)
+
+    line = next(
+        line for line in markdown.splitlines() if line.startswith("- By generation:")
+    )
+    assert "by generation: unavailable" not in markdown, (
+        "a measured map is never reported as unavailable"
+    )
+    assert f"{'a' * 12}=3" in line, "the first generation's count is printed"
+    assert f"{'b' * 12}=2" in line, "the second generation's count is printed"
+    assert "unrecorded=1" in line, "the absent bucket stays recognizable"
+    assert "a" * 64 not in line, "the full digest is not repeated in the report"
 
 
 def _closed_history_line(document: dict[str, object]) -> str:

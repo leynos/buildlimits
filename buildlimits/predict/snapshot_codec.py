@@ -32,8 +32,8 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 3
-SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, SNAPSHOT_VERSION})
+SNAPSHOT_VERSION = 4
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, SNAPSHOT_VERSION})
 _EVENT_FIELDS = frozenset({
     "identity",
     "origin",
@@ -45,9 +45,10 @@ _EVENT_FIELDS = frozenset({
 })
 # A version 1 row written before the admission field existed omits it, and a
 # version 1 or 2 row predates the label-time provenance marker. The loader
-# accepts those shapes only for the versions that wrote them: version 3 keeps
-# the event shape exact, so a row that omits the marker cannot masquerade as
-# current-format evidence.
+# accepts those shapes only for the versions that wrote them: version 3 and
+# later keep the event shape exact, so a row that omits the marker cannot
+# masquerade as current-format evidence. Version 4 changed only the diagnostics
+# block, so its event rows carry the same shape version 3 wrote.
 _V2_EVENT_FIELDS = _EVENT_FIELDS - {"label_observed_verified"}
 _V1_EVENT_FIELDS = _V2_EVENT_FIELDS - {"admitted_at"}
 # Each version's accepted event shapes. A lookup keeps the loader from chaining
@@ -55,6 +56,7 @@ _V1_EVENT_FIELDS = _V2_EVENT_FIELDS - {"admitted_at"}
 _ACCEPTED_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     1: frozenset({_V1_EVENT_FIELDS, _V2_EVENT_FIELDS}),
     2: frozenset({_V2_EVENT_FIELDS}),
+    3: frozenset({_EVENT_FIELDS}),
     SNAPSHOT_VERSION: frozenset({_EVENT_FIELDS}),
 }
 _IDENTITY_LENGTH = 64

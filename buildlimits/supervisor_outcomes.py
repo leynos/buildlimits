@@ -67,15 +67,6 @@ __all__ = [
     "OutcomeShell",
     "build_shell",
 ]
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
-    from buildlimits.outcome_ports import StoreResult
-    from buildlimits.outcome_recorder_types import Outputs
-    from buildlimits.pending_request import Pending
-    from buildlimits.supervisor import Supervisor
-OUTCOME_TICK_SECONDS = 1.0
-__all__ = []
 
 
 class OutcomeShell:
@@ -121,15 +112,22 @@ class OutcomeShell:
                 supervisor.settings.sccache_socket,
                 reaper=reaper,
             )
+        self._salt: outcome_key.Salt | None = None
         self._recorder = OutcomeRecorder(
-            self._statistics, self._server, wall_clock=self._wall_clock
+            self._statistics,
+            self._server,
+            wall_clock=self._wall_clock,
+            # The salt arrives asynchronously, so the reader consults it at the
+            # moment a reading completes rather than capturing it here.
+            generation_digest=lambda generation: outcome_shell_keys.generation_digest(
+                generation, self._salt
+            ),
         )
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(
             supervisor.metrics, supervisor.tracer
         )
         self._counters = outcome_shell_stats.OutcomeCounters()
-        self._salt: outcome_key.Salt | None = None
         self._next_gate_at = 0.0
         self._disabled = False
         self._closed = False

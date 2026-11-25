@@ -20,26 +20,25 @@ window, so the warning is stored once rather than reworded at each boundary.
 """
 
 _GENERATION_UNAVAILABLE = (
-    "by generation: unavailable (a store row's key names its sccache version, "
-    "not the server generation that produced it, so no per-generation label "
-    "breakdown can be measured)"
+    "by generation: unavailable (this snapshot carries no stored generation "
+    "digest, so no per-generation label breakdown can be measured)"
 )
 
 
 def generation_unavailable_line() -> str:
-    """Return the honest statement of the dimension this history cannot carry.
+    """Return the statement for a history that carries no generation evidence.
 
-    Issue #68 asks for label loss by sccache generation. A store row's key
-    carries the server *version*, never the generation the recorder observed
-    when it read a window, and adding one would be a new row field for a
-    measurement no report can reconcile. The dimension is therefore named as
-    unavailable with its reason rather than omitted or filled with a count the
-    history cannot support.
+    Issue #68 asks for label loss by sccache generation. A current store row
+    states a salted digest of the generation its reading observed, so a report
+    can print a measured breakdown. A history written before that field existed
+    cannot: its rows predate the evidence, and no later reader can recover it.
+    This sentence names that case rather than printing a zero, which would read
+    as a measurement of no loss.
 
     Returns
     -------
     str
-        The fixed sentence both reports print for the missing dimension.
+        The fixed sentence printed only when the snapshot holds no map.
 
     Examples
     --------

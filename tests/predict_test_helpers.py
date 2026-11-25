@@ -261,22 +261,32 @@ def record_events(
     return load_snapshot(path).events
 
 
+_PROVENANCE_VERSION = 3
+"""The first store version that states a row's label-time provenance."""
+
+
 def _as_version_row(record: StoreRecord, version: int) -> StoreRecord:
     """Reproduce the row shape the named document version actually wrote.
 
-    A version 1 or 2 release could not state label-time provenance, so a test
-    that asks what such a history looks like must strip the marker its own
-    recorder now sets. Writing it as-is would be refused, which is the encoder
-    correctly refusing to record proof a document cannot carry.
+    A version 1 or 2 release could not state label-time provenance, and a
+    version 3 release could not state a generation digest, so a test that asks
+    what such a history looks like must strip the evidence its own recorder now
+    sets. Writing it as-is would be refused, which is the encoder correctly
+    refusing to record proof a document cannot carry.
 
     Returns
     -------
     StoreRecord
         The record as that version would have written it.
     """
-    if version >= FORMAT_VERSION or not isinstance(record, OutcomeRecord):
+    if not isinstance(record, OutcomeRecord):
         return record
-    return dc.replace(record, label_time_provenance=None)
+    if version >= FORMAT_VERSION:
+        return record
+    stripped = dc.replace(record, generation_digest=None)
+    if version >= _PROVENANCE_VERSION:
+        return stripped
+    return dc.replace(stripped, label_time_provenance=None)
 
 
 def write_snapshot(tmp_path: Path, count: int) -> Path:

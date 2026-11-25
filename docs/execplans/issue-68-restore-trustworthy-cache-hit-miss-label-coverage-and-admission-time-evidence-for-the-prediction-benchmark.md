@@ -107,10 +107,15 @@ only information available before admission.
   reason, writer appends and evictions split by the closed `StoreReason`, and
   reading skips and failures. The reason split is what separates a row
   retention expired from one a failed write dropped.
-- Label loss by sccache generation is reported as `by generation: unavailable`
-  with its reason. A store row's key carries the server version, not the
-  generation the recorder observed, and no v3 row field was added, because a
-  field only future rows carry could not be reconciled with retained history.
+- Label loss by sccache generation is measured. A version 4 store row carries
+  `generation_digest`, a salted HMAC-SHA-256 over the recorder's
+  `(invocation, pid, starttime)` identity, and `StoreAccounting.by_generation`
+  counts outcome rows per digest with `unrecorded` for a row that names none.
+  Only an attributing reading writes a digest; a baseline, a refusal, a changed
+  generation and an overflow all write null, so the breakdown describes windows
+  the recorder proved rather than inferring a server from a window's end
+  boundary. A history written before the field existed reports
+  `by generation: unavailable` instead of a measured zero.
 - Closed history is measured against the recorded retention floor, so a prefix
   retention deleted is not reported as a gap. A floor that cannot be read
   withdraws the gap and quarantine counts as unavailable, and the quarantine
@@ -587,21 +592,20 @@ the marker. The new test was run against the old fixture first and failed with
 - The archive byte budget sees larger rows. A policy sized exactly to the old
   row size will retain fewer rows; the retention tests and the documented
   budget are updated accordingly.
-- Label loss by sccache generation is reported as unavailable. A store row's
-  key carries the server version, not the generation the recorder observed, and
-  no field for it was added: a field only future rows would carry could not be
-  reconciled with the retained history, so the dimension is named rather than
-  guessed. The label-time provenance field was added for the different reason
-  that a row can state a fact about itself without any cross-row reconciliation.
+- Label loss by sccache generation is measured for a current history and
+  reported as unavailable for an older one. A version 4 store row states
+  `generation_digest`, so the snapshot's `by_generation` map counts each
+  generation's rows and reconciles to the outcome total exactly as the other
+  breakdowns do. A version 1 to 3 history carries no digest and cannot be given
+  one after the fact, so its rows count as `unrecorded` and the report names
+  the gap rather than printing a zero.
 
-The per-generation label breakdown issue #68 also asks for remains unavailable:
-a store row's key names the server *version*, not the generation that produced
-it, so no report can derive it from retained history.
+The dimension is a correlation, not an identity: the digest is a salted key
+over the recorder's `(invocation, pid, starttime)` triple, and only an
+attributing reading writes one. A changed, unreadable, baseline or overflowed
+window states null because no single server can be attributed to its rows.
 [ADR 011](../adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
-records the concrete design that would close it — a salted generation digest
-on a future store row plus a bounded `by_generation` diagnostic — as a blocking
-follow-up rather than a promise. Both reports state the dimension as
-unavailable with that reason.
+records the design and why a plain-text generation was rejected.
 
 ## Verification
 

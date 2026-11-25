@@ -9,11 +9,20 @@ reconciles the totals before any of them can be trusted.
 import typing as typ
 
 from buildlimits.predict.accounting import (
+    UNRECORDED,
     Diagnostics,
     HistoryLoss,
     StoreAccounting,
     checked_counts,
 )
+
+_GENERATION_VERSION = 4
+"""The first snapshot version whose diagnostics state a per-generation map.
+
+It matches ``snapshot_codec.SNAPSHOT_VERSION``; the constant is repeated here
+rather than imported because the snapshot codec imports this module, and the
+two would otherwise form a cycle.
+"""
 
 _STORE_COUNT_FIELDS = (
     "records_total",
@@ -33,6 +42,7 @@ _STORE_MAP_FIELDS = (
     "by_parser_class",
     "by_child_sighting",
     "by_server_version",
+    "by_generation",
 )
 
 
@@ -73,7 +83,9 @@ def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | 
     }
 
 
-def diagnostics_from_dict(value: object, *, label: str) -> Diagnostics:
+def diagnostics_from_dict(
+    value: object, *, label: str, version: int = _GENERATION_VERSION
+) -> Diagnostics:
     """Validate one decoded diagnostics block and restore its counts.
 
     Every breakdown must sum to the per-compilation row count, so a corrupted
@@ -98,12 +110,41 @@ def diagnostics_from_dict(value: object, *, label: str) -> Diagnostics:
     if not isinstance(store_value, dict) or not isinstance(history_value, dict):
         msg = f"{label} diagnostics must hold store and history objects"
         raise TypeError(msg)
-    store = _store_accounting_from(typ.cast("dict[str, object]", store_value), label)
+    store = _store_accounting_from(
+        typ.cast("dict[str, object]", store_value), label, version=version
+    )
     return Diagnostics(store=store, history=_history_loss_from(history_value, label))
 
 
-def _store_accounting_from(value: dict[str, object], label: str) -> StoreAccounting:
+def _is_required_map(name: str, value: dict[str, object], version: int) -> bool:
+    """Report whether one breakdown must be present in this document.
+
+    Every breakdown but the per-generation one has always been written, so its
+    absence is corruption. The per-generation map arrived with version 4, and a
+    document written before it genuinely has no measurement to read: its
+    absence is a fact about the history, not damage to the document.
+
+    Returns
+    -------
+    bool
+        Whether the map must be decoded from the document itself.
+    """
+    if name in value:
+        return True
+    return name != "by_generation" or version >= _GENERATION_VERSION
+
+
+def _store_accounting_from(
+    value: dict[str, object], label: str, *, version: int = _GENERATION_VERSION
+) -> StoreAccounting:
     """Validate the retained-store counts and their reconciliation.
+
+    A snapshot written before the generation dimension existed has no
+    per-generation map, and its rows cannot supply one: the field did not exist
+    when they were written. Such a document decodes the map as a single
+    ``unrecorded`` bucket covering every outcome row, which is what its own
+    history really states, rather than being refused for lacking evidence it
+    was never written with.
 
     Returns
     -------
@@ -119,11 +160,18 @@ def _store_accounting_from(value: dict[str, object], label: str) -> StoreAccount
         name: _required_count(value.get(name), label=f"{label} {name}")
         for name in _STORE_COUNT_FIELDS
     }
+    outcome_records = counts["outcome_records"]
     maps = {
         name: checked_counts(value.get(name), label=f"{label} {name}")
         for name in _STORE_MAP_FIELDS
+        if _is_required_map(name, value, version)
     }
-    outcome_records = counts["outcome_records"]
+    if "by_generation" not in maps:
+        # An older snapshot cannot carry the dimension, and its rows cannot
+        # supply one after the fact. Every outcome row it holds is therefore
+        # stated as unattributed rather than left out of a breakdown that must
+        # account for all of them.
+        maps["by_generation"] = {UNRECORDED: outcome_records}
     if counts["records_total"] != outcome_records + counts["summary_records"]:
         msg = f"{label} totals do not reconcile"
         raise ValueError(msg)
@@ -163,6 +211,7 @@ def _store_accounting_from(value: dict[str, object], label: str) -> StoreAccount
         by_parser_class=maps["by_parser_class"],
         by_child_sighting=maps["by_child_sighting"],
         by_server_version=maps["by_server_version"],
+        by_generation=maps["by_generation"],
     )
 
 

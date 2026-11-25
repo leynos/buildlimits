@@ -102,6 +102,12 @@ def _finish_reading(
 ) -> tuple[RecorderState, Outputs]:
     """Validate generations before attributing a complete quiet window.
 
+    Only an attributing window carries a generation digest. Every refusal and
+    the first baseline are emitted with ``None``, because none of them can show
+    which single server handled the rows: a changed, unreadable or straddled
+    window has no one generation, and a baseline accounts for a window it never
+    measured.
+
     Returns
     -------
     tuple[RecorderState, Outputs]
@@ -226,6 +232,12 @@ def _attribute_window(
 ) -> tuple[RecorderState, Outputs]:
     """Attribute the window between two accepted readings.
 
+    This is the one emission that can name a generation, because the reducer
+    has already proven both boundaries agree on one server and that no launch
+    straddled them. The digest therefore describes the server that produced
+    every row in the window, and a per-generation breakdown is a measurement
+    rather than an inference.
+
     Returns
     -------
     tuple[RecorderState, Outputs]
@@ -235,7 +247,7 @@ def _attribute_window(
     emitted = _emit_attribution(
         state.progress.window.entries,
         attribution,
-        _EmissionMoment(event.now, event.observed_at),
+        _EmissionMoment(event.now, event.observed_at, event.after_generation_digest),
         (baseline.stats, after.stats),
     )
     progress = _schedule_next_read(

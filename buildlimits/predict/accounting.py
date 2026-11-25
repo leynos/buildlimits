@@ -56,6 +56,12 @@ class StoreAccounting:
         Outcome rows by the bounded child-process observation.
     by_server_version : Mapping[str, int]
         Outcome rows by the sccache version in their key.
+    by_generation : Mapping[str, int]
+        Outcome rows by the salted digest of the server generation their
+        reading observed, or ``unrecorded`` for a row that predates the field
+        or whose window named no single server. The digest is a correlation
+        key, never a process identity, so a breakdown by it separates label
+        loss per generation without disclosing one.
     admission_recorded : int
         Outcome rows carrying an admission time.
     admission_missing : int
@@ -79,6 +85,7 @@ class StoreAccounting:
     by_parser_class: cabc.Mapping[str, int]
     by_child_sighting: cabc.Mapping[str, int]
     by_server_version: cabc.Mapping[str, int]
+    by_generation: cabc.Mapping[str, int]
     admission_recorded: int
     admission_missing: int
     labels: int
@@ -190,6 +197,7 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
         by_parser_class=_frozen(counters.parser),
         by_child_sighting=_frozen(counters.sighting),
         by_server_version=_frozen(counters.version),
+        by_generation=_frozen(counters.generation),
         admission_recorded=admitted,
         admission_missing=outcomes - admitted,
         labels=counters.result["hit"] + counters.result["miss"],
@@ -211,6 +219,7 @@ class _DimensionCounters:
     parser: collections.Counter[str] = dc.field(default_factory=collections.Counter)
     sighting: collections.Counter[str] = dc.field(default_factory=collections.Counter)
     version: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    generation: collections.Counter[str] = dc.field(default_factory=collections.Counter)
 
     def add(self, record: OutcomeRecord) -> None:
         """Count one outcome row on every dimension."""
@@ -221,6 +230,7 @@ class _DimensionCounters:
         self.parser[record.parser_class] += 1
         self.sighting[record.child_sighting] += 1
         self.version[record.key.toolchain_identity.server_version] += 1
+        self.generation[record.generation_digest or UNRECORDED] += 1
 
 
 def _frozen(counts: collections.Counter[str]) -> dict[str, int]:

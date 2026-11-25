@@ -780,19 +780,30 @@ measured. The observer also says when the omission evidence is incomplete: an
 event written before the reason existed counts as unrecorded rather than as a
 measured `none`.
 
+Label loss is also broken down by sccache server generation. A store row names
+the generation its reading observed as a salted digest, so the report can count
+labels and losses per generation without recording a process id. Only a window
+the recorder actually attributed carries a digest: a window whose server
+changed, a first baseline and an overflow all count under `unrecorded`, because
+none of them proves which single server produced their rows. A history written
+before the field existed reports `by generation: unavailable` rather than a
+measured zero, since no later reader can recover evidence that was never
+written.
+
 An outcome row records the UTC wall-clock moment the supervisor admitted the
 compilation. That time is read where admission is decided, not derived from the
 later label time; a row without one, including every row written before the
-version 2 store, remains unscorable. The store format is version 3 and the
-snapshot format is version 3. Version 1 and 2 documents still load, with the
+version 2 store, remains unscorable. The store format is version 4 and the
+snapshot format is version 4. Version 1 to 3 documents still load, with the
 newer evidence reported as `unrecorded` or absent rather than guessed, and a
 version 1 or 2 snapshot loads with its events' label times treated as
-unverified. A version 3 snapshot event states `label_observed_verified`; one
-that omits it, or sets it to a non-boolean, is refused. A history whose rows
-predate the admission field reports `insufficient admission times`. Recording
-new rows is not by itself enough either: a row is scored only when it also
-proves when its label became known, which the version 3 store states and no
-earlier version does. Admission coverage alone cannot make a history scorable.
+unverified. A version 3 or later snapshot event states
+`label_observed_verified`; one that omits it, or sets it to a non-boolean, is
+refused. A history whose rows predate the admission field reports
+`insufficient admission times`. Recording new rows is not by itself enough
+either: a row is scored only when it also proves when its label became known,
+which the version 3 store states and no earlier version does. Admission
+coverage alone cannot make a history scorable.
 
 A hit or miss label is dated when the statistics reading that produced it
 returned, not when the compilation finished. sccache exposes no label before

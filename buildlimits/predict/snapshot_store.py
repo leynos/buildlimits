@@ -5,6 +5,7 @@ every field the report later reads. A hand-edited or truncated file is refused
 with the field that is wrong rather than surfacing as a confusing report.
 """
 
+import dataclasses as dc
 import itertools
 import json
 import math
@@ -125,15 +126,31 @@ def load_snapshot(path: Path) -> Snapshot:
         gaps=_gaps_from(path, document.get("stats")),
         diagnostics=_diagnostics_from(
             path,
-            document.get("diagnostics"),
-            source=decoded_source,
-            events=decoded_events,
+            document,
+            _DocumentedHistory(decoded_source, decoded_events, version),
         ),
     )
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _DocumentedHistory:
+    """The already-decoded parts of one snapshot document.
+
+    ``source`` and ``events`` are what the document states about its history,
+    and ``version`` is the shape it was written with. They travel together
+    because a diagnostics block must describe all three at once: the same
+    records, the same labels, and a version whose fields it can carry.
+    """
+
+    source: Source
+    events: tuple[Event, ...]
+    version: int
+
+
 def _diagnostics_from(
-    path: Path, value: object, *, source: Source, events: cabc.Sequence[Event]
+    path: Path,
+    document: cabc.Mapping[str, object],
+    parts: _DocumentedHistory,
 ) -> Diagnostics | None:
     """Rebuild the optional label-loss diagnostics and join them to the history.
 
@@ -141,7 +158,9 @@ def _diagnostics_from(
     explicit null when its writer had no counts. Both mean "unavailable", not
     "empty". A present block must describe the same store its source block
     does and the same labels its events carry, because the report prints all
-    three figures for one snapshot.
+    three figures for one snapshot. The document's own version is passed on,
+    because a version 3 block predates the per-generation map and its absence
+    is a fact about that history rather than damage to the document.
 
     Returns
     -------
@@ -149,11 +168,12 @@ def _diagnostics_from(
         The validated diagnostics, or None when the document carries none.
         Both joins are enforced by the helpers this calls.
     """
+    value = document.get("diagnostics")
     if value is None:
         return None
-    diagnostics = diagnostics_from_dict(value, label=str(path))
-    require_diagnostics_match(path, source, diagnostics)
-    require_event_labels_match(path, events, diagnostics)
+    diagnostics = diagnostics_from_dict(value, label=str(path), version=parts.version)
+    require_diagnostics_match(path, parts.source, diagnostics)
+    require_event_labels_match(path, parts.events, diagnostics)
     return diagnostics
 
 

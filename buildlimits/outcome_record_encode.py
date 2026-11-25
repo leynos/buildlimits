@@ -50,10 +50,19 @@ _V1_ROW_FIELDS = _V2_ROW_FIELDS - {
     "outcome_attribution",
     "admitted_at",
 }
+_V3_ROW_FIELDS = _V2_ROW_FIELDS | {"label_time_provenance"}
 _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
     1: _V1_ROW_FIELDS,
     2: _V2_ROW_FIELDS,
-    FORMAT_VERSION: _V2_ROW_FIELDS | {"label_time_provenance"},
+    3: _V3_ROW_FIELDS,
+    FORMAT_VERSION: _V3_ROW_FIELDS | {"generation_digest"},
+}
+# The first document version that can state each optional proof. A row that
+# carries one cannot be written beneath an older header, because that shape has
+# nowhere to state it and dropping it would turn proof into silence.
+_FIELD_INTRODUCED: dict[str, int] = {
+    "label_time_provenance": 3,
+    "generation_digest": 4,
 }
 
 
@@ -87,7 +96,7 @@ def encode_line(
     --------
     >>> import datetime as dt
     >>> encode_line(StoreHeader("salt-1", dt.datetime(2026, 1, 1, tzinfo=dt.UTC)))
-    '{"format":"buildlimits-cache-outcomes","version":3,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
+    '{"format":"buildlimits-cache-outcomes","version":4,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
     """
     document = _document(value, version)
     line = json.dumps(
@@ -152,7 +161,9 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
     document predating the label-time provenance marker drops that field, and an
     outcome row that has already claimed provenance cannot be written into such
     a document: the older shape has nowhere to state it, and dropping it would
-    turn proof into silence.
+    turn proof into silence. The generation digest is dropped the same way, and
+    a row that names a generation cannot be written into a document that cannot
+    carry one.
 
     Returns
     -------
@@ -170,9 +181,10 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
         fields["admitted_at"] = (
             None if record.admitted_at is None else timestamp_text(record.admitted_at)
         )
-        if version < FORMAT_VERSION and record.label_time_provenance is not None:
-            msg = "an older document cannot state label-time provenance"
-            raise ValueError(msg)
+        for name, introduced in _FIELD_INTRODUCED.items():
+            if version < introduced and getattr(record, name) is not None:
+                msg = f"an older document cannot state {name.replace('_', ' ')}"
+                raise ValueError(msg)
         allowed = _ROW_FIELDS_BY_VERSION.get(version)
         if allowed is None:
             msg = "store record version is not supported"

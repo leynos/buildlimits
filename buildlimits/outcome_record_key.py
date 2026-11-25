@@ -15,6 +15,7 @@ __all__ = [
     "_DIGEST_HEX_LENGTH",
     "_is_choice",
     "_optional_choice",
+    "_optional_digest",
     "_path_like",
     "_safe_component",
     "_safe_origin",
@@ -156,3 +157,20 @@ def _valid_digest(value: object) -> str | None:
     if not all(character in "0123456789abcdef" for character in value):
         return None
     return value
+
+
+def _optional_digest(value: object) -> bool:
+    """Check an absent generation digest or a well-formed one.
+
+    A row that names no generation is valid: an older row, a changed window and
+    an unreadable server identity all leave the field absent. A digest that is
+    present must be the same shape as every other salted digest the store
+    holds, so a truncated or hand-edited value is refused rather than counted
+    as a generation of its own.
+
+    Returns
+    -------
+    bool
+        Whether the value is None or a lowercase SHA-256 hexadecimal digest.
+    """
+    return value is None or _valid_digest(value) is not None

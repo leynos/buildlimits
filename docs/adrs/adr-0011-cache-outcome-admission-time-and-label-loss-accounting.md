@@ -125,12 +125,13 @@ counts sum to the discarded total instead of including the reason of every
 clean append.
 
 Issue #68 also asks for label loss by sccache generation. A store row's key
-carries the server *version*, not the generation the recorder observed when it
-read a window, so this dimension cannot be measured from retained history and
-is not given a new row field: no report could reconcile a field the existing
-rows do not carry. Both the dataset report and the rendered Markdown name it
-`by generation: unavailable` with that reason, which is bounded and honest
-rather than omitted or filled with a count.
+carries the server *version*, not the generation the recorder observed, and a
+process id is not something a privacy-safe store may keep. The store therefore
+records a salted digest of the generation instead, and `by_generation` counts
+submissions per digest. Only an attributing window carries one, so the count is
+a measurement of that window's rows rather than an inference from its end
+boundary; a history written before the field existed reports the dimension as
+unavailable instead of printing a zero.
 
 The snapshot loader reconciles the diagnostics before a report can print them:
 every breakdown must sum to the outcome rows, the record totals must add up,
@@ -400,10 +401,12 @@ the shell never supplied.
 - **Flush the overflowed window and keep its baseline.** Rejected: the
   overflowed requests remain in the cumulative counters, so later windows
   cannot balance and the loss becomes permanent.
-- **Add a server-generation field to the store row.** Rejected: a row's key
-  already names the server version, and no report could reconcile a new
-  generation field with the rows already written, so the dimension is reported
-  as unavailable instead of adding a field that only future rows would carry.
+- **Add a clear-text server-generation field to the store row.** Rejected: the
+  generation is `(invocation, pid, starttime)`, and persisting a process id
+  would put a host detail in a privacy-safe store. The accepted design digests
+  the triple under the store's own salt instead, so a row names a generation it
+  can be counted by without disclosing one. It remains true that older rows
+  cannot carry the field; they are reported as unrecorded rather than guessed.
 - **Report a gap count from an unreadable retention floor.** Rejected: without
   the floor, an absent sequence below the survivors cannot be told apart from a
   sequence retention removed on purpose, so the counts are withdrawn rather
@@ -444,26 +447,37 @@ the shell never supplied.
 - Permanent host provisioning and the timer that archives history remain with
   [dev-env-rocky #424](https://github.com/leynos/dev-env-rocky/issues/424) and
   the archival work in [ADR 010](adr-0010-archived-cache-outcome-history.md).
-- **Blocking follow-up: per-generation label accounting.** Issue #68 also asks
-  for label loss by sccache generation, and this decision records that
-  dimension as unavailable rather than measuring it. The concrete design that
-  would close it, kept blocked until a store format can carry it:
+- **Per-generation label accounting is measured, not deferred.** Issue #68 asks
+  for label loss by sccache generation. A plain-text generation cannot be
+  stored, so the store carries a correlation key instead:
   - A version 4 store row gains `generation_digest: str | None`: a salted
     HMAC-SHA-256 over the recorder's `(invocation, pid, starttime)` identity,
     using the same per-store salt domain as the cache key, so no host path or
-    process id is retained.
-  - The recorder writes it from the reading's observed boundary generation on
-    every row an attributing or refusing reading emits; version 1 to 3 rows
-    decode it as absent. Because a server can change inside a reading, the
-    boundary generation is an *observation of the window's end*, not proof of
-    which server handled each compilation: `generation_changed` windows write
-    null, since no single generation can be attributed to their rows.
+    process id is retained. `outcome_key.generation_digest` is the one place
+    that joins the triple, and it separates the parts with a byte neither an
+    invocation nor an integer can contain, so two distinct triples cannot
+    digest the same text.
+  - The shell supplies the key once it holds the store salt, through the
+    recorder driver's `generation_digest` seam. A recorder without a salt, and
+    any failed or absent generation read, yields `None`: a row states that no
+    generation could be attributed rather than borrowing a neighbouring one.
+  - Only an **attributing** window carries the key. The reducer withholds it
+    from every other emission, so a baseline, a refusal, an overflow and a
+    straddled window all write null. The one path that sets it has already
+    proven both boundaries named one server and that no launch straddled them,
+    which is what makes the per-generation count a measurement rather than an
+    inference from the window's end.
   - `StoreAccounting` gains a bounded `by_generation` map (the same 64-entry
-    cap as the other dimensions, with `unrecorded` for older rows) and the
-    snapshot diagnostics gains the matching block, which the loader reconciles
+    cap and `other` overflow bucket as the other dimensions), with
+    `unrecorded` for rows that predate the field or name no generation. The
+    snapshot diagnostics gains the matching block and the loader reconciles it
     against the outcome-row total exactly as it does the other breakdowns.
-  - The correlation is the digest itself: it joins each label to the server
-    generation that produced it, so `generation_changed` loss can be separated
-    per generation instead of appearing only as one refusal reason.
-  This blocks the generation dimension of the issue, not the label-coverage or
-  admission-time work, which stand on their own.
+  - Version 1 to 3 rows decode the digest as absent, and a version 1 to 3
+    snapshot has no map. Such a document loads with every outcome row counted
+    in `unrecorded`, which is what its history really states, rather than being
+    refused for lacking evidence it was never written with. The encoder refuses
+    to write a digest into a document older than version 4, for the same reason
+    it refuses a provenance marker: an older shape has nowhere to state it.
+  The report prints the breakdown when the map is present and names the gap
+  only when it is not, so a history recorded by this release measures the
+  dimension instead of reporting it unavailable.

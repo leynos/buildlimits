@@ -128,6 +128,11 @@ class PollResult:
     ``observed_at`` is the wall-clock moment the port returned this result.
     When the result is terminal it is the moment the reading's labels or
     refusals became known, and every row the reading emits shares it.
+
+    ``after_generation_digest`` is the salted correlation key for the server
+    generation the reading observed at its window's end. It is populated only
+    from a successful generation read, and the reducer still withholds it from
+    any window whose two boundaries do not name one server.
     """
 
     now: float
@@ -135,6 +140,7 @@ class PollResult:
     before_generation: Generation | GenerationFailure | None = None
     after_generation: Generation | GenerationFailure | None = None
     observed_at: dt.datetime | None = None
+    after_generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)

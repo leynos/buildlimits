@@ -29,14 +29,16 @@ incompatible configuration fails before any compiler is admitted. The sccache
 version is not checked at startup: an unsupported version is detected on a
 later statistics reading, which disables recording while admission continues.
 
-The store format is version 3 and the snapshot format is version 3. An outcome
+The store format is version 4 and the snapshot format is version 4. An outcome
 row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`,
-`outcome_attribution` and the `label_time_provenance` marker that says whether
-its label time is proven; a snapshot adds the bounded label-loss diagnostics
-and, per event, the `label_observed_verified` marker that carries the same
-statement. Version 1 and 2 stores and snapshots remain readable, and their rows
-report the newer evidence as `unrecorded` or absent, so a history written
-before the markers existed contributes no proven labels or admission times to
+`outcome_attribution`, the `label_time_provenance` marker that says whether its
+label time is proven, and the `generation_digest` that names the sccache
+generation its reading observed; a snapshot adds the bounded label-loss
+diagnostics, including the per-generation breakdown, and, per event, the
+`label_observed_verified` marker that carries the same statement. Version 1 to
+3 stores and snapshots remain readable, and their rows report the newer
+evidence as `unrecorded` or absent, so a history written before the markers
+existed contributes no proven labels, admission times or generation counts to
 the prediction benchmark.
 
 The compatibility promise covers documents a **release** wrote. Snapshots taken
@@ -153,19 +155,31 @@ is repaired or re-stamped.
 
 ### Store and snapshot versions
 
-| Format   | Version | What changed                                                                   |
-| -------- | ------- | ------------------------------------------------------------------------------ |
-| Store    | 2       | `admitted_at`, `outcome_reason` and `outcome_attribution` on an outcome row    |
-| Store    | 3       | `label_time_provenance`, written `verified` by the recorder that dates a row   |
-| Snapshot | 3       | `label_observed_verified` on every event, so a row states its label-time proof |
+| Format   | Version | What changed                                                                       |
+| -------- | ------- | ---------------------------------------------------------------------------------- |
+| Store    | 2       | `admitted_at`, `outcome_reason` and `outcome_attribution` on an outcome row        |
+| Store    | 3       | `label_time_provenance`, written `verified` by the recorder that dates a row       |
+| Store    | 4       | `generation_digest`, a salted key naming the sccache generation a reading observed |
+| Snapshot | 3       | `label_observed_verified` on every event, so a row states its label-time proof     |
+| Snapshot | 4       | `by_generation` in the diagnostics, the per-generation label-loss breakdown        |
 
 A version 1 or 2 snapshot still loads, with every event's label time treated as
-unverified. A version 3 snapshot event that omits the marker is refused, and so
-is a marker that is not a boolean. A version 3 store row states its provenance
-exactly: one that omits the marker is corrupt, and a version 1 or 2 row decodes
-it as absent, which is unproven rather than false. The encoder refuses to write
-a verified row into an older document, because that document has nowhere to
-state it.
+unverified. A version 3 or later snapshot event that omits the marker is
+refused, and so is a marker that is not a boolean. A version 3 or later store
+row states its provenance exactly: one that omits the marker is corrupt, and a
+version 1 or 2 row decodes it as absent, which is unproven rather than false.
+The encoder refuses to write a verified row into an older document, because
+that document has nowhere to state it.
+
+The generation digest follows the same rule. A version 4 store row states it,
+either as a 64-character lowercase digest or as an explicit null for a row no
+single generation can be attributed to. A version 1 to 3 row decodes it as
+absent, which is unattributed rather than a generation of its own. A snapshot
+written before version 4 has no `by_generation` map, and its rows cannot supply
+one after the fact: it loads with every outcome row counted under `unrecorded`,
+so the report states the dimension as unavailable rather than as a measured
+zero. A version 4 snapshot that omits the map is corrupt, because its own
+format says the map is there.
 
 ## Reading the status line
 

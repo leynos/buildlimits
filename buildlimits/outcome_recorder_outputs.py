@@ -40,14 +40,22 @@ if typ.TYPE_CHECKING:
 
 @dc.dataclass(frozen=True, slots=True)
 class _EmissionMoment:
-    """The monotonic tick and wall-clock moment one emission is caused at.
+    """The monotonic tick and evidence one emission is caused at.
 
     ``observed_at`` is when the label or refusal became known. It is ``None``
     only for a purely synthetic event, which supplies no wall clock.
+
+    ``generation_digest`` names the sccache generation the reading observed at
+    its window's end. It is ``None`` whenever no single generation can be
+    attributed to the rows: a refused, overflowing or changed window, and every
+    event emitted without a reading at all. It is never inferred from a
+    neighbouring window, so a null digest is a measured absence rather than a
+    missing value.
     """
 
     now: float
     observed_at: dt.datetime | None = None
+    generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -59,6 +67,22 @@ class _EventDetails:
     reason: OutcomeReason
     group_count: int
     now: float
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _RowEvidence:
+    """The evidence one emission's store rows carry, decided once per window.
+
+    ``observed_at`` is the moment every row shares, ``generation_digest`` names
+    the sccache generation that produced them, and ``provenance`` states
+    whether that moment is proven to be when the label became known. They
+    travel together because they answer one question — what does this row
+    prove? — and separating them invites a time without its proof.
+    """
+
+    observed_at: dt.datetime
+    generation_digest: str | None
+    provenance: LabelTimeProvenance | None
 
 
 def _emit_unattributed(
@@ -86,7 +110,7 @@ def _emit_unattributed(
     """
     details = _EventDetails("unattributed", "none", reason, len(launches), moment.now)
     return _pair_events_and_records(
-        launches, lambda _launch: details, moment.observed_at
+        launches, lambda _launch: details, moment.observed_at, moment.generation_digest
     )
 
 
@@ -94,6 +118,7 @@ def _pair_events_and_records(
     launches: tuple[_Launch, ...],
     details_for: cabc.Callable[[_Launch], _EventDetails],
     observed_at: dt.datetime | None,
+    generation_digest: str | None = None,
 ) -> Outputs:
     """Build each launch's event and row from one shared decision.
 
@@ -102,6 +127,11 @@ def _pair_events_and_records(
     omission applied to that outcome. That is all the pairing proves: the row
     is a candidate the writer may still discard or leave queued, so the shared
     reason is not evidence that the outcome reached the file.
+
+    ``generation_digest`` is copied onto every row this emission builds, and is
+    ``None`` for a window no single generation can be attributed to. The caller
+    decides that, because only the reading knows whether its two boundaries
+    named one server.
 
     Returns
     -------
@@ -123,11 +153,12 @@ def _pair_events_and_records(
         row_time = _row_time(launch, observed_at)
         omission = record_omission(launch, row_time)
         events.append(_event_for(launch, details, omission=omission))
-        record = (
+        evidence = (
             None
-            if omission != "none"
-            else _record_for(launch, details, row_time, provenance=provenance)
+            if omission != "none" or row_time is None
+            else _RowEvidence(row_time, generation_digest, provenance)
         )
+        record = None if evidence is None else _record_for(launch, details, evidence)
         if record is not None:
             records.append(record)
     return Outputs(events=tuple(events), records=tuple(records))
@@ -182,7 +213,9 @@ def _emit_attribution(
             now,
         )
 
-    paired = _pair_events_and_records(launches, details_for, moment.observed_at)
+    paired = _pair_events_and_records(
+        launches, details_for, moment.observed_at, moment.generation_digest
+    )
     summary = (
         _window_summary(launches, readings, moment.observed_at)
         if attribution.reason in {"none", "mixed_window"}
@@ -281,16 +314,15 @@ def _row_time(launch: _Launch, observed_at: dt.datetime | None) -> dt.datetime |
 def _record_for(
     launch: _Launch,
     details: _EventDetails,
-    observed_at: dt.datetime | None,
-    *,
-    provenance: LabelTimeProvenance | None,
+    evidence: _RowEvidence,
 ) -> OutcomeRecord | None:
-    """Build a keyed store record when this launch has a key and timestamp.
+    """Build a keyed store record when this launch has a key and evidence.
 
-    ``provenance`` states whether the time in ``observed_at`` is proven to be
-    when the label became known. The recorder passes ``verified`` when the
-    emission's own moment dated the row, and ``None`` when the synthetic
-    completion fallback supplied it.
+    ``evidence`` carries the time, provenance and generation this emission
+    decided once for the whole window, so a row cannot claim a time without the
+    proof that belongs to it. Its ``generation_digest`` is ``None`` when no
+    single generation can be attributed to the row, which is a measured absence
+    and never a guess.
 
     Returns
     -------
@@ -301,7 +333,7 @@ def _record_for(
     --------
     A launch without a cache key produces no record.
     """
-    if launch.payload.key is None or observed_at is None:
+    if launch.payload.key is None:
         return None
     runtime = (
         launch.runtime_seconds
@@ -313,14 +345,15 @@ def _record_for(
         outcome=details.cache_result,
         origin=launch.payload.origin,
         runtime_seconds=runtime,
-        observed_at=observed_at,
+        observed_at=evidence.observed_at,
         parser_class=launch.payload.parser_class,
         child_sighting=launch.sightings.sighting(),
         child_samples=launch.sightings.samples,
         outcome_reason=details.reason,
         outcome_attribution=details.attribution,
         admitted_at=launch.admitted_at,
-        label_time_provenance=provenance,
+        label_time_provenance=evidence.provenance,
+        generation_digest=evidence.generation_digest,
     )
 
 
