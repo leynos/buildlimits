@@ -37,10 +37,19 @@ and, per event, the `label_observed_verified` marker that carries the same
 statement. Version 1 and 2 stores and snapshots remain readable, and their rows
 report the newer evidence as `unrecorded` or absent, so a history written
 before the markers existed contributes no proven labels or admission times to
-the prediction benchmark. Upgrade the readers before the supervisor. A release
-that predates version 2 treats the store as a version mismatch and moves it
-aside, so archive or migrate the history before a downgrade; the new code never
-rewrites an old document merely to read it.
+the prediction benchmark.
+
+The compatibility promise covers documents a **release** wrote. Snapshots taken
+by intermediate revisions of this branch before the omission fields existed
+carry an observer block with fewer keys, and the loader refuses it rather than
+reading the absent keys as measured zeros. Those revisions were never released
+and never reached `main`, so no snapshot an operator can hold predates the
+fields; a snapshot taken from one of those revisions must be retaken.
+
+Upgrade the readers before the supervisor. A release that predates version 2
+treats the store as a version mismatch and moves it aside, so archive or
+migrate the history before a downgrade; the new code never rewrites an old
+document merely to read it.
 
 ### Upgrading an active file at restart
 
