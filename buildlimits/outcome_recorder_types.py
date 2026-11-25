@@ -46,10 +46,10 @@ class OutcomeEvent:
     """One journal-ready classification for a cached launch.
 
     ``record_omitted`` names why this published outcome produced no store row,
-    or ``none`` when it was stored. The event and the row are built from the
-    same launch in one transition, so the pair reconciles by construction: an
-    event that cannot be stored says so instead of leaving a gap the writer's
-    own discard counts can never see.
+    or ``none`` when it was stored. The event and any row for it are built from
+    the same launch in one transition, so the token describes that launch
+    rather than a later guess: an event that cannot be stored says so instead
+    of leaving a gap the writer's own discard counts can never see.
     """
 
     cache_result: CacheResult

@@ -7,6 +7,7 @@ than the store as a ``version_mismatch``.
 """
 
 import dataclasses as dc
+import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
@@ -22,9 +23,14 @@ from outcome_store_helpers import (
     wait_for_salt,
     worker_exited,
 )
+from outcome_test_helpers import OBSERVED_AT, attributed_record, record_after
 from outcome_test_helpers import STORE_EPOCH as NOW
-from outcome_test_helpers import record_after
-from segment_test_helpers import history_policy, version_one_document, write_private
+from segment_test_helpers import (
+    history_policy,
+    version_one_document,
+    version_two_document,
+    write_private,
+)
 
 from buildlimits import outcome_record_codec, outcome_record_format
 from buildlimits.outcome_key import Salt
@@ -188,4 +194,68 @@ def test_a_header_round_trips_the_version_it_names() -> None:
     current = dc.replace(written, version=FORMAT_VERSION)
     assert json.loads(encode_line(current))["version"] == FORMAT_VERSION, (
         "the current format is written when the header names it"
+    )
+
+
+_ADMITTED_AT = OBSERVED_AT - dt.timedelta(seconds=2)
+
+
+def _evidenced_row() -> outcome_record_format.OutcomeRecord:
+    """Return one row carrying every field version 2 introduced.
+
+    Returns
+    -------
+    outcome_record_format.OutcomeRecord
+        A row with an admission time, an outcome reason and an attribution.
+    """
+    return dc.replace(
+        attributed_record(outcome="miss"),
+        outcome_reason="mixed_window",
+        outcome_attribution="none",
+        admitted_at=_ADMITTED_AT,
+    )
+
+
+def test_a_version_two_fixture_keeps_the_evidence_version_two_added() -> None:
+    """The version 2 fixture omits only version 3's provenance marker.
+
+    A fixture that also stripped the admission time, reason and attribution
+    would reproduce a version 1 row shape under a version 2 header, so no test
+    built on it could detect that evidence going missing.
+    """
+    row = _evidenced_row()
+
+    raw = json.loads(version_two_document((row,)).splitlines()[1])
+    decoded = outcome_record_codec.decode_lines(version_two_document((row,)).decode())
+
+    assert isinstance(decoded, DecodedStore), decoded
+    assert decoded.header.version == 2, "the fixture writes the version it names"
+    (stored,) = decoded.records
+    assert isinstance(stored, outcome_record_format.OutcomeRecord), stored
+    assert stored.admitted_at == _ADMITTED_AT, "the admission time is kept"
+    assert stored.outcome_reason == "mixed_window", "the reason is kept"
+    assert stored.outcome_attribution == "none", "the attribution is kept"
+    assert "admitted_at" in raw and raw["admitted_at"] is not None, (
+        "the evidence is in the bytes, not merely decoded by the current reader"
+    )
+    assert "label_time_provenance" not in raw, "version 2 cannot state the marker"
+
+
+def test_a_version_three_document_carries_the_label_time_marker() -> None:
+    """A current document states the provenance a version 2 row cannot."""
+    row = dc.replace(_evidenced_row(), label_time_provenance="verified")
+
+    encoded = "\n".join((encode_line(StoreHeader("salt-1", NOW)), encode_line(row)))
+    raw = json.loads(encoded.splitlines()[1])
+    decoded = outcome_record_codec.decode_lines(encoded + "\n")
+
+    assert isinstance(decoded, DecodedStore), decoded
+    assert decoded.header.version == FORMAT_VERSION, "the header is current"
+    (stored,) = decoded.records
+    assert isinstance(stored, outcome_record_format.OutcomeRecord), stored
+    assert stored.label_time_provenance == "verified", (
+        "the row states the provenance version 3 added"
+    )
+    assert raw["label_time_provenance"] == "verified", (
+        "the marker is in the bytes the fixture writes"
     )

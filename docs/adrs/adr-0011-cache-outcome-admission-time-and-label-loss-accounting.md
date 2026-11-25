@@ -255,8 +255,9 @@ so its discard counts can never account for it and the difference between
 published outcomes and stored rows stayed unexplained. The recorder now
 computes one closed `RecordOmission` reason per launch and copies it onto the
 event it publishes: `key_unavailable`, `label_time_unavailable` or `none`. The
-event and its row are built from the same launch in one transition, so the pair
-reconciles by construction.
+event and any row for it are built from the same launch in one transition, so
+the token describes what happened to that launch and is not a second guess made
+afterwards.
 
 `ObserverAccounting.record_omitted` sums those reasons, and
 `by_omission_reason` breaks them down. The journal codec requires the map to
@@ -264,14 +265,16 @@ sum to the total. `record_omitted` is a token on the event, not a counter: one
 event describes one outcome, so the observer derives the count from the closed
 values instead of the recorder publishing a tally beside them.
 
-The identity the report states is the one the counts can prove: published
-outcomes are accounted for by appended outcome rows, pre-store omissions,
-discarded writes and outstanding queued writes. A published outcome is not
-simply an appended row or an omitted one, because a failed append lands in
-`store_discarded` with a reason, a successful reading appends its outcome rows
-*and* a window summary, and a write queued inside the window may complete after
-it. A reading's summary is therefore not an outcome row and is never counted as
-one.
+Those counts name the categories a published outcome can fall into, and nothing
+stronger. A published outcome is an appended outcome row, a pre-store omission,
+a discarded write or an outstanding queued write. The report does not prove
+that identity, because it cannot correlate the terms. `store_records` counts
+every appended row, including a reading's window summary; `store_discarded`
+counts evictions as well as failed writes; and a write still queued when the
+window closed is not measured at all. Subtracting the observed totals from
+`outcomes` therefore does not account for each outcome once, and a report that
+claimed it did would assert a reconciliation its instrumentation cannot
+demonstrate.
 
 A journal record that carries no omission field, as an older recorder wrote it,
 is counted in `record_omitted_unrecorded` rather than contributing zero to
@@ -352,8 +355,10 @@ the shell never supplied.
   its events unverified; a version 3 event that omits the marker is refused.
 - A published outcome that produced no store row is counted by its closed
   reason, and an event whose omission evidence is absent is counted as
-  unrecorded rather than as a measured `none`; see D7. The report states the
-  identity those counts support rather than the simpler one they do not.
+  unrecorded rather than as a measured `none`; see D7. The report names the
+  four categories a published outcome can fall into and states that it does not
+  prove that identity, because the append, discard and queued terms cannot be
+  correlated with it.
 - A version 3 store row states its own label-time provenance, so a history the
   current recorder wrote is scored while version 1 and 2 rows stay withheld;
   see D9. The store row grows again, so segment boundaries and archive sizes
@@ -414,8 +419,15 @@ the shell never supplied.
   store row format would immediately expose.
 - **Attribute the missing-outcome difference to an unmeasured residual.**
   Rejected: the recorder knows why it did not key a launch, so the reason is
-  recorded on the event rather than left as a hypothesis over two totals that
-  do not reconcile.
+  recorded on the event rather than left as a hypothesis over two totals the
+  reader cannot correlate. Recording the reason does not close the arithmetic
+  either; it names one category, not a proof of identity.
+- **Call the four categories a proved reconciliation.** Rejected: the appended
+  total carries a reading's window summary, the discarded total carries
+  evictions as well as failed writes, and an outstanding queued write is not
+  counted at all, so no subtraction of the published totals accounts for each
+  outcome once. The report names the categories and says plainly that it does
+  not prove the identity.
 
 ## Follow-up
 

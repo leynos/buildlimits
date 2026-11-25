@@ -16,8 +16,10 @@ in
 [Review follow-up: inventory, quarantine and report honesty](#review-follow-up-inventory-quarantine-and-report-honesty),
 in
 [Review follow-up: label-time provenance, omitted outcomes and append totals](#review-follow-up-label-time-provenance-omitted-outcomes-and-append-totals)
-and in
+in
 [Review follow-up: the store states its own provenance](#review-follow-up-the-store-states-its-own-provenance)
+and in
+[Review follow-up: the counts name categories, not a proved identity](#review-follow-up-the-counts-name-categories-not-a-proved-identity)
 below. The live host service has not been upgraded: the before/after report
 below distinguishes the old recorder's retained history from the new code's
 controlled evidence, and says plainly where an operator action is still
@@ -503,6 +505,57 @@ metrics-report and archive-plan fixtures were updated for the wider row:
 row the fixture writes, so a field added to the row can no longer repartition a
 scenario about the plan's shape.
 
+## Review follow-up: the counts name categories, not a proved identity
+
+A third review round found that one sentence had survived two corrections in a
+stronger form than the instrumentation supports, and that a fixture and a test
+could not detect their own regressions. ADR 011 D7 records the corrected
+wording.
+
+### The four categories are not a reconciliation
+
+The previous round replaced "published outcomes = appended rows + omitted ones"
+with a claim that published outcomes *are accounted for by* appended outcome
+rows, pre-store omissions, discarded writes and outstanding queued writes. That
+is still a claim of proof the counts cannot give:
+
+- `store_records` counts every appended row, and a successful reading appends
+  its outcome rows *and* a window summary.
+- `store_discarded` counts retention evictions as well as failed writes.
+- A write still queued when the window closed is not measured at all.
+
+No subtraction of the published totals therefore accounts for each outcome
+once. The ADR, the users' guide, the developers' guide and the rendered
+sufficiency bullet now name the four categories a published outcome can fall
+into and say outright that the report does not prove that identity because it
+cannot correlate the terms. The tests assert the new sentence and that no
+bullet claims the categories add up to every outcome.
+
+### The omission tokens are proven end to end
+
+`tests/test_predict_observer_accounting.py` now drives one `cache_outcome` per
+closed `RecordOmission` value through the real `Metrics` sink and the real
+journal query, then folds the records the query returned. It asserts that
+`key_unavailable` and `label_time_unavailable` appear in `by_omission_reason`,
+that an explicit `none` does not, that `record_omitted` is the events that
+reported an omission, and that the cases cover the whole schema vocabulary. The
+earlier tests asserted the same counting rule over hand-built `Record` objects,
+so a schema change that dropped the field again would not have failed them.
+
+### The version 2 fixture keeps its own evidence
+
+`tests/segment_test_helpers.py` built its version 2 document by stripping the
+version 1-omitted fields *and* the label-time marker, so `version_two_document`
+produced a version 1 row shape under a version 2 header. Any test built on it
+would have passed whether or not the decoder preserved admission time, reason
+and attribution. It now strips only `label_time_provenance`, which is the one
+field version 3 added; `version_one_document` still strips the full version 1
+set. `tests/test_outcome_store_upgrade.py` asserts that a row written through
+`version_two_document` still carries its admission time, reason and attribution
+in the encoded bytes and after decoding, and that a version 3 document carries
+the marker. The new test was run against the old fixture first and failed with
+`the admission time is kept`, so it proves the regression it now guards.
+
 ## Limitations
 
 - sccache 0.14 exposes no supported per-request hit/miss signal. Its
@@ -527,6 +580,10 @@ scenario about the plan's shape.
   recovered: its row is gone by design, because a launch with no key cannot be
   correlated with its admission. The count makes the loss visible rather than
   closing it.
+- The observer's four outcome categories are named, not proved. Appended rows
+  also include window summaries, discarded rows also include evictions, and
+  outstanding queued writes are not measured, so no report states that the
+  categories reconcile to the published total.
 - The archive byte budget sees larger rows. A policy sized exactly to the old
   row size will retain fewer rows; the retention tests and the documented
   budget are updated accordingly.

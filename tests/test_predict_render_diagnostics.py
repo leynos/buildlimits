@@ -203,10 +203,12 @@ def _observer_block(document: dict[str, object]) -> dict[str, object]:
 def test_the_observer_states_omitted_outcomes_and_their_reasons() -> None:
     """An outcome published without a row is counted by cause, not lost.
 
-    The reconciliation the bullet states is the one the counts can prove: an
-    appended row, a pre-store omission, a discarded write and an outstanding
-    queued write. An appended row and its window summary are not the same
-    thing, so the summary is never counted as an outcome row.
+    The bullet names the four categories a published outcome can fall into: an
+    appended outcome row, a pre-store omission, a discarded write and an
+    outstanding queued write. It also states that the report does not prove
+    that identity, because the counts cannot be correlated: the append total
+    also carries a reading's window summary, the discard total also carries
+    evictions, and a queued write is not measured.
     """
     document = _diagnostics_document()
     observer = _observer_block(document)
@@ -222,10 +224,16 @@ def test_the_observer_states_omitted_outcomes_and_their_reasons() -> None:
         "- Observer outcomes without a store row: 1, by reason key_unavailable=1."
     ), "the omitted total and its reason are stated"
     assert line.endswith(
-        "Published outcomes are accounted for by appended outcome rows, "
-        "pre-store omissions, discarded writes and outstanding queued writes; "
-        "a reading's window summary is not an outcome row"
-    ), "the identity the counts prove is stated, and a summary is not an outcome"
+        "A published outcome falls into one of four categories: an appended "
+        "outcome row, a pre-store omission, a discarded write or an outstanding "
+        "queued write. The report does not prove that identity, because it "
+        "cannot correlate the terms: the appended total also counts a "
+        "reading's window summary, the discarded total also counts evictions, "
+        "and a queued write still outstanding is not measured"
+    ), "the categories are named and the unproven identity is denied"
+    assert "accounted for by" not in line, (
+        "no bullet claims the four categories add up to every outcome"
+    )
 
 
 def test_the_observer_marks_omission_evidence_an_older_recorder_omitted() -> None:

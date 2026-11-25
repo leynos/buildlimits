@@ -192,14 +192,14 @@ def _unverified_line(stats: cabc.Mapping[str, object]) -> str:
 
 
 def _omission_line(block: cabc.Mapping[str, object]) -> str:
-    """Return the bullet accounting for published outcomes without a store row.
+    """Return the bullet naming the categories a published outcome can take.
 
-    A published outcome is not simply an appended row or an omitted one. A
-    failed append lands in ``store_discarded`` with a reason, a successful
-    reading appends its outcome rows *and* a window summary, and a write that
-    was queued inside the window may complete after it. The identity the bullet
-    states is therefore the one the counts can prove, and it says outright that
-    a reading's summary is not an outcome row.
+    A published outcome can become an appended outcome row, a pre-store
+    omission, a discarded write or an outstanding queued write. The bullet
+    names those categories without claiming they reconcile, because the counts
+    cannot be correlated: an append also counts a reading's window summary, a
+    discard also counts an eviction, and a queued write still outstanding is
+    not measured at all.
 
     Returns
     -------
@@ -217,10 +217,13 @@ def _omission_line(block: cabc.Mapping[str, object]) -> str:
             "omission field, so their omission is unknown rather than measured"
         )
     return (
-        f"- Observer outcomes without a store row: {omitted}. Published outcomes "
-        "are accounted for by appended outcome rows, pre-store omissions, "
-        "discarded writes and outstanding queued writes; a reading's window "
-        "summary is not an outcome row"
+        f"- Observer outcomes without a store row: {omitted}. A published "
+        "outcome falls into one of four categories: an appended outcome row, a "
+        "pre-store omission, a discarded write or an outstanding queued write. "
+        "The report does not prove that identity, because it cannot correlate "
+        "the terms: the appended total also counts a reading's window summary, "
+        "the discarded total also counts evictions, and a queued write still "
+        "outstanding is not measured"
     )
 
 

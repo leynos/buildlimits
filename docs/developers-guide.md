@@ -243,9 +243,12 @@ count the published outcomes that produced no store row, by the closed
 `RecordOmission` reason the recorder copies onto each event. An event that
 carries no omission field, as an older recorder wrote it, is counted in
 `record_omitted_unrecorded` instead, so absence is never presented as a measured
-`none`. The account the report states is therefore: published outcomes are
-covered by appended outcome rows, pre-store omissions, discarded writes and
-outstanding queued writes, and a reading's window summary is not an outcome row.
+`none`. Those counts name the categories a published outcome can fall into —
+appended outcome row, pre-store omission, discarded write, outstanding queued
+write — and they do not prove the four add up to every outcome. An append also
+counts a reading's window summary, a discard also counts an eviction, and a
+queued write still outstanding is not measured, so the totals cannot be
+correlated term by term.
 
 None of those modules imports a file-system, JSON, process or command module,
 and none imports an adapter. `journal_codec`, `diagnostics_codec` and
@@ -1024,17 +1027,21 @@ produced no store row, because the recorder knows why it did not key a launch;
 event carries, and the journal codec requires the map to sum to the total. An
 event that carries no omission field is counted in `record_omitted_unrecorded`
 instead, and the codec requires the omitted and unrecorded totals together to
-fit inside `outcomes`. The report therefore states the identity the counts can
-prove: published outcomes are covered by appended outcome rows, pre-store
-omissions, discarded writes and outstanding queued writes, and a reading's
-window summary is not an outcome row.
+fit inside `outcomes`. Two checks are all the counts support, and neither is an
+identity: the omission breakdown sums to `record_omitted`, and those omissions
+fit inside the published outcomes. The report therefore names the categories a
+published outcome can fall into — appended outcome row, pre-store omission,
+discarded write, outstanding queued write — and states that it does not prove
+that identity, because `store_records` also counts a reading's window summary,
+`store_discarded` also counts evictions, and an outstanding queued write is not
+measured at all.
 
 `record_omitted` is a token on the `cache_outcome` event, not a counter. The
 schema's `RECORD_OMISSIONS` vocabulary fixes its values, and one event
 describes one outcome, so an omission count is derived from the events rather
 than published as a field of its own. Classifying it as a counter made
 `Metrics.emit` drop the field from every event, which silently removed the one
-piece of evidence that reconciles published outcomes with stored rows.
+piece of evidence that names why an outcome produced no row.
 
 The quiet-point gate in `outcome_gate` no longer requires an empty queue; every
 reading, baseline included, still requires no cached movement or detached

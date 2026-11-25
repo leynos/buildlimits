@@ -771,11 +771,14 @@ and reading skips and failures. The benchmark's `results.md` carries the same
 sufficiency block. The counts keep their denominators separate—all admitted
 requests, cache-eligible compilations, retained outcome rows and scored
 outcomes—so a small labelled share is visible rather than hidden behind one
-ratio. Published outcomes are accounted for by appended outcome rows, pre-store
-omissions, discarded writes and outstanding queued writes; a reading's window
-summary is not an outcome row. The observer also says when the omission
-evidence is incomplete: an event written before the reason existed counts as
-unrecorded rather than as a measured `none`.
+ratio. A published outcome can fall into one of four categories: an appended
+outcome row, a pre-store omission, a discarded write or an outstanding queued
+write. The report does not prove that identity, because it cannot correlate the
+terms: the appended total also counts a reading's window summary, the discarded
+total also counts evictions, and a queued write still outstanding is not
+measured. The observer also says when the omission evidence is incomplete: an
+event written before the reason existed counts as unrecorded rather than as a
+measured `none`.
 
 An outcome row records the UTC wall-clock moment the supervisor admitted the
 compilation. That time is read where admission is decided, not derived from the

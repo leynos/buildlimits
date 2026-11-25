@@ -77,8 +77,8 @@ class OutcomeTelemetry:
                 child_sighting=event.child_sighting,
                 child_samples=event.child_samples,
                 # The outcome's own event states why it was not stored, so the
-                # observer can reconcile published outcomes against appended
-                # rows instead of leaving the difference unexplained.
+                # observer names a category a published outcome took rather
+                # than leaving its absence unexplained.
                 record_omitted=event.record_omitted,
             )
         for reason in outputs.reading_reasons:

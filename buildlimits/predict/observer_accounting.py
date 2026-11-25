@@ -68,12 +68,13 @@ _COUNT_FIELDS = (
 ``store_records`` counts appended rows only, and ``store_discarded`` counts
 rows a result dropped. A compaction reports the rows it retained and a seal
 the rows it released, but neither appends a row, so counting them would report
-a row more than once. They are kept apart in the per-operation map instead.
+a row more than once; they stay apart in the per-operation map. Neither total
+counts outcomes alone: an append may be a window summary and a discard may be
+an eviction, so neither can be subtracted from ``outcomes``.
 
 ``record_omitted_unrecorded`` counts the published outcomes whose event carried
-no omission field, as an older recorder wrote it. Without that count a window
-of such events would read exactly like a window of stored ones, because the
-omitted total would be zero either way.
+no omission field, as an older recorder wrote it; without it a window of such
+events reads like a window of stored ones, because both totals are zero.
 """
 
 _MAP_FIELDS = (
@@ -170,14 +171,15 @@ class ObserverAccounting:
         absence never reads as a measured ``none``.
     by_omission_reason : Mapping[str, int]
         Those omitted outcomes by their closed reason. It sums to
-        ``record_omitted``, so published outcomes reconcile as stored rows
-        plus omitted ones by cause.
+        ``record_omitted``, the one identity these counts do prove.
     store_records : int
         Rows the writer reported appended. Only an ``append`` result counts;
         the rows a compaction retained or a seal released were written once and
-        are not appends.
+        are not appends. A reading's window summary is appended through the
+        same operation, so this counts summary rows too, not outcome rows.
     store_discarded : int
-        Records the writer reported dropped or evicted.
+        Records the writer reported dropped or evicted, so failed writes and
+        retention evictions share this total.
     by_store_operation : Mapping[str, int]
         Writer results by the closed ``StoreOperation``, so the append total can
         be read beside the compactions and seals that also reported rows.
@@ -290,7 +292,8 @@ def observer_accounting(
     ObserverAccounting
         Exact counts for the events the window held. The store total counts
         append results only, and an outcome the recorder published without
-        storing it is counted by its closed omission reason.
+        storing it is counted by its closed omission reason. Each count is its
+        own measurement, not a term in an account of published outcomes.
     """
     maps: dict[str, collections.Counter[str]] = {
         name: collections.Counter() for name in _MAP_FIELDS

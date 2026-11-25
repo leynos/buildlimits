@@ -56,7 +56,7 @@ def test_a_published_outcome_keeps_its_omission_reason_at_the_schema(
 
     ``record_omitted`` carries a closed reason token, not a count. Classifying
     it as a counter dropped it from every ``cache_outcome`` event, so the
-    observer could never reconcile published outcomes with appended rows.
+    observer could never name why a published outcome produced no store row.
     """
     metrics = Metrics(metric_sink)
     OutcomeTelemetry(metrics).publish(_published(omission="key_unavailable"))
