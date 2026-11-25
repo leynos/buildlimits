@@ -202,11 +202,12 @@ def _event_for(
 ) -> OutcomeEvent:
     """Convert one retained launch to the closed journal event shape.
 
-    ``omission`` names why this event produced no store row, so the journal can
-    reconcile the outcomes it published against the rows the writer appended.
-    An event and its row are built from the same launch, so the reason recorded
-    here is the same decision ``_record_for`` took; neither side has to infer
-    it from a difference in totals.
+    ``omission`` names why this event produced no store row. An event and its
+    row are built from the same launch, so the reason recorded here is the same
+    decision ``_record_for`` took. It is not a reconciliation of the journal
+    against the store: an appended row can still be discarded by a failed write
+    or be an outstanding queued write, and only the omission reasons are
+    measured per outcome.
 
     Returns
     -------

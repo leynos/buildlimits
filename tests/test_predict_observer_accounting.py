@@ -233,9 +233,11 @@ def test_every_omission_token_reaches_the_observer_through_the_real_schema(
     observer counts a token rather than a counter. This drives one
     ``cache_outcome`` per closed ``RecordOmission`` value through the real
     :class:`~buildlimits.metrics.Metrics` sink and the real journal query, then
-    folds the records the query returned. An explicit ``none`` states that the
-    outcome was stored, so it must not appear as an omission; the real reasons
-    must, and their total must equal the events that reported one.
+    folds the records the query returned. An explicit ``none`` states that no
+    pre-store omission applied, so it must not appear as an omission; the real
+    reasons must, and their total must equal the events that reported one. It
+    does not claim the row was stored: a write can still fail or remain
+    queued.
     """
     assert set(_OMISSION_REASONS) == metrics_schema.RECORD_OMISSIONS, (
         "the cases cover the whole closed vocabulary, so a new reason fails here"

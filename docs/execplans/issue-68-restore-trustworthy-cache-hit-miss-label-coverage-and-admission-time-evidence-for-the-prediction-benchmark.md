@@ -594,6 +594,15 @@ the marker. The new test was run against the old fixture first and failed with
   guessed. The label-time provenance field was added for the different reason
   that a row can state a fact about itself without any cross-row reconciliation.
 
+The per-generation label breakdown issue #68 also asks for remains unavailable:
+a store row's key names the server *version*, not the generation that produced
+it, so no report can derive it from retained history.
+[ADR 011](../adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
+records the concrete design that would close it — a salted generation digest
+on a future store row plus a bounded `by_generation` diagnostic — as a blocking
+follow-up rather than a promise. Both reports state the dimension as
+unavailable with that reason.
+
 ## Verification
 
 ```sh

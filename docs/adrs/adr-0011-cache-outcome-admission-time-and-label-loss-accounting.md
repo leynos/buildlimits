@@ -444,3 +444,23 @@ the shell never supplied.
 - Permanent host provisioning and the timer that archives history remain with
   [dev-env-rocky #424](https://github.com/leynos/dev-env-rocky/issues/424) and
   the archival work in [ADR 010](adr-0010-archived-cache-outcome-history.md).
+- **Blocking follow-up: per-generation label accounting.** Issue #68 also asks
+  for label loss by sccache generation, and this decision records that
+  dimension as unavailable rather than measuring it. The concrete design that
+  would close it, kept blocked until a store format can carry it:
+  - A version 4 store row gains `generation_digest: str | None`: a salted
+    HMAC-SHA-256 over the recorder's `(invocation, pid, starttime)` identity,
+    using the same per-store salt domain as the cache key, so no host path or
+    process id is retained.
+  - The recorder writes it from `after_generation` on every row an attributing
+    or refusing reading emits; a reading whose generation was unavailable
+    writes null, and version 1 to 3 rows decode it as absent.
+  - `StoreAccounting` gains a bounded `by_generation` map (the same 64-entry
+    cap as the other dimensions, with `unrecorded` for older rows) and the
+    snapshot diagnostics gains the matching block, which the loader reconciles
+    against the outcome-row total exactly as it does the other breakdowns.
+  - The correlation is the digest itself: it joins each label to the server
+    generation that produced it, so `generation_changed` loss can be separated
+    per generation instead of appearing only as one refusal reason.
+  This blocks the generation dimension of the issue, not the label-coverage or
+  admission-time work, which stand on their own.
