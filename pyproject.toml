@@ -1487,7 +1487,7 @@ members = ["tests/test_outcome_attribution.py", "tests/crosshair_contracts.py"]
 reason = "Matching imports expose the attribution types each independent test module exercises; a re-export would hide those dependencies without sharing behaviour."
 
 [[tool.duplication_gate.allow]]
-members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py"]
+members = ["tests/test_outcome_recorder_evidence.py", "tests/test_outcome_recorder.py"]
 reason = "Matching imports from the recorder test helpers expose each module's direct fixture dependencies; a re-export would hide those dependencies without sharing behaviour."
 
 [[tool.duplication_gate.allow]]
@@ -2802,7 +2802,7 @@ members = [
 reason = "Two one-line OSError raises standing in for fork exhaustion in unrelated tests: one checks that placement records a pre-execution decision time, the other that a failed spawn fails the launch. Sharing a raise helper would couple two test modules for a single statement."
 
 [[tool.duplication_gate.allow]]
-members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py", "tests/outcome_reading_test_helpers.py", "tests/test_outcome_timing_rows.py"]
+members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py", "tests/test_outcome_recorder_evidence.py", "tests/outcome_reading_test_helpers.py", "tests/test_outcome_timing_rows.py"]
 reason = "Matching test preambles: five suites each list the recorder, journal and property helpers they use, and a shared re-export would hide which dependencies each suite actually needs."
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/predict/records.py::build_events", "tests/outcome_reading_test_helpers.py::outcome_rows", "tests/sccache_outcome_observer_support.py::outcomes"]
