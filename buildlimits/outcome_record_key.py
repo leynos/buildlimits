@@ -28,13 +28,20 @@ __all__ = [
 _DIGEST_HEX_LENGTH = 64
 
 
+_INVALID_KEY = "cache key fields are invalid"
+"""The refusal an unencodable key raises, so a caller can recognize it."""
+
+
 def _validate_key(key: CacheKey) -> None:
     """Reject cache keys containing local paths or invalid digests.
 
     Raises
     ------
     ValueError
-        If a key field is empty, malformed or path-bearing.
+        If a key field is empty, malformed or path-bearing. The message is a
+        fixed sentence rather than a description of the offending value: a
+        refusal reaches an operator's terminal and a log, and the value it
+        refused may be exactly the local path this check exists to keep out.
     """
     identity = key.toolchain_identity
     is_valid = all((
@@ -48,7 +55,7 @@ def _validate_key(key: CacheKey) -> None:
         _text(identity.server_version) is not None,
     ))
     if not is_valid:
-        raise ValueError
+        raise ValueError(_INVALID_KEY)
 
 
 def _safe_component(value: object) -> bool:

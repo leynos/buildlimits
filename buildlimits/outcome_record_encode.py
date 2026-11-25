@@ -103,7 +103,8 @@ def encode_line(
         document, ensure_ascii=False, separators=(",", ":"), allow_nan=False
     )
     if len(line.encode("utf-8")) > MAX_RECORD_BYTES:
-        raise ValueError
+        msg = "the encoded row exceeds the record byte bound"
+        raise ValueError(msg)
     return line
 
 
