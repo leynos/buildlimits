@@ -252,3 +252,32 @@ def test_a_document_stating_neither_generation_map_takes_the_absent_branch(
     assert loaded.diagnostics.store.labels_by_generation == {"unrecorded": 1}, (
         "the label is stated as unattributed too"
     )
+
+
+def test_a_current_document_that_omits_both_maps_is_refused(tmp_path: Path) -> None:
+    """A version 4 document must state the dimension its own format defines.
+
+    At version 4 the maps are part of the shape, so omitting both is damage
+    rather than an older history. Accepting it would take the absent-map branch
+    and report a measured dimension as unrecorded, which is exactly the
+    confusion the branch exists to prevent.
+    """
+    document = diagnostics_document()
+    store = store_block(document)
+    store.pop("by_generation")
+    store.pop("labels_by_generation")
+
+    with pytest.raises(ValueError, match="without its generation maps"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_an_older_document_that_omits_both_maps_still_loads(tmp_path: Path) -> None:
+    """The same omission before version 4 is the shape that release wrote."""
+    document = document_as_version(diagnostics_document(), GENERATION_VERSION - 1)
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert loaded.diagnostics is not None, "an older document still loads"
+    assert loaded.diagnostics.store.by_generation == {"unrecorded": 1}, (
+        "its row is stated as unattributed"
+    )
