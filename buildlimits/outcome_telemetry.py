@@ -76,6 +76,10 @@ class OutcomeTelemetry:
                 window_groups=event.window_groups,
                 child_sighting=event.child_sighting,
                 child_samples=event.child_samples,
+                # The outcome's own event states why it was not stored, so the
+                # observer names a category a published outcome took rather
+                # than leaving its absence unexplained.
+                record_omitted=event.record_omitted,
             )
         for reason in outputs.reading_reasons:
             self._pending["readings"] += 1

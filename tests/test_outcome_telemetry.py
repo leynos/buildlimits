@@ -1,21 +1,84 @@
-"""Reading telemetry is transition-only and its counters never double count."""
+"""Reading telemetry is transition-only and its counters never double count.
+
+The publish path is also a schema boundary: every field an outcome event
+carries must survive validation, or the journal silently loses the evidence a
+report reads back.
+"""
 
 import typing as typ
 
 from outcome_shell_test_support import RecordingMetrics
 
-from buildlimits.outcome_recorder_types import Outputs
+from buildlimits.metrics import Metrics
+from buildlimits.outcome_recorder_types import OutcomeEvent, Outputs
 from buildlimits.outcome_telemetry import READING_SUMMARY_SECONDS, OutcomeTelemetry
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
-    from buildlimits.outcome_vocabulary import OutcomeReason
+    from buildlimits.outcome_vocabulary import OutcomeReason, RecordOmission
 
 
 def _reading(*reasons: OutcomeReason) -> Outputs:
     """Build recorder outputs that carry only completed reading reasons."""
     return Outputs(reading_reasons=reasons)
+
+
+def _published(*, omission: RecordOmission) -> Outputs:
+    """Build recorder outputs carrying one published cached outcome.
+
+    Returns
+    -------
+    Outputs
+        One outcome event stating why its row was or was not stored.
+    """
+    return Outputs(
+        events=(
+            OutcomeEvent(
+                cache_result="hit",
+                outcome_attribution="solo",
+                crate_origin="registry",
+                outcome_reason="none",
+                runtime_seconds=0.25,
+                window_groups=1,
+                child_sighting="seen",
+                child_samples=1,
+                record_omitted=omission,
+            ),
+        )
+    )
+
+
+def test_a_published_outcome_keeps_its_omission_reason_at_the_schema(
+    metric_sink,
+) -> None:
+    """The reason an outcome became no store row survives validation.
+
+    ``record_omitted`` carries a closed reason token, not a count. Classifying
+    it as a counter dropped it from every ``cache_outcome`` event, so the
+    observer could never name why a published outcome produced no store row.
+    """
+    metrics = Metrics(metric_sink)
+    OutcomeTelemetry(metrics).publish(_published(omission="key_unavailable"))
+
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_EVENT"] == "cache_outcome", "the event is valid"
+    assert record["BUILD_LIMITS_RECORD_OMITTED"] == "key_unavailable", (
+        "the omission reason reaches the journal intact"
+    )
+    assert metrics.dropped_fields == 0, "no field of the event was refused"
+
+
+def test_an_unknown_omission_reason_is_refused_by_the_schema(metric_sink) -> None:
+    """A reason outside the closed vocabulary never reaches the journal."""
+    metrics = Metrics(metric_sink)
+
+    accepted = metrics.emit("cache_outcome", record_omitted="made_up")
+
+    assert accepted, "the event itself remains valid"
+    (record,) = metric_sink.records
+    assert "BUILD_LIMITS_RECORD_OMITTED" not in record, "the unknown token is dropped"
+    assert metrics.dropped_fields == 1, "and the loss is counted, not hidden"
 
 
 def _reading_events(metrics: RecordingMetrics) -> list[dict[str, object]]:

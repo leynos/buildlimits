@@ -570,11 +570,14 @@ the run at exit 1 with `reason: unreadable` instead of being counted as an
 empty store. A run with a record cap also exits 1 when the active file's rows
 cannot be decoded, because it cannot show that the store is within the cap.
 
-An archive preserves the version-1 record schema and the salt identifier, so
-decompressing one yields the segment's JSON Lines content byte for byte apart
-from a repaired torn tail. Archived records keep the same privacy boundary as
-the active store: they contain the same redacted fields and no raw arguments,
-paths or compiler output.
+An archive preserves the source segment's record schema and the salt
+identifier, so decompressing one yields the segment's JSON Lines content byte
+for byte apart from a repaired torn tail. A segment written by the current
+release therefore archives its version 3 fields unchanged, while a segment that
+still holds version 1 or 2 rows archives those rows unchanged; readers must
+accept all three, and a reader of an earlier version cannot read every archive.
+Archived records keep the same privacy boundary as the active store: they
+contain the same redacted fields and no raw arguments, paths or compiler output.
 
 `build-limits-cache-replay` and `build-limits-predict-dataset` can read the
 whole retained history. `--history` reads archived, sealed and active history
@@ -756,6 +759,85 @@ reads a label observed after the moment it was made. Its tables are written to
 follows the selected history; the bounded-memory guarantee applies to archiving
 and streaming replay, not to dataset export.
 
+The dataset command also reports what the labels rest on. It prints the total
+events, the labelled count, the labels withheld for an unverified label time,
+the eligible `cacheable` rows and their labels, the unknown rows by outcome
+reason, the origins and parser classes, the usable and missing admission times,
+the closed-history gaps, and the observer's own journal counts: admitted
+requests by cache path and backend, published outcomes, the outcomes that
+produced no store row by reason, rows appended (only an `append` result counts;
+a compaction and a seal report the rows they retained or released), evictions,
+and reading skips and failures. The benchmark's `results.md` carries the same
+sufficiency block. The counts keep their denominators separate—all admitted
+requests, cache-eligible compilations, retained outcome rows and scored
+outcomes—so a small labelled share is visible rather than hidden behind one
+ratio. A published outcome can fall into one of four categories: an appended
+outcome row, a pre-store omission, a discarded write or an outstanding queued
+write. The report does not prove that identity, because it cannot correlate the
+terms: the appended total also counts a reading's window summary, the discarded
+total also counts evictions, and a queued write still outstanding is not
+measured. The observer also says when the omission evidence is incomplete: an
+event written before the reason existed counts as unrecorded rather than as a
+measured `none`.
+
+Label loss is also broken down by sccache server generation. A store row names
+the generation its reading observed as a salted digest, so the report can count
+labels and losses per generation without recording a process id. Each
+generation is printed as its row count and the number of those rows that carry
+a label, so a generation that produced only refusals is distinguishable from
+one that produced only labels. Only a window the recorder actually attributed
+carries a digest: a window whose server changed, a first baseline and an
+overflow all count under `unrecorded`, because none of them proves which single
+server produced their rows. A history written before the field existed reports
+`by generation: unavailable` rather than a measured zero, since no later reader
+can recover evidence that was never written.
+
+An outcome row records the UTC wall-clock moment the supervisor admitted the
+compilation. That time is read where admission is decided, not derived from the
+later label time; a row without one, including every row written before the
+version 2 store, remains unscorable. The store format is version 4 and the
+snapshot format is version 4. Version 1 to 3 documents still load, with the
+newer evidence reported as `unrecorded` or absent rather than guessed, and a
+version 1 or 2 snapshot loads with its events' label times treated as
+unverified. A version 3 or later snapshot event states
+`label_observed_verified`; one that omits it, or sets it to a non-boolean, is
+refused. A history whose rows predate the admission field reports
+`insufficient admission times`. Recording new rows is not by itself enough
+either: a row is scored only when it also proves when its label became known,
+which the version 3 store states and no earlier version does. Admission
+coverage alone cannot make a history scorable.
+
+A hit or miss label is dated when the statistics reading that produced it
+returned, not when the compilation finished. sccache exposes no label before
+that reading, so the recorded time is the earliest moment the label could have
+been known, and the benchmark never releases it earlier than that. The version
+3 store row states `label_time_provenance: "verified"`, because the recorder
+that wrote it is the one that dates every row at its reading. A version 1 or 2
+row cannot prove which code dated it, so the dataset command marks every one of
+its label times unverified. The benchmark withholds an unverified label rather
+than scoring it, and reports the count as `unverified_label_time` in both the
+command's output and `results.md`. A snapshot's own event carries the same
+marker, so a store history recorded by the current release is scored, and an
+older one is withheld until new rows replace it.
+
+When a restart finds an active store whose header names an older format, it
+closes or rewrites that file before recording resumes, so no new-format row is
+ever written beneath an older header. A downgraded release therefore reports
+`version_mismatch` for the store rather than a corrupt row. The upgrade keeps
+the old rows and, in segmented mode, costs one extra closed segment on the
+first restart.
+
+The recorder reads statistics at a quiet point. It no longer requires an empty
+queue, but every boundary, including a baseline, waits until no cached group is
+moving and no detached cache work is draining. A compilation still in flight
+would move counters into the next window without belonging to it. A launch
+during the query discards the reading. sccache 0.14 exposes only aggregate
+counters, so a mixed window of concurrent requests stays `unknown`; the host's
+label rate is a property of its workload, not a number the recorder can
+promise. Its debug log can be configured to print per-compilation hit or miss
+lines, but that log is not a supported API and names compiler outputs, so the
+recorder does not parse it.
+
 The commands behind those targets take explicit paths:
 
 <!-- tested-example: buildlimits-predict-commands -->
@@ -784,16 +866,19 @@ starts: writing over the history it was read from would make the run impossible
 to repeat. The report directory may otherwise hold the snapshot, as the example
 above does.
 
-A snapshot with fewer than 2,000 labelled events produces the status
-`insufficient data`, with the counts that were seen. A snapshot that holds no
+A snapshot with fewer than 2,000 labelled events whose times are verified
+produces the status `insufficient data`, with the counts that were seen and the
+number of labels withheld for an unverified time. A snapshot that holds no
 usable admission time produces `insufficient admission times` instead: its
 records cannot show what was knowable before each decision, so no prediction is
 reported. A snapshot that carries admission times is also refused when its
 recorded observation times run backwards, because the store stamps each record
 when it appends it: a later position with an earlier stamp means the clock
 stepped back, and the recorded times can no longer order real moments. The
-history is then reported as unreadable rather than scored. The report never
-pads the history with synthetic rows to reach a threshold, and a negative
+history is then reported as unreadable rather than scored. A history with a
+handful of usable admission times, below the configured held-out minimum,
+produces `insufficient held-out evidence` rather than a verdict. The report
+never pads the history with synthetic rows to reach a threshold, and a negative
 comparison is printed as found rather than explained away. Both commands exit
 with status 0 on success, 1 when the snapshot or store cannot be read or the
 output cannot be written, and 2 on invalid usage or an unreadable configuration.

@@ -37,11 +37,17 @@ class Event:
     admitted_at : datetime | None
         When the compilation was admitted, if the source recorded it.
     observed_at : datetime
-        When the label became known.
+        When the label became known, as the source recorded it.
     label : Label
         ``hit`` or ``miss`` when attributed, otherwise ``unknown``.
     runtime_seconds : float
         The recorded compilation runtime, used only as a feature.
+    label_observed_verified : bool
+        Whether ``observed_at`` is proven to be the moment the label became
+        known. It defaults to ``False`` so a value built without deciding is
+        never treated as proof: a recorded time can be only a lower bound, and
+        an unverified label is neither released nor scored. A source that can
+        prove the time, such as a known-property synthetic stream, states it.
     """
 
     identity: str
@@ -50,6 +56,7 @@ class Event:
     observed_at: dt.datetime
     label: Label
     runtime_seconds: float
+    label_observed_verified: bool = dc.field(kw_only=True, default=False)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -121,7 +128,14 @@ def admission_moment(event: Event) -> dt.datetime | None:
 
 
 def scored_label(event: Event) -> ScoredLabel | None:
-    """Return the scorable label, or None when the outcome is unknown.
+    """Return the scorable label, or None when no trustworthy one exists.
+
+    A ``hit`` or ``miss`` whose observation time is unverified is not scorable.
+    Its recorded time may precede the moment the label was really known, so
+    releasing it could inform a prediction admitted before that moment; the
+    label is therefore withheld rather than used as ground truth. This is the
+    single place that decision is made, so training, scoring and the phase
+    schedule cannot disagree about which labels are usable.
 
     Parameters
     ----------
@@ -131,14 +145,69 @@ def scored_label(event: Event) -> ScoredLabel | None:
     Returns
     -------
     ScoredLabel | None
-        ``hit`` or ``miss`` for an attributed event, otherwise None.
+        ``hit`` or ``miss`` for an attributed event with a verified time,
+        otherwise None.
 
     Examples
     --------
-    >>> scored_label(Event("a" * 64, "git", None, EPOCH, "miss", 0.1))
+    >>> from buildlimits.predict.events import EPOCH
+    >>> scored_label(
+    ...     Event(
+    ...         "a" * 64,
+    ...         "git",
+    ...         None,
+    ...         EPOCH,
+    ...         "miss",
+    ...         0.1,
+    ...         label_observed_verified=True,
+    ...     )
+    ... )
     'miss'
+    >>> scored_label(Event("a" * 64, "git", None, EPOCH, "miss", 0.1)) is None
+    True
     """
     label = event.label
-    if label in _SCORED_LABELS:
+    if label in _SCORED_LABELS and event.label_observed_verified:
+        return typ.cast("ScoredLabel", label)
+    return None
+
+
+def unverified_label(event: Event) -> ScoredLabel | None:
+    """Return a hit or miss whose recorded observation time is unverified.
+
+    These are the labels a source recorded but could not prove were known at
+    the time it stamped. They are counted separately from ``unknown`` outcomes
+    so the report can say how much evidence it withheld and why.
+
+    Parameters
+    ----------
+    event : Event
+        The event whose provenance is inspected.
+
+    Returns
+    -------
+    ScoredLabel | None
+        ``hit`` or ``miss`` when the time is unverified, otherwise None.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH
+    >>> unverified_label(Event("a" * 64, "git", None, EPOCH, "hit", 0.1))
+    'hit'
+    >>> unverified_label(
+    ...     Event(
+    ...         "a" * 64,
+    ...         "git",
+    ...         None,
+    ...         EPOCH,
+    ...         "hit",
+    ...         0.1,
+    ...         label_observed_verified=True,
+    ...     )
+    ... ) is None
+    True
+    """
+    label = event.label
+    if label in _SCORED_LABELS and not event.label_observed_verified:
         return typ.cast("ScoredLabel", label)
     return None

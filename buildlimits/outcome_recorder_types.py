@@ -22,7 +22,11 @@ if typ.TYPE_CHECKING:
         Ticket,
     )
     from buildlimits.outcome_record_format import ChildSighting, Origin, StoreRecord
-    from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
+    from buildlimits.outcome_vocabulary import (
+        CacheResult,
+        OutcomeReason,
+        RecordOmission,
+    )
 
 type AttributionKind = typ.Literal["solo", "unanimous", "inferred", "none"]
 
@@ -39,7 +43,17 @@ class LaunchPayload:
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeEvent:
-    """One journal-ready classification for a cached launch."""
+    """One journal-ready classification for a cached launch.
+
+    ``record_omitted`` names whether this outcome was withheld before it reached
+    the store: a closed reason when the launch had no key or no label moment, or
+    ``none`` when a candidate row was built for it. ``none`` is not proof that a
+    row reached the file. The event and its candidate row are built from the
+    same launch in one transition, so the token describes that launch rather
+    than a later guess, and the writer may still discard the row or leave it
+    queued. What the reason does prove is that an outcome the writer's own
+    discard counts could never see is counted by cause instead of vanishing.
+    """
 
     cache_result: CacheResult
     outcome_attribution: AttributionKind
@@ -49,16 +63,27 @@ class OutcomeEvent:
     window_groups: int
     child_sighting: ChildSighting = "unavailable"
     child_samples: int = 0
+    record_omitted: RecordOmission = "none"
 
 
 @dc.dataclass(frozen=True, slots=True)
 class Launched:
-    """A process group began, with key metadata only for cached launches."""
+    """A process group began, with key metadata only for cached launches.
+
+    ``admitted_at`` is the wall-clock moment the supervisor admitted the
+    group, captured where admission is decided. It is not derived from the
+    later observation time, so a row that carries it can be predicted from
+    before its outcome was known. ``observed_at`` is the launch's own
+    wall-clock moment, retained as start evidence; a launch is not a label,
+    so it never stamps a row's observation time.
+    """
 
     group_id: str
     is_cached: bool
     payload: LaunchPayload
     now: float
+    admitted_at: dt.datetime | None = None
+    observed_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -70,30 +95,55 @@ class LaunchFailed:
 
 @dc.dataclass(frozen=True, slots=True)
 class Ended:
-    """A group ended and its cache-window cleanliness became known."""
+    """A group ended and its cache-window cleanliness became known.
+
+    ``observed_at`` is the group's own completion moment. It is completion
+    evidence only: a label cannot be known before the statistics reading that
+    produces it completes, so this value never becomes a row's observation
+    time. It is retained as the fallback for a purely synthetic event that
+    carries no reading moment at all.
+    """
 
     group_id: str
     is_clean: bool
     now: float
-    observed_at: dt.datetime
+    observed_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
 class GateOpen:
-    """A scheduler-approved read request with its current quiet-point inputs."""
+    """A scheduler-approved read request with its current quiet-point inputs.
+
+    ``observed_at`` is the wall-clock moment the gate was approved, carried
+    alongside the monotonic time so a reading started from it has its own
+    start evidence.
+    """
 
     inputs: QuietInputs
     now: float
+    observed_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
 class PollResult:
-    """One start or poll result from the statistics and generation ports."""
+    """One start or poll result from the statistics and generation ports.
+
+    ``observed_at`` is the wall-clock moment the port returned this result.
+    When the result is terminal it is the moment the reading's labels or
+    refusals became known, and every row the reading emits shares it.
+
+    ``after_generation_digest`` is the salted correlation key for the server
+    generation the reading observed at its window's end. It is populated only
+    from a successful generation read, and the reducer still withholds it from
+    any window whose two boundaries do not name one server.
+    """
 
     now: float
     result: Ticket | Pending | StatisticsText | QueryFailure
     before_generation: Generation | GenerationFailure | None = None
     after_generation: Generation | GenerationFailure | None = None
+    observed_at: dt.datetime | None = None
+    after_generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -176,7 +226,12 @@ class Outputs:
 
 @dc.dataclass(frozen=True, slots=True)
 class _Launch:
-    """One launch retained until a window closes or a refusal is emitted."""
+    """One launch retained until a window closes or a refusal is emitted.
+
+    ``completed_at`` is the launch's own completion moment, kept as evidence
+    and used only as the documented fallback for a purely synthetic event.
+    It is never the observation time of a label or refusal.
+    """
 
     group_id: str
     payload: LaunchPayload
@@ -185,7 +240,8 @@ class _Launch:
     sightings: ChildSightings = dc.field(default_factory=ChildSightings)
     runtime_seconds: float | None = None
     is_clean: bool = False
-    observed_at: dt.datetime | None = None
+    completed_at: dt.datetime | None = None
+    admitted_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)

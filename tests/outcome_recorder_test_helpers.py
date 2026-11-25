@@ -36,7 +36,10 @@ __all__ = (
 )
 
 if typ.TYPE_CHECKING:
+    import datetime as dt
     from types import ModuleType
+
+    from buildlimits.outcome_record_format import StoreRecord
 
 
 class _OutcomeWindow(typ.Protocol):
@@ -76,20 +79,20 @@ class _OutcomeEvent(typ.Protocol):
     cache_result: str
     outcome_attribution: str
     outcome_reason: str
-
-
-class _OutcomeRecord(typ.Protocol):
-    """The stable keyed value checked on persisted outcome records."""
-
-    key: object
+    record_omitted: str
 
 
 class _Outputs(typ.Protocol):
-    """The pure reducer output fields inspected by recorder tests."""
+    """The pure reducer output fields inspected by recorder tests.
+
+    ``records`` is typed as the store's own record union rather than a
+    narrowed protocol: a test inspects both an outcome row's key and its
+    observation time, and the summary the same transition emits.
+    """
 
     commands: tuple[object, ...]
     events: tuple[_OutcomeEvent, ...]
-    records: tuple[_OutcomeRecord, ...]
+    records: tuple[StoreRecord, ...]
     reading_reasons: tuple[str, ...]
 
 
@@ -233,6 +236,7 @@ def begin_query(
             now=query_at,
             result=ports.Ticket(serial=1, deadline=query_at + 2.0),
             before_generation=before_generation,
+            observed_at=gate_event.observed_at,
         ),
     )
     return state, started
@@ -276,10 +280,19 @@ def begin_fresh_recorder_query() -> tuple[ModuleType, object, _Outputs]:
     return recorder, state, output
 
 
-def complete_query(
-    state: object, recorder: ModuleType, text: str, now: float
+def complete_query(  # ruff: ignore[too-many-arguments]  # one argument per reading value; this helper is the packet's own contract; pylint: disable=too-many-arguments
+    state: object,
+    recorder: ModuleType,
+    text: str,
+    now: float,
+    *,
+    observed_at: dt.datetime | None = OBSERVED_AT,
 ) -> tuple[object, _Outputs]:
     """Submit one completed statistics query from the same generation.
+
+    ``observed_at`` is the moment the port returned the reading, which is the
+    moment its labels or refusals became known. ``None`` models the purely
+    synthetic emission the recorder documents as its only timestamp-free path.
 
     Returns
     -------
@@ -298,5 +311,6 @@ def complete_query(
             now=now,
             result=ports.StatisticsText(text),
             after_generation=GENERATION,
+            observed_at=observed_at,
         ),
     )

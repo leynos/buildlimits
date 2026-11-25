@@ -9,13 +9,16 @@ from buildlimits.outcome_attribution import (
     attribute,
 )
 from buildlimits.outcome_ports import GenerationFailure
-from buildlimits.outcome_recorder_outputs import (
+from buildlimits.outcome_recorder_effects import (
     _attribution_window,
     _emission,
-    _emit_attribution,
-    _emit_unattributed,
     _finish_state,
     _with_reading_reason,
+)
+from buildlimits.outcome_recorder_outputs import (
+    _EmissionMoment,
+    _emit_attribution,
+    _emit_unattributed,
 )
 from buildlimits.outcome_recorder_types import (
     CloseQuery,
@@ -48,12 +51,16 @@ _RETRYABLE_READING_REASONS = frozenset({
 
 def _finish_failure(
     state: Querying,
-    now: float,
+    moment: _EmissionMoment,
     reason: OutcomeReason,
     *,
     disable: bool = False,
 ) -> tuple[RecorderState, Outputs]:
     """Refuse an unusable reading and apply reason-specific back-off.
+
+    ``moment`` carries the tick and the wall-clock moment the port answered
+    with this refusal, so a refused label is released only once its reading
+    returned.
 
     Returns
     -------
@@ -62,14 +69,14 @@ def _finish_failure(
 
     Examples
     --------
-    ``_finish_failure(querying, 4.0, "timeout")[1].reading_reasons`` is
-    ``("timeout",)``.
+    ``_finish_failure(querying, _EmissionMoment(4.0), "timeout")`` names
+    ``"timeout"`` as its reading reason.
     """
+    now = moment.now
     emitted = _emit_unattributed(
         state.progress.window.entries,
         reason,
-        now,
-        None,
+        moment,
     )
     progress = _schedule_next_read(
         _clear_window(state.progress),
@@ -94,6 +101,12 @@ def _finish_reading(
     state: Querying, event: PollResult, stats: StatsReading
 ) -> tuple[RecorderState, Outputs]:
     """Validate generations before attributing a complete quiet window.
+
+    Only an attributing window carries a generation digest. Every refusal and
+    the first baseline are emitted with ``None``, because none of them can show
+    which single server handled the rows: a changed, unreadable or straddled
+    window has no one generation, and a baseline accounts for a window it never
+    measured.
 
     Returns
     -------
@@ -139,8 +152,7 @@ def _refuse_generation(
     emitted = _emit_unattributed(
         state.progress.window.entries,
         reason,
-        event.now,
-        None,
+        _EmissionMoment(event.now, event.observed_at),
     )
     progress = _schedule_next_read(
         _clear_window(state.progress),
@@ -207,8 +219,7 @@ def _baseline_emission(
     emitted = _emit_unattributed(
         state.progress.window.entries,
         "no_baseline",
-        event.now,
-        None,
+        _EmissionMoment(event.now, event.observed_at),
     )
     return emitted, "no_baseline"
 
@@ -221,6 +232,12 @@ def _attribute_window(
 ) -> tuple[RecorderState, Outputs]:
     """Attribute the window between two accepted readings.
 
+    This is the one emission that can name a generation, because the reducer
+    has already proven both boundaries agree on one server and that no launch
+    straddled them. The digest therefore describes the server that produced
+    every row in the window, and a per-generation breakdown is a measurement
+    rather than an inference.
+
     Returns
     -------
     tuple[RecorderState, Outputs]
@@ -230,7 +247,7 @@ def _attribute_window(
     emitted = _emit_attribution(
         state.progress.window.entries,
         attribution,
-        event.now,
+        _EmissionMoment(event.now, event.observed_at, event.after_generation_digest),
         (baseline.stats, after.stats),
     )
     progress = _schedule_next_read(

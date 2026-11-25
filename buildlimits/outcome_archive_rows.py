@@ -103,6 +103,12 @@ class DocumentReader:
     def __iter__(self) -> cabc.Iterator[DocumentRow]:
         """Iterate the header then typed rows in document order.
 
+        Each row is decoded as the version the document's header names. The
+        accepted row shape differs by version, so a current document's rows must
+        state their provenance while an older document's rows may predate it.
+        Decoding every row as the current version would reject readable history
+        and would accept a current row that omits its marker.
+
         Yields
         ------
         DocumentRow
@@ -118,15 +124,18 @@ class DocumentReader:
         if first is None:
             raise SegmentFaultError("corrupt")
         self.header = _decode_header(first)
+        version = self.header.version
         yield HeaderRow(first, self.header)
         pending: bytes | None = None
         for raw in iterator:
             if pending is not None:
-                yield _decode_record(pending)
+                yield _decode_record(pending, version)
             pending = raw
-        yield from self._finish(pending)
+        yield from self._finish(pending, version)
 
-    def _finish(self, pending: bytes | None) -> cabc.Iterator[DocumentRow]:
+    def _finish(
+        self, pending: bytes | None, version: int
+    ) -> cabc.Iterator[DocumentRow]:
         """Emit or drop the final row according to stream termination.
 
         An unterminated final row that decodes is still yielded, because its
@@ -140,6 +149,8 @@ class DocumentReader:
         ----------
         pending : bytes | None
             The final row, held back until its newline status is known.
+        version : int
+            The version of the document the row belongs to.
 
         Yields
         ------
@@ -155,7 +166,7 @@ class DocumentReader:
             if not self._stream.is_terminated:
                 self.had_torn_tail = True
             return
-        decoded = outcome_record_codec.decode_record_line(pending)
+        decoded = outcome_record_codec.decode_record_line(pending, version=version)
         if isinstance(decoded, RecordFailure):
             if self._stream.is_terminated:
                 raise SegmentFaultError("corrupt")
@@ -226,13 +237,15 @@ def _decode_header(raw: bytes) -> StoreHeader:
     return decoded
 
 
-def _decode_record(raw: bytes) -> RecordRow:
+def _decode_record(raw: bytes, version: int) -> RecordRow:
     """Decode one terminated row as a record.
 
     Parameters
     ----------
     raw : bytes
         One raw record row.
+    version : int
+        The version of the document the row belongs to.
 
     Returns
     -------
@@ -244,7 +257,7 @@ def _decode_record(raw: bytes) -> RecordRow:
     SegmentFaultError
         If the row is not a valid record.
     """
-    decoded = outcome_record_codec.decode_record_line(raw)
+    decoded = outcome_record_codec.decode_record_line(raw, version=version)
     if isinstance(decoded, RecordFailure):
         raise SegmentFaultError("corrupt")
     return RecordRow(raw, decoded)

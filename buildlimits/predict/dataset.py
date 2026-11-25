@@ -13,7 +13,9 @@ import dataclasses as dc
 import itertools
 import typing as typ
 
-from buildlimits.predict.events import admission_moment
+from buildlimits.predict.accounting import Diagnostics, HistoryLoss
+from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
+from buildlimits.predict.events import admission_moment, unverified_label
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -83,10 +85,13 @@ class StoreHistory:
         Every attributed record, in the order the store appended it.
     source : Source
         The header and counts the events were read from.
+    accounting : StoreAccounting
+        Bounded counts explaining how those rows did or did not become labels.
     """
 
     events: tuple[Event, ...]
     source: Source
+    accounting: StoreAccounting
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -115,6 +120,9 @@ class SnapshotStats:
         Events carrying no admission time at all.
     admission_unusable : int
         Events whose recorded admission time is after their label.
+    unverified_label_time : int
+        Hit or miss labels whose recorded observation time is unverified, so
+        the replay withholds them rather than scoring an unsound release time.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
     """
@@ -129,6 +137,7 @@ class SnapshotStats:
     admission_usable: int
     admission_missing: int
     admission_unusable: int
+    unverified_label_time: int
     gaps: tuple[Gap, ...]
 
 
@@ -149,6 +158,9 @@ class Snapshot:
         Every recorded compilation, in the order the store appended it.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
+    diagnostics : Diagnostics | None
+        The retained-store and history-loss counts, or None for a snapshot
+        written before those counts existed.
     """
 
     created_at: dt.datetime
@@ -156,6 +168,7 @@ class Snapshot:
     journal: JournalProvenance | None
     events: tuple[Event, ...]
     gaps: tuple[Gap, ...]
+    diagnostics: Diagnostics | None = None
 
     def stats(self) -> SnapshotStats:
         """Summarize the history the snapshot really holds.
@@ -171,6 +184,9 @@ class Snapshot:
         observed = [event.observed_at for event in self.events]
         recorded = [event for event in self.events if event.admitted_at is not None]
         usable = sum(1 for event in self.events if admission_moment(event) is not None)
+        unverified = sum(
+            1 for event in self.events if unverified_label(event) is not None
+        )
         return SnapshotStats(
             events=total,
             labelled=labelled,
@@ -182,6 +198,7 @@ class Snapshot:
             admission_usable=usable,
             admission_missing=total - len(recorded),
             admission_unusable=len(recorded) - usable,
+            unverified_label_time=unverified,
             gaps=self.gaps,
         )
 
@@ -213,10 +230,11 @@ def find_gaps(
     return tuple(gaps)
 
 
-def build_snapshot(
+def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source; pylint: disable=too-many-arguments
     history: StoreHistory,
     *,
     now: dt.datetime,
+    history_loss: HistoryLoss,
     journal: JournalProvenance | None = None,
     gap_threshold_seconds: float = 3600.0,
 ) -> Snapshot:
@@ -233,11 +251,16 @@ def build_snapshot(
         The journal provenance to keep, or None when no journal was queried.
     gap_threshold_seconds : float
         The shortest silence that the snapshot reports as a gap.
+    history_loss : HistoryLoss
+        What the reader established about closed history. It is required
+        because the snapshot must state the scope it really read; a default
+        would let a caller claim the active file alone was read without having
+        decided that.
 
     Returns
     -------
     Snapshot
-        The redacted history with provenance, counts and gaps.
+        The redacted history with provenance, counts, gaps and diagnostics.
     """
     return Snapshot(
         created_at=now,
@@ -245,4 +268,5 @@ def build_snapshot(
         journal=journal,
         events=history.events,
         gaps=find_gaps(history.events, threshold_seconds=gap_threshold_seconds),
+        diagnostics=Diagnostics(store=history.accounting, history=history_loss),
     )

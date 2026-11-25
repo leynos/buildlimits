@@ -7,42 +7,117 @@ import typing as typ
 
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.metrics_schema import CACHE_RESULTS as _CACHE_RESULTS
+from buildlimits.metrics_schema import OUTCOME_REASONS as _OUTCOME_REASONS
 from buildlimits.outcome_key import CacheKey, ToolchainIdentity
+from buildlimits.outcome_record_key import (
+    _DIGEST_HEX_LENGTH as _DIGEST_HEX_LENGTH,
+)
+from buildlimits.outcome_record_key import (
+    _is_choice as _is_choice,
+)
+from buildlimits.outcome_record_key import (
+    _optional_choice as _optional_choice,
+)
+from buildlimits.outcome_record_key import (
+    _optional_digest as _optional_digest,
+)
+from buildlimits.outcome_record_key import (
+    _text as _text,
+)
+from buildlimits.outcome_record_key import (
+    _valid_digest as _valid_digest,
+)
+from buildlimits.outcome_record_key import (
+    _validate_key as _validate_key,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_parser import ParserClass
-    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.outcome_recorder_types import AttributionKind
+    from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
 
 type Origin = typ.Literal["registry", "git", "path", "unknown"]
 type ChildSighting = typ.Literal["seen", "ambiguous", "not_seen", "unavailable"]
+type LabelTimeProvenance = typ.Literal["verified"]
 
 FORMAT_NAME = "buildlimits-cache-outcomes"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 4
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, 3, FORMAT_VERSION})
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 # The largest document an in-place compaction may write. A policy that lets
 # the active file grow past this bound cannot compact it in legacy mode, so
 # the retention policy refuses such a segment size.
 MAX_COMPACT_BYTES = 12 * 1024 * 1024
-_DIGEST_HEX_LENGTH = 64
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})
+_ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
+_PROVENANCES = frozenset({"verified"})
 
 
 @dc.dataclass(frozen=True, slots=True)
 class StoreHeader:
-    """Store format identity and explicit write time."""
+    """Store format identity, write time and the file's own format version.
+
+    ``version`` is the version the document was read at or will be written
+    with. It defaults to the current format, and decoding preserves whatever
+    the file itself carried, so a writer can tell that the file it loaded is
+    older than the rows it is about to append and settle it first.
+    """
 
     salt_id: str
     written_at: dt.datetime
+    version: int = FORMAT_VERSION
 
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeRecord:
-    """One attributed request with bounded H2 and H3 evidence."""
+    """One attributed request with bounded evidence and its admission moment.
+
+    Attributes
+    ----------
+    key : CacheKey
+        The salted request identity.
+    outcome : CacheResult
+        The closed cache-result vocabulary.
+    origin : Origin
+        The crate's origin class.
+    runtime_seconds : float
+        The recorded compilation runtime.
+    observed_at : datetime
+        When the label became known.
+    parser_class : ParserClass
+        The argv parser's predicted class.
+    child_sighting : ChildSighting
+        The bounded child-process observation.
+    child_samples : int
+        Successful child samples taken while the launch ran.
+    outcome_reason : OutcomeReason | None
+        Why the window produced no label, or ``none`` for a label. ``None``
+        means the row predates reason recording and is never guessed at.
+    outcome_attribution : AttributionKind | None
+        ``solo``, ``unanimous`` or ``none``; ``None`` for a pre-v2 row.
+    admitted_at : datetime | None
+        The UTC wall-clock moment the supervisor admitted the compilation,
+        captured at admission. ``None`` means the row predates admission-time
+        recording or the launch was not admitted through the supervisor.
+    label_time_provenance : Literal["verified"] | None
+        Whether ``observed_at`` is proven to be when the label became known.
+        The current recorder writes ``verified``, because it dates every row at
+        the statistics reading that produced the label. ``None`` means the row
+        predates the marker (a version 1 or 2 row) and proves nothing: either
+        release it as a lower bound or withhold it, never treat it as proof.
+    generation_digest : str | None
+        A salted digest naming the sccache server generation the recording
+        reading observed. ``None`` means no single generation can be attributed
+        to this row: it predates the field, its window changed or lost the
+        server identity, or the row was emitted without a reading at all. It is
+        a correlation key only, so the digest separates label loss per
+        generation without ever naming a process.
+    """
 
     key: CacheKey
     outcome: CacheResult
@@ -52,6 +127,11 @@ class OutcomeRecord:
     parser_class: ParserClass
     child_sighting: ChildSighting
     child_samples: int
+    outcome_reason: OutcomeReason | None = None
+    outcome_attribution: AttributionKind | None = None
+    admitted_at: dt.datetime | None = None
+    label_time_provenance: LabelTimeProvenance | None = None
+    generation_digest: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -101,12 +181,35 @@ class DecodedStore:
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}
 _IDENTITY_FIELDS = {field.name for field in dc.fields(ToolchainIdentity)}
 _OUTCOME_FIELDS = {field.name for field in dc.fields(OutcomeRecord)} | {"kind"}
+# Version 3 rows predate the generation digest; version 2 rows also predate the
+# label-time provenance marker; version 1 rows also predate admission-time and
+# classification evidence. All stay readable, and every absent field decodes as
+# None rather than a guessed generation, proof or label.
+_V3_OUTCOME_FIELDS = _OUTCOME_FIELDS - {"generation_digest"}
+_V2_OUTCOME_FIELDS = _V3_OUTCOME_FIELDS - {"label_time_provenance"}
+_V1_OUTCOME_FIELDS = _V2_OUTCOME_FIELDS - {
+    "outcome_reason",
+    "outcome_attribution",
+    "admitted_at",
+}
+# The outcome shapes each document version may hold. A current document holds
+# only the current shape, so its rows state their provenance: the writer always
+# emits the marker, and a row preserved from an older document is re-encoded by
+# compaction with an explicit null rather than losing the field. An older
+# document keeps the shapes its release wrote, plus the older rows a previous
+# compaction of that release preserved.
+_ACCEPTED_OUTCOME_SHAPES: dict[int, frozenset[frozenset[str]]] = {
+    1: frozenset({frozenset(_V1_OUTCOME_FIELDS)}),
+    2: frozenset({frozenset(_V1_OUTCOME_FIELDS), frozenset(_V2_OUTCOME_FIELDS)}),
+    3: frozenset({frozenset(_V2_OUTCOME_FIELDS), frozenset(_V3_OUTCOME_FIELDS)}),
+    FORMAT_VERSION: frozenset({frozenset(_OUTCOME_FIELDS)}),
+}
 _SUMMARY_FIELDS = {field.name for field in dc.fields(WindowSummary)} | {"kind"}
 _SUMMARY_COUNTS = tuple(field.name for field in dc.fields(WindowSummary)[2:])
 
 
 def _valid_outcome(record: OutcomeRecord) -> bool:
-    """Check closed vocabularies and bounded measurements.
+    """Check closed vocabularies, bounded measurements and optional evidence.
 
     Returns
     -------
@@ -120,16 +223,24 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _is_choice(record.child_sighting, _CHILD_SIGHTINGS),
         _valid_number(record.runtime_seconds),
         nonnegative_integer(record.child_samples) is not None,
+        _optional_choice(record.outcome_reason, _OUTCOME_REASONS),
+        _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
+        _optional_utc(record.admitted_at),
+        _optional_choice(record.label_time_provenance, _PROVENANCES),
+        _optional_digest(record.generation_digest),
     ))
 
 
 def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
     """Check decoded outcome values against their closed vocabularies.
 
+    The optional evidence is absent from a version 1 row, which is valid: its
+    fields decode as None and are never filled by inference.
+
     Returns
     -------
     bool
-        Whether all required outcome values have supported types and values.
+        Whether all present outcome values have supported types and values.
     """
     return all((
         _is_choice(value.get("outcome"), _CACHE_RESULTS),
@@ -138,118 +249,31 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         _is_choice(value.get("child_sighting"), _CHILD_SIGHTINGS),
         _valid_number(value.get("runtime_seconds")),
         nonnegative_integer(value.get("child_samples")) is not None,
+        _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
+        _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
+        _optional_choice(value.get("label_time_provenance"), _PROVENANCES),
+        _optional_digest(value.get("generation_digest")),
     ))
 
 
 def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:
-    """Require the exact format name and integer version.
+    """Require the supported format name and one readable integer version.
+
+    The version is checked before the set lookup. A list or object version is
+    not hashable, and constructing a tuple of checks would evaluate the lookup
+    before ``all`` could short-circuit, turning malformed input into a crash.
 
     Returns
     -------
     bool
-        Whether the header identifies the supported format version.
+        Whether the header identifies a supported format version.
     """
+    if value.get("format") != FORMAT_NAME:
+        return False
     version = value.get("version")
-    return all((
-        value.get("format") == FORMAT_NAME,
-        isinstance(version, int),
-        not isinstance(version, bool),
-        version == FORMAT_VERSION,
-    ))
-
-
-def _validate_key(key: CacheKey) -> None:
-    """Reject cache keys containing local paths or invalid digests.
-
-    Raises
-    ------
-    ValueError
-        If a key field is empty, malformed or path-bearing.
-    """
-    identity = key.toolchain_identity
-    is_valid = all((
-        _safe_component(key.crate_name),
-        _safe_origin(key.crate_origin),
-        _safe_target(key.target),
-        _valid_digest(key.argument_digest) is not None,
-        _valid_digest(identity.compiler_digest) is not None,
-        _valid_digest(identity.rustup_toolchain_digest) is not None,
-        _text(identity.cache_version) is not None,
-        _text(identity.server_version) is not None,
-    ))
-    if not is_valid:
-        raise ValueError
-
-
-def _safe_component(value: object) -> bool:
-    """Check a crate-name component without filesystem separators.
-
-    Returns
-    -------
-    bool
-        Whether the value is a non-empty, path-free string.
-    """
-    if not isinstance(value, str) or not value.strip():
+    if isinstance(version, bool) or not isinstance(version, int):
         return False
-    return not any(separator in value for separator in ("/", "\\"))
-
-
-def _safe_origin(value: object) -> bool:
-    """Check a classified origin label without retaining path components.
-
-    Returns
-    -------
-    bool
-        Whether the optional origin is a supported path-free label.
-    """
-    if value is None:
-        return True
-    if not isinstance(value, str):
-        return False
-    if not value.startswith(("registry:", "git:", "path:")):
-        return False
-    return not any(separator in value for separator in ("/", "\\"))
-
-
-def _safe_target(value: object) -> bool:
-    """Check a target triple or keyed target-path digest.
-
-    Returns
-    -------
-    bool
-        Whether the target is safe to persist.
-    """
-    if not isinstance(value, str) or not value.strip():
-        return False
-    if value.startswith("path:"):
-        return _valid_digest(value.removeprefix("path:")) is not None
-    return not _path_like(value)
-
-
-def _path_like(value: str) -> bool:
-    """Identify Unix, relative and Windows path spellings.
-
-    Returns
-    -------
-    bool
-        Whether the value resembles a local filesystem path.
-    """
-    return any((
-        any(separator in value for separator in ("/", "\\")),
-        value.startswith((".", "~")),
-        len(value) > 1 and value[1] == ":",
-    ))
-
-
-def _text(value: object) -> str | None:
-    """Accept a non-empty string value.
-
-    Returns
-    -------
-    str or None
-        The original string, or no value for empty or non-string input.
-    """
-    return value if isinstance(value, str) and value.strip() else None
+    return version in SUPPORTED_FORMAT_VERSIONS
 
 
 def _require_text(value: object) -> None:
@@ -264,15 +288,17 @@ def _require_text(value: object) -> None:
         raise ValueError
 
 
-def _is_choice(value: object, allowed: frozenset[str]) -> bool:
-    """Check a string against a closed vocabulary.
+def _optional_utc(value: dt.datetime | None) -> bool:
+    """Check an optional timestamp is present in explicit UTC.
 
     Returns
     -------
     bool
-        Whether the string belongs to the allowed values.
+        Whether the value is None or an aware UTC datetime.
     """
-    return isinstance(value, str) and value in allowed
+    return value is None or (
+        value.tzinfo is not None and value.utcoffset() == dt.timedelta(0)
+    )
 
 
 def _valid_number(value: object) -> bool:
@@ -295,55 +321,3 @@ def _valid_number(value: object) -> bool:
                 return False
         case _:
             return False
-
-
-def _valid_digest(value: object) -> str | None:
-    """Accept lowercase SHA-256 hexadecimal digests.
-
-    Returns
-    -------
-    str or None
-        The digest, or no value for a malformed representation.
-    """
-    if not isinstance(value, str) or len(value) != _DIGEST_HEX_LENGTH:
-        return None
-    if not all(character in "0123456789abcdef" for character in value):
-        return None
-    return value
-
-
-def _timestamp(value: dt.datetime) -> str:
-    """Serialize an explicit UTC timestamp in canonical ISO form.
-
-    Returns
-    -------
-    str
-        The timestamp with a trailing ``Z`` offset.
-
-    Raises
-    ------
-    ValueError
-        If the timestamp is naive or has a non-UTC offset.
-    """
-    if value.tzinfo is None or value.utcoffset() != dt.timedelta(0):
-        raise ValueError
-    return value.isoformat().replace("+00:00", "Z")
-
-
-def _parse_timestamp(value: object) -> dt.datetime | None:
-    """Parse an explicit UTC ISO timestamp.
-
-    Returns
-    -------
-    datetime or None
-        A UTC timestamp, or no value for malformed or non-UTC input.
-    """
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
-        return None
-    return parsed.astimezone(dt.UTC)

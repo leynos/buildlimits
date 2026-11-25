@@ -3,42 +3,68 @@
 import dataclasses as dc
 import datetime as dt
 import json
+import tempfile
 import typing as typ
+from pathlib import Path
 
+import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
 
-from buildlimits import outcome_store_io
-from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
+from buildlimits import outcome_record_codec, outcome_store_io
+from buildlimits.outcome_record_encode import encode_line
+from buildlimits.outcome_record_format import (
+    FORMAT_VERSION,
+    DecodedStore,
+    OutcomeRecord,
+    StoreHeader,
+)
 from buildlimits.predict import dataset_cli
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
-from buildlimits.predict.dataset import Snapshot, Source
+from buildlimits.predict.dataset import Snapshot, Source, build_snapshot
 from buildlimits.predict.events import Event
-from buildlimits.predict.journal_provenance import JournalUnavailable
-from buildlimits.predict.snapshot_store import save_snapshot
+from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalUnavailable,
+    count_journal,
+)
+from buildlimits.predict.records import decode_history
+from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 from buildlimits.predict.synthetic import identity, stationary
 
 if typ.TYPE_CHECKING:
-    from pathlib import Path
-
-    from buildlimits.outcome_record_format import Origin
+    from buildlimits.outcome_record_format import Origin, StoreRecord
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Label
 
 STORE_HEADER = StoreHeader("fixed-salt", dt.datetime(2026, 10, 24, tzinfo=dt.UTC))
 
+ACTIVE_FILE_ONLY = HistoryLoss.active_file_only()
+"""The scope of a test that decodes one in-memory store file.
 
-def hand_event(
+A test builds its history from a single decoded file, so it has read the
+active file and nothing else. Stating that scope explicitly is what
+`build_snapshot` requires: the snapshot records what the reader established,
+never an assumed default.
+"""
+
+
+def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario value; pylint: disable=too-many-arguments
     index: int,
     *,
     observed_at: dt.datetime,
     admitted_at: dt.datetime | None,
     label: Label,
+    verified: bool = True,
 ) -> Event:
     """Return one hand-built event for an ordering or weighting scenario.
 
     The identity is stable for the given index, so a stream built from
-    consecutive indices never repeats one unless a test means it to.
+    consecutive indices never repeats one unless a test means it to. The
+    observation time is verified by default: a hand-built scenario states the
+    moment its label was known, so it is proof rather than a store row's lower
+    bound. A test about the unverified case passes ``verified=False``.
 
     Returns
     -------
@@ -52,6 +78,7 @@ def hand_event(
         observed_at=observed_at,
         label=label,
         runtime_seconds=1.0,
+        label_observed_verified=verified,
     )
 
 
@@ -132,6 +159,137 @@ def write_store(path: Path, count: int) -> None:
         for index in range(count)
     )
     outcome_store_io.replace_store(path, STORE_HEADER, typ.cast("typ.Any", records))
+
+
+def write_admitted_store(path: Path, count: int) -> None:
+    """Write a store whose rows each carry their own admission time.
+
+    The label times keep their fixed spacing, and every admission time is two
+    seconds earlier, so each row is a genuine pre-admission observation rather
+    than a time derived from when the row was written.
+    """
+    records = []
+    for index in range(count):
+        labelled = index % 7 != 0
+        record = outcome_record(
+            index,
+            "unattributed" if not labelled else ("hit" if index % 2 else "miss"),
+            dc.replace(cache_key(), argument_digest=f"{index:064x}"),
+        )
+        records.append(
+            dc.replace(
+                record,
+                outcome_reason="none" if labelled else "mixed_window",
+                outcome_attribution="solo" if labelled else "none",
+                admitted_at=record.observed_at - dt.timedelta(seconds=2),
+            )
+        )
+    outcome_store_io.replace_store(
+        path, STORE_HEADER, typ.cast("typ.Any", tuple(records))
+    )
+
+
+def write_admitted_store_snapshot(tmp_path: Path, count: int) -> Path:
+    """Snapshot a store whose retained rows carry admission times.
+
+    Returns
+    -------
+    Path
+        The snapshot the benchmark can be pointed at.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    snapshot = tmp_path / "history.jsonl"
+    write_admitted_store(store, count)
+    dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(snapshot),
+        "--skip-journal",
+    ])
+    return snapshot
+
+
+def record_events(
+    records: tuple[StoreRecord, ...],
+    *,
+    now: dt.datetime,
+    version: int = FORMAT_VERSION,
+) -> tuple[Event, ...]:
+    """Snapshot one reading's records and load the events back.
+
+    A test that inspects the events a recorder emitted must read them through
+    the file the dataset command writes, not through the in-memory rows: only
+    the written document states each event's label-time provenance. The rows
+    therefore travel through the real encoder and codec at ``version``, so a
+    test that claims a version's behaviour has exercised that version's shapes.
+
+    Parameters
+    ----------
+    records : tuple[StoreRecord, ...]
+        The records one reading emitted, outcome rows and summary included.
+    now : datetime
+        The moment the reading returned, used as the store's write time.
+    version : int
+        The document version to write and read back. A version 2 document
+        cannot carry a provenance marker, so a row that states one must be
+        stripped before it is written there.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The loaded event stream, in store append order.
+    """
+    header = StoreHeader("fixed-salt", now, version=version)
+    document = "\n".join((
+        encode_line(header),
+        *(
+            encode_line(_as_version_row(record, version), version=version)
+            for record in records
+        ),
+    ))
+    decoded = outcome_record_codec.decode_lines(document + "\n")
+    if not isinstance(decoded, DecodedStore):
+        pytest.fail(f"the fixture's own document did not decode: {decoded}")
+    snapshot = build_snapshot(
+        decode_history(decoded),
+        now=now,
+        history_loss=HistoryLoss.active_file_only(),
+    )
+    # The directory is removed on both paths: a leaked one per call would
+    # accumulate for the whole session, since nothing else owns it.
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "history.jsonl"
+        save_snapshot(path, snapshot)
+        return load_snapshot(path).events
+
+
+_PROVENANCE_VERSION = 3
+"""The first store version that states a row's label-time provenance."""
+
+
+def _as_version_row(record: StoreRecord, version: int) -> StoreRecord:
+    """Reproduce the row shape the named document version actually wrote.
+
+    A version 1 or 2 release could not state label-time provenance, and a
+    version 3 release could not state a generation digest, so a test that asks
+    what such a history looks like must strip the evidence its own recorder now
+    sets. Writing it as-is would be refused, which is the encoder correctly
+    refusing to record proof a document cannot carry.
+
+    Returns
+    -------
+    StoreRecord
+        The record as that version would have written it.
+    """
+    if not isinstance(record, OutcomeRecord):
+        return record
+    if version >= FORMAT_VERSION:
+        return record
+    stripped = dc.replace(record, generation_digest=None)
+    if version >= _PROVENANCE_VERSION:
+        return stripped
+    return dc.replace(stripped, label_time_provenance=None)
 
 
 def write_snapshot(tmp_path: Path, count: int) -> Path:
@@ -223,3 +381,20 @@ def write_fast_config(tmp_path: Path) -> Path:
         block_size=20,
     )
     return write_json(tmp_path / "config.json", dc.asdict(config))
+
+
+def journal_note(*records: object, truncated: bool = False) -> JournalCounts:
+    """Count one journal window over the supplied validated records.
+
+    Both the provenance tests and the report tests need the same counting
+    call; folding a window is the only thing they share, so it is built once
+    here rather than restated per module.
+
+    Returns
+    -------
+    JournalCounts
+        The counts for the window.
+    """
+    return count_journal(
+        typ.cast("typ.Any", records), since="4w", cap=1000, truncated=truncated
+    )

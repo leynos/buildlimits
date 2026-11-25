@@ -10,7 +10,7 @@ import datetime as dt
 import typing as typ
 
 from outcome_test_helpers import attributed_record
-from predict_test_helpers import write_json
+from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import build_snapshot
@@ -33,7 +33,10 @@ def test_a_multi_domain_history_records_every_domain(tmp_path: Path) -> None:
         ("salt-a", "salt-b"),
     )
     snapshot = build_snapshot(
-        decode_history(decoded), now=NOW, journal=JournalUnavailable("none")
+        decode_history(decoded),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        journal=JournalUnavailable("none"),
     )
 
     document = snapshot_to_dict(snapshot)
@@ -55,7 +58,10 @@ def test_a_single_domain_history_omits_the_field() -> None:
 
     document = snapshot_to_dict(
         build_snapshot(
-            decode_history(decoded), now=NOW, journal=JournalUnavailable("none")
+            decode_history(decoded),
+            now=NOW,
+            history_loss=ACTIVE_FILE_ONLY,
+            journal=JournalUnavailable("none"),
         )
     )
 

@@ -19,13 +19,30 @@ if typ.TYPE_CHECKING:
 BASELINE_POLLS = 2
 """Completed polls that still report the pre-request baseline."""
 
+_FOOTPRINTS: dict[str, dict[str, int]] = {
+    "hit": {"compile_requests": 1, "requests_executed": 1, "cache_hits": 1},
+    "miss": {
+        "compile_requests": 1,
+        "compilations": 1,
+        "cache_misses": 1,
+        "requests_executed": 1,
+    },
+}
+"""The approved counter footprints a completed reading can report."""
+
 
 class CompletingStatistics:
     """Return deterministic cumulative statistics on every loop poll."""
 
-    def __init__(self) -> None:
-        """Start the baseline and one miss footprint sequence."""
+    def __init__(self, *, footprint: str = "miss") -> None:
+        """Start the baseline and one labelled counter footprint.
+
+        ``footprint`` names the label the reading after the baseline reports:
+        ``miss`` is the default the differential and non-interference machines
+        observe, and ``hit`` lets a shell test drive an attributed window.
+        """
         self.polls = 0
+        self._footprint = _FOOTPRINTS[footprint]
 
     def start(self, now: float) -> Ticket:
         """Start one immediate, scripted statistics query.
@@ -38,25 +55,18 @@ class CompletingStatistics:
         return Ticket(self.polls + 1, now + 2.0)
 
     def poll(self, ticket: Ticket, now: float) -> StatisticsText:
-        """Complete the query with a baseline or a single miss footprint.
+        """Complete the query with a baseline or one labelled footprint.
 
         Returns
         -------
         StatisticsText
-            Baseline text for the opening polls, then one miss footprint.
+            Baseline text for the opening polls, then one labelled footprint.
         """
         del ticket, now
         self.polls += 1
         if self.polls <= BASELINE_POLLS:
             return StatisticsText(stats_text())
-        return StatisticsText(
-            stats_text(
-                compile_requests=1,
-                compilations=1,
-                cache_misses=1,
-                requests_executed=1,
-            )
-        )
+        return StatisticsText(stats_text(**self._footprint))
 
     @staticmethod
     def close(ticket: Ticket) -> None:

@@ -12,28 +12,19 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import attributed_record
-from predict_test_helpers import write_json
+from predict_diagnostics_helpers import NOW, history_from_records
+from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 
 from buildlimits.metrics_records import Record
-from buildlimits.outcome_record_format import DecodedStore, StoreHeader
-from buildlimits.predict.dataset import StoreHistory, build_snapshot
+from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalProvenance,
     JournalUnavailable,
     count_journal,
 )
-from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
-
-NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
-
-
-def _history(*records: object) -> StoreHistory:
-    """Decode records into the history value a snapshot is built from."""
-    decoded = DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
-    return decode_history(decoded)
 
 
 def _counts_note() -> JournalCounts:
@@ -46,7 +37,7 @@ def _counts_note() -> JournalCounts:
     )
 
 
-def _document(journal: JournalProvenance | None = None) -> dict[str, object]:
+def diagnostics_document(journal: JournalProvenance | None = None) -> dict[str, object]:
     """Return the encoded snapshot of one attributed hit.
 
     The default document carries a journal note so its decoding is exercised;
@@ -54,7 +45,10 @@ def _document(journal: JournalProvenance | None = None) -> dict[str, object]:
     """
     note = _counts_note() if journal is None else journal
     snapshot = build_snapshot(
-        _history(attributed_record(outcome="hit")), now=NOW, journal=note
+        history_from_records(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        journal=note,
     )
     return snapshot_to_dict(snapshot)
 
@@ -71,7 +65,7 @@ def _restarts(document: dict[str, object]) -> dict[str, object]:
 
 def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
     """Assert the loader refuses ``stamp`` as the snapshot's creation time."""
-    document = _document()
+    document = diagnostics_document()
     document["created_at"] = stamp
 
     with pytest.raises(ValueError, match=match):
@@ -213,7 +207,7 @@ def test_a_malformed_snapshot_is_refused(
     tmp_path: Path, mutate: cabc.Callable[[dict[str, object]], object]
 ) -> None:
     """Every field the loader reads is checked for type and shape."""
-    document = _document()
+    document = diagnostics_document()
     mutate(document)
 
     with pytest.raises((TypeError, ValueError)):
@@ -229,7 +223,7 @@ def test_a_non_finite_gap_length_is_refused_by_field(
     A JSON integer may be far larger than a float, so the conversion itself can
     overflow rather than produce an infinity.
     """
-    document = _document()
+    document = diagnostics_document()
     stats = typ.cast("dict[str, object]", document["stats"])
     stats.update(
         gaps=[
@@ -247,7 +241,9 @@ def test_a_non_finite_gap_length_is_refused_by_field(
 
 def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
     """The note the report renders is decoded back into its values."""
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", _document()))
+    loaded = load_snapshot(
+        write_json(tmp_path / "history.jsonl", diagnostics_document())
+    )
 
     assert isinstance(loaded.journal, JournalCounts), "counts are decoded"
     assert loaded.journal.available is True, "availability is read"
@@ -259,7 +255,7 @@ def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
 
 def test_an_unavailable_journal_note_survives_loading(tmp_path: Path) -> None:
     """A note that names its reason decodes without invented counts."""
-    document = _document(JournalUnavailable("journal query skipped"))
+    document = diagnostics_document(JournalUnavailable("journal query skipped"))
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
@@ -270,7 +266,7 @@ def test_an_unavailable_journal_note_survives_loading(tmp_path: Path) -> None:
 def test_an_empty_journal_window_decodes_as_counts(tmp_path: Path) -> None:
     """An empty window is counts with no span, not an unavailable journal."""
     empty = count_journal((), since="4w", cap=1000, truncated=False)
-    document = _document(empty)
+    document = diagnostics_document(empty)
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
@@ -281,7 +277,7 @@ def test_an_empty_journal_window_decodes_as_counts(tmp_path: Path) -> None:
 
 def test_a_snapshot_that_queried_no_journal_decodes_no_note(tmp_path: Path) -> None:
     """An empty block means the snapshot target queried no journal."""
-    document = _document(JournalUnavailable("unused"))
+    document = diagnostics_document(JournalUnavailable("unused"))
     document["journal"] = {}
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
@@ -292,12 +288,12 @@ def test_a_snapshot_that_queried_no_journal_decodes_no_note(tmp_path: Path) -> N
 def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
     """A JSON array is not a snapshot."""
     with pytest.raises(TypeError, match="must hold one JSON object"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", [_document()]))
+        load_snapshot(write_json(tmp_path / "history.jsonl", [diagnostics_document()]))
 
 
 def test_a_hand_edited_gap_survives_loading(tmp_path: Path) -> None:
     """A well-formed gap row is decoded back into a Gap."""
-    document = _document()
+    document = diagnostics_document()
     stats = typ.cast("dict[str, object]", document["stats"])
     stats["gaps"] = [
         {
@@ -335,7 +331,7 @@ def test_a_creation_time_utc_cannot_read_is_refused(
 
 def test_a_representable_offset_timestamp_is_read(tmp_path: Path) -> None:
     """An offset that stays inside the range is converted, not refused."""
-    document = _document()
+    document = diagnostics_document()
     document["created_at"] = "0001-01-01T01:00:00+01:00"
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))

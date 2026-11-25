@@ -46,6 +46,7 @@ def _all_first_sightings(count: int) -> tuple[Event, ...]:
             EPOCH + index * STEP,
             "hit" if index % 2 else "miss",
             1.0,
+            label_observed_verified=True,
         )
         for index in range(count)
     )

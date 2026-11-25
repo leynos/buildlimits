@@ -23,6 +23,7 @@ from buildlimits.supervisor_outcomes import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.config import SupervisorConfig
@@ -213,7 +214,12 @@ class OutcomeWorld:
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeWorldOptions:
-    """Optional injected ports and quiet-point settings for shell tests."""
+    """Optional injected ports and quiet-point settings for shell tests.
+
+    ``wall_clock`` supplies the shell's wall-clock reading, so a test can prove
+    which moment a label and its admission evidence carry. None leaves the
+    shell reading the system UTC clock, as production does.
+    """
 
     recovery_marker: Path | None = None
     recording: bool = True
@@ -221,6 +227,7 @@ class OutcomeWorldOptions:
     reaper: ChildReaper | None = None
     writer: OutcomeStorePort | None = None
     clock: cabc.Callable[[], float] | None = None
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None
     tracer: JournalTracer | None = None
     policy_settings: SupervisorConfig | None = None
 
@@ -355,6 +362,7 @@ def make_outcome_world(
                 statistics=selected_statistics,
                 server=typ.cast("ServerProcessPort", FakeServerProcess()),
                 reaper=options.reaper,
+                wall_clock=options.wall_clock,
             ),
         )
     else:

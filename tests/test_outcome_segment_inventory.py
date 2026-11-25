@@ -132,6 +132,48 @@ def test_gaps_start_at_the_retention_floor(tmp_path: Path) -> None:
     )
 
 
+def test_quarantine_evidence_is_counted_from_its_directory(tmp_path: Path) -> None:
+    """A quarantined file is a measured count, not an always-empty list.
+
+    ``quarantine_file`` names a moved file from the file's own name, its fault
+    reason and a random token, so the name does not reliably carry a sequence.
+    The count of regular files is what the inventory can honestly report.
+    """
+    layout = store_layout(tmp_path)
+    directory = layout.quarantine_dir
+    directory.mkdir(parents=True)
+    for name in ("segment-000000000001.jsonl.corrupt.ab12cd", "orphan.json"):
+        write_private(directory / name, b"evidence")
+
+    inventory = read_inventory(layout)
+
+    assert inventory.quarantined_files == 2, "both files are counted"
+    assert not inventory.effective, "quarantined files are not retained history"
+
+
+def test_an_absent_quarantine_directory_is_a_measured_zero(tmp_path: Path) -> None:
+    """A store that never quarantined anything has nothing to count."""
+    assert read_inventory(store_layout(tmp_path)).quarantined_files == 0, (
+        "no directory means no quarantined file"
+    )
+
+
+def test_an_unlistable_quarantine_directory_propagates(tmp_path: Path) -> None:
+    """A quarantine directory that cannot be listed is damage, not a zero.
+
+    Reporting the count as zero would report a measurement this scan never
+    made, so the listing failure reaches the caller. A regular file in the
+    directory's place fails the same way on every account, including a
+    privileged one that a permission mode would not stop.
+    """
+    layout = store_layout(tmp_path)
+    layout.archive_dir.mkdir(parents=True)
+    write_private(layout.quarantine_dir, b"not a directory")
+
+    with pytest.raises(UnsafePathError):
+        read_inventory(layout)
+
+
 def test_gap_reporting_is_bounded(tmp_path: Path) -> None:
     """A sparse sequence cannot make one report enumerate forever.
 

@@ -189,20 +189,33 @@ class PeerServerProcess:
     A refused connection returns ``None`` because no managed server is present.
     """
 
-    def __init__(
+    def __init__(  # ruff: ignore[too-many-arguments] - one keyword per injectable seam; pylint: disable=too-many-arguments
         self,
         socket_path: Path,
         *,
         proc_root: Path = Path("/proc"),
         cgroup_root: Path = Path("/sys/fs/cgroup"),
         sampler: ProcessSampler | None = None,
+        generation_port: (
+            cabc.Callable[
+                [],
+                outcome_attribution.Generation | outcome_ports.GenerationFailure | None,
+            ]
+            | None
+        ) = None,
     ) -> None:
-        """Retain the managed socket and proc root used by D2."""
+        """Retain the managed socket and proc root used by D2.
+
+        ``generation_port`` is an optional test seam that answers the
+        generation read directly, beside the existing proc and sampler
+        substitutions. A production call leaves it unset.
+        """
         self._socket_path = socket_path
         self._proc_root = proc_root
         self._sampler = (
             ProcessSampler(proc_root, cgroup_root) if sampler is None else sampler
         )
+        self._generation_port = generation_port
 
     def generation(
         self,
@@ -215,6 +228,8 @@ class PeerServerProcess:
             The connected process identity, a bounded read failure, or None
             only when the socket actively refuses the connection.
         """
+        if self._generation_port is not None:
+            return self._generation_port()
         try:
             pid = self._peer_pid()
             if pid is None:

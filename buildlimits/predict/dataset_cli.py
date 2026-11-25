@@ -11,11 +11,17 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_history
+from buildlimits import (
+    outcome_history,
+    outcome_segment_inventory,
+    outcome_segment_state,
+)
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
+from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
 from buildlimits.predict.dataset_inputs import output_is_an_input, read_inputs
@@ -24,6 +30,7 @@ from buildlimits.predict.dataset_journal import (
     journal_span,
     journal_window,
 )
+from buildlimits.predict.dataset_report import report_snapshot
 from buildlimits.predict.journal_provenance import (
     JournalProvenance,
     JournalUnavailable,
@@ -31,7 +38,7 @@ from buildlimits.predict.journal_provenance import (
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import save_snapshot
 from buildlimits.retry_notice import report_retry
-from buildlimits.utc_text import utc_now, utc_text
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -118,15 +125,27 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     )
     if isinstance(decoded, int):
         return decoded
-    snapshot = _snapshot(decoded, config, options, chosen)
+    snapshot = _snapshot(
+        decoded,
+        config,
+        options,
+        chosen,
+        history_loss=(
+            HistoryLoss.active_file_only()
+            if selection is None
+            else chosen.read_inventory(store)
+        ),
+    )
     return chosen.write_snapshot(snapshot, options.output)
 
 
-def _snapshot(
+def _snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source; pylint: disable=too-many-arguments
     decoded: DecodedStore,
     config: Config,
     options: argparse.Namespace,
     chosen: Edges,
+    *,
+    history_loss: HistoryLoss,
 ) -> Snapshot:
     """Build the snapshot from the decoded history and its provenance.
 
@@ -140,6 +159,8 @@ def _snapshot(
         The parsed command line.
     chosen : Edges
         The journal and clock this run uses.
+    history_loss : HistoryLoss
+        What the inventory says an extraction could not see.
 
     Returns
     -------
@@ -156,6 +177,7 @@ def _snapshot(
         now=chosen.now(),
         journal=note,
         gap_threshold_seconds=config.gap_threshold_seconds,
+        history_loss=history_loss,
     )
 
 
@@ -206,7 +228,7 @@ def _write(snapshot: Snapshot, output: Path) -> int:
     except OSError as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
-    _report(snapshot, output)
+    report_snapshot(snapshot, output)
     return 0
 
 
@@ -219,6 +241,43 @@ def _store_path(store: Path | None) -> Path:
         The explicit path, or this host's configured store.
     """
     return store_path(os.environ) if store is None else store
+
+
+def _read_inventory(store: Path) -> HistoryLoss:
+    """Describe the closed history an extraction could not see.
+
+    The scan is told the floor the archiver recorded, so a prefix retention
+    deleted on purpose is not reported as missing history. A floor that exists
+    but cannot be read is not the same fact: every absent sequence below the
+    survivors would then look like a gap retention may or may not have made, so
+    the counts are withheld rather than guessed. A scan failure is treated the
+    same way; neither is a reason to lose the rows already read.
+
+    Returns
+    -------
+    HistoryLoss
+        The inventory counts, or the unavailable statement when the floor or
+        the scan cannot be trusted.
+    """
+    layout = SegmentLayout.beside(store)
+    floor = outcome_segment_state.read_retention_floor(layout)
+    if floor.state not in {"recorded", "missing"}:
+        return HistoryLoss(active_only=False, inventory_unavailable=True)
+    try:
+        inventory = outcome_segment_inventory.read_inventory(
+            layout, retention_floor=floor.sequence
+        )
+    except OSError:
+        return HistoryLoss(active_only=False, inventory_unavailable=True)
+    return HistoryLoss(
+        active_only=False,
+        archived=len(inventory.archived),
+        sealed=len(inventory.sealed),
+        gaps=len(inventory.gaps),
+        gaps_truncated=inventory.gaps_truncated,
+        retention_floor=inventory.retention_floor,
+        quarantined=inventory.quarantined_files,
+    )
 
 
 def _read(store: Path) -> DecodedStore | int:
@@ -273,38 +332,6 @@ def _read_history(store: Path, selection: HistorySelection) -> DecodedStore | in
         return 1
 
 
-def _report(snapshot: Snapshot, output: Path) -> None:
-    """Print what the snapshot holds, including its gaps."""
-    stats = snapshot.stats()
-    print(f"wrote {output}")
-    print(
-        f"events={stats.events} labelled={stats.labelled} "
-        f"identities={stats.identities} gaps={len(snapshot.gaps)}"
-    )
-    if stats.span_start is None or stats.span_end is None:
-        print("window: no events recorded")
-    else:
-        print(f"window {utc_text(stats.span_start)} to {utc_text(stats.span_end)}")
-    print(
-        f"admission times: recorded={stats.admission_recorded} "
-        f"usable={stats.admission_usable} missing={stats.admission_missing} "
-        f"after their own label={stats.admission_unusable}"
-    )
-    if stats.labelled == 0:
-        print(
-            "no attributed hit or miss was recorded, so the benchmark will "
-            "report insufficient data rather than invent any",
-            file=sys.stderr,
-        )
-    if stats.admission_usable == 0:
-        print(
-            "no store row carries an admission time at or before its own label, "
-            "so the benchmark cannot predict any event and will report "
-            "insufficient admission times rather than use the label time",
-            file=sys.stderr,
-        )
-
-
 @dc.dataclass(frozen=True, slots=True)
 class Edges:
     """The external edges the dataset command reads through.
@@ -334,6 +361,8 @@ class Edges:
     load_config : Callable[[], Config]
         Reads the pinned parameters the gap threshold comes from, so a test
         can refuse an unreadable file without patching the module.
+    read_inventory : Callable[[Path], HistoryLoss]
+        Describes the closed history the extraction could not see.
     """
 
     journal: cabc.Callable[[str], Window] = journal_window
@@ -345,3 +374,4 @@ class Edges:
     write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write
     resolve_store: cabc.Callable[[Path | None], Path] = _store_path
     load_config: cabc.Callable[[], Config] = _read_config
+    read_inventory: cabc.Callable[[Path], HistoryLoss] = _read_inventory

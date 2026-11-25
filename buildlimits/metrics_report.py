@@ -194,15 +194,27 @@ def _readings_section(reading_records: cabc.Sequence[Record]) -> dict[str, objec
 def _store_section(store_records: cabc.Sequence[Record]) -> dict[str, object]:
     """Summarize store operations, reasons and persisted record totals.
 
+    ``appended`` counts an ``append`` result only. A compaction reports the
+    rows it retained and a seal the rows it released, but neither wrote a row
+    the store did not already hold, so summing every operation's
+    ``store_records`` would report one row several times over and call the
+    total an append count. The per-operation counts stay beside it so the
+    retained and released figures are not lost.
+
     Returns
     -------
     dict[str, object]
-        Store operation and reason counts, with records and discards.
+        Store operation and reason counts, with appended rows and discards.
     """
+    appends = tuple(
+        record
+        for record in store_records
+        if record.fields.get("store_operation") == "append"
+    )
     return {
         "operations": counts_by(store_records, "store_operation"),
         "reasons": counts_by(store_records, "store_reason"),
-        "records": _field_total(store_records, "store_records"),
+        "appended": _field_total(appends, "store_records"),
         "discarded": _field_total(store_records, "store_discarded"),
     }
 

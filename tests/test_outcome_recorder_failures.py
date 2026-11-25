@@ -5,6 +5,7 @@ import typing as typ
 import pytest
 from outcome_recorder_test_helpers import (
     GENERATION,
+    OBSERVED_AT,
     WindowSetup,
     begin_fresh_recorder_query,
     begin_query,
@@ -163,6 +164,7 @@ def test_each_reading_failure_is_named_and_unattributed(
             now=2.1,
             result=result,
             after_generation=after_generation,
+            observed_at=OBSERVED_AT,
         ),
     )
 

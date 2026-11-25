@@ -18,7 +18,13 @@ from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT_ADMISSION,
     STATUS_INSUFFICIENT_HELDOUT,
 )
-from buildlimits.predict.formatting import MISSING, as_count, as_percent
+from buildlimits.predict.formatting import (
+    MISSING,
+    admission_line,
+    as_count,
+    as_percent,
+)
+from buildlimits.predict.render_sufficiency import data_sufficiency
 from buildlimits.predict.render_tables import (
     UNDERPOWERED,
     ablation_table,
@@ -26,6 +32,7 @@ from buildlimits.predict.render_tables import (
     comparison_table,
     origin_table,
 )
+from buildlimits.predict.report_blocks import ReportData, report_data
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -71,6 +78,7 @@ def render_markdown(document: cabc.Mapping[str, object]) -> str:
     predictors = _predictors(document)
     ranking = typ.cast("list[str]", document["ranking"])
     lines = _header(document, len(predictors))
+    lines += data_sufficiency(document)
     lines += comparison_table(predictors, ranking, document)
     lines += calibration_table(predictors)
     lines += ablation_table(document)
@@ -100,13 +108,8 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
     list[str]
         Markdown lines.
     """
-    data = typ.cast("dict[str, object]", document["data"])
-    stats = typ.cast("dict[str, object]", data["stats"])
-    source = typ.cast("dict[str, object]", data["source"])
-    journal = typ.cast("dict[str, object]", data["journal"])
-    split = typ.cast("dict[str, object]", document["split"])
-    replay = typ.cast("dict[str, object]", document["replay"])
-    latency = typ.cast("dict[str, object]", document["latency"])
+    blocks = report_data(document)
+    stats = blocks.stats
     status = document["status"]
     lines = [
         "# Cache-hit prediction benchmark",
@@ -122,38 +125,78 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         ),
         f"- Window: {stats['span_start'] or MISSING} to {stats['span_end'] or MISSING}",
         (f"- Gaps over threshold: {len(typ.cast('list[object]', stats['gaps']))}"),
-        (
-            f"- Split: {as_count(split['train_labelled'])} tuning, "
-            f"{as_count(split['heldout_labelled'])} held-out"
-        ),
-        (
-            f"- Replay: {as_count(replay['moments'])} admission moments, "
-            f"{as_count(replay['unavailable_admission'])} events without a usable "
-            f"admission time, {as_count(replay['applied_labels'])} labels "
-            f"delivered before a prediction, {as_count(replay['unapplied_labels'])} "
-            "labels too late to inform one"
-        ),
-        (
-            f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
-            f"{as_count(stats['admission_usable'])} usable for a prediction, "
-            f"{as_count(stats['admission_missing'])} missing, "
-            f"{as_count(stats['admission_unusable'])} recorded after their own label"
-        ),
-        (
-            f"- Store: {as_count(source['records_total'])} rows from salt "
-            f"`{source['salt_id']}`{_domain_note(source.get('salt_ids'))} written "
-            f"{source['written_at']}"
-        ),
-        f"- Journal: {_journal_note(journal)}",
-        f"- Latency: measured separately in `{latency['file']}`",
-        f"- Snapshot fingerprint: `{data['fingerprint']}`",
-        f"- Commit: `{document['git_sha']}`",
+        _split_line(typ.cast("dict[str, object]", document["split"])),
+        _replay_line(typ.cast("dict[str, object]", document["replay"])),
+        admission_line(stats),
+        *_provenance_lines(document, blocks),
         "",
     ]
     note = _STATUS_NOTES.get(typ.cast("str", status))
     if note is not None:
         lines += [note, ""]
     return lines
+
+
+def _provenance_lines(
+    document: cabc.Mapping[str, object], blocks: ReportData
+) -> list[str]:
+    """Return the store, journal, latency, fingerprint and commit bullets.
+
+    Returns
+    -------
+    list[str]
+        Markdown lines describing where the run's history and code came from.
+    """
+    source = blocks.source
+    latency = typ.cast("dict[str, object]", document["latency"])
+    return [
+        (
+            f"- Store: {as_count(source['records_total'])} rows from salt "
+            f"`{source['salt_id']}`{_domain_note(source.get('salt_ids'))} written "
+            f"{source['written_at']}"
+        ),
+        f"- Journal: {_journal_note(blocks.journal)}",
+        f"- Latency: measured separately in `{latency['file']}`",
+        f"- Snapshot fingerprint: `{blocks.data['fingerprint']}`",
+        f"- Commit: `{document['git_sha']}`",
+    ]
+
+
+def _split_line(split: cabc.Mapping[str, object]) -> str:
+    """Return the tuning/held-out split bullet.
+
+    Returns
+    -------
+    str
+        The labelled counts either side of the boundary.
+    """
+    return (
+        f"- Split: {as_count(split['train_labelled'])} tuning, "
+        f"{as_count(split['heldout_labelled'])} held-out"
+    )
+
+
+def _replay_line(replay: cabc.Mapping[str, object]) -> str:
+    """Return the replay accounting bullet.
+
+    The withheld count is read with ``get`` so a document written before the
+    label-provenance marker existed still renders, showing a dash rather than a
+    measured zero.
+
+    Returns
+    -------
+    str
+        The admission moments, unusable admissions and label accounting.
+    """
+    return (
+        f"- Replay: {as_count(replay['moments'])} admission moments, "
+        f"{as_count(replay['unavailable_admission'])} events without a usable "
+        f"admission time, {as_count(replay['applied_labels'])} labels "
+        f"delivered before a prediction, {as_count(replay['unapplied_labels'])} "
+        f"labels too late to inform one, "
+        f"{as_count(replay.get('unverified_label_time'))} labels withheld "
+        "because their recorded time is unverified"
+    )
 
 
 def _domain_note(value: object) -> str:
@@ -199,6 +242,8 @@ def _journal_note(journal: cabc.Mapping[str, object]) -> str:
             else f", {as_count(count)} supervisor starts between "
             f"{restarts['first']} and {restarts['last']}"
         )
+    if journal.get("truncated"):
+        note += "; the query reached its record cap, so older records are outside it"
     return f"{note}; {journal.get('correlation', 'no correlation available')}"
 
 
@@ -230,6 +275,11 @@ def _limitations(predictors: cabc.Mapping[str, dict[str, object]]) -> list[str]:
             "- The journal supplies counts and a retention span, not a "
             "joinable per-compilation admission record, so admission times "
             "come only from the outcome store."
+        ),
+        (
+            "- A row whose window could not be attributed stays `unknown`; a "
+            "missing hit is never read as a miss, and an ambiguous counter "
+            "change is never split between concurrent requests."
         ),
         "",
     ])

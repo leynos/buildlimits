@@ -3743,27 +3743,75 @@ Private helpers are omitted.
 
 ```python
 # buildlimits/outcome_vocabulary.py (EP-M2); each alias equals its metrics_schema table
-type CacheResult = typ.Literal["hit", "miss", "not_cacheable", "not_cached", "failed", "error",
-                               "declined", "not_compile", "unsupported", "unattributed"]
+type CacheResult = typ.Literal[
+    "hit",
+    "miss",
+    "not_cacheable",
+    "not_cached",
+    "failed",
+    "error",
+    "declined",
+    "not_compile",
+    "unsupported",
+    "unattributed",
+]
 type OutcomeReason = typ.Literal[
-    "none", "timeout", "read_error", "parse_error", "unsupported_version",
-    "generation_unavailable", "generation_changed", "empty_stats",
-    "counter_decreased", "ineligible_window", "count_mismatch", "mixed_window",
-    "straddled_reading", "supervisor_stopped", "no_baseline", "window_overflow",
+    "none",
+    "timeout",
+    "read_error",
+    "parse_error",
+    "unsupported_version",
+    "generation_unavailable",
+    "generation_changed",
+    "empty_stats",
+    "counter_decreased",
+    "ineligible_window",
+    "count_mismatch",
+    "mixed_window",
+    "straddled_reading",
+    "supervisor_stopped",
+    "no_baseline",
+    "window_overflow",
     "recorder_disabled",
 ]
 type StoreReason = typ.Literal[
-    "none", "corrupt", "unreadable", "version_mismatch", "tag_dropped",
-    "salt_unavailable", "save_failed", "expired", "salt_changed", "clock_skew",
+    "none",
+    "corrupt",
+    "unreadable",
+    "version_mismatch",
+    "tag_dropped",
+    "salt_unavailable",
+    "save_failed",
+    "expired",
+    "salt_changed",
+    "clock_skew",
 ]
 type EvaluationReason = typ.Literal[
-    "none", "key_unavailable", "store_unavailable", "ineligible",
+    "none",
+    "key_unavailable",
+    "store_unavailable",
+    "ineligible",
 ]
 type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
-type GateReason = typ.Literal["queued", "cached_moving", "server_drain", "unreachable", "held",
-    "recovering", "barrier", "in_flight", "read_skipped", "backing_off"]
-type ChildSighting = typ.Literal["seen", "not_seen", "ambiguous", "unavailable"] # EP-M8
-type Verdict = typ.Literal["supported", "refuted", "inconclusive", "insufficient", "not_collected"]
+type GateReason = typ.Literal[
+    "queued",
+    "cached_moving",
+    "server_drain",
+    "unreachable",
+    "held",
+    "recovering",
+    "barrier",
+    "in_flight",
+    "read_skipped",
+    "backing_off",
+]
+type ChildSighting = typ.Literal[
+    "seen", "not_seen", "ambiguous", "unavailable"
+]  # EP-M8
+type Verdict = typ.Literal[
+    "supported", "refuted", "inconclusive", "insufficient", "not_collected"
+]
+
 
 # buildlimits/outcome_stats.py (EP-M2)
 @dc.dataclass(frozen=True, slots=True)
@@ -3773,7 +3821,7 @@ class StatsReading:
     requests_not_compile: int
     requests_not_cacheable: int
     requests_executed: int
-    cache_hits: int            # sum of PerLanguageCount.counts
+    cache_hits: int  # sum of PerLanguageCount.counts
     cache_misses: int
     cache_errors: int
     non_cacheable_compilations: int
@@ -3781,32 +3829,43 @@ class StatsReading:
     compile_fails: int
     version: str
 
+
 @dc.dataclass(frozen=True, slots=True)
 class ReadFailure:
     reason: typ.Literal["parse_error", "unsupported_version"]
 
-def parse_statistics(text: str, *, supported: frozenset[str]) -> StatsReading | ReadFailure: ...
+
+def parse_statistics(
+    text: str, *, supported: frozenset[str]
+) -> StatsReading | ReadFailure: ...
+
 
 # buildlimits/outcome_parser.py (EP-M3); argv is inspected, never retained
 type ParserClass = typ.Literal["cacheable", "not_compile", "declined"]
+
+
 def parser_class(argv: cabc.Sequence[str]) -> ParserClass: ...
+
 
 # buildlimits/outcome_attribution.py (EP-M2)
 @dc.dataclass(frozen=True, slots=True)
 class Generation:
-    invocation: str            # INVOCATION_ID or ""
+    invocation: str  # INVOCATION_ID or ""
     pid: int
     starttime: int
 
+
 @dc.dataclass(frozen=True, slots=True)
 class Reading:
-    generation: Generation | None   # None: no server listening
+    generation: Generation | None  # None: no server listening
     stats: StatsReading
+
 
 @dc.dataclass(frozen=True, slots=True)
 class WindowEntry:
     group_id: str
-    is_clean: bool             # not Group.may_orphan_server_work
+    is_clean: bool  # not Group.may_orphan_server_work
+
 
 @dc.dataclass(frozen=True, slots=True)
 class Attribution:
@@ -3814,7 +3873,11 @@ class Attribution:
     kind: typ.Literal["solo", "unanimous", "none"]
     reason: OutcomeReason
 
-def attribute(before: Reading, after: Reading, window: tuple[WindowEntry, ...]) -> Attribution: ...
+
+def attribute(
+    before: Reading, after: Reading, window: tuple[WindowEntry, ...]
+) -> Attribution: ...
+
 
 # buildlimits/outcome_gate.py (EP-M2)
 @dc.dataclass(frozen=True, slots=True)
@@ -3826,61 +3889,81 @@ class QuietInputs:
     has_barrier: bool
     has_query_in_flight: bool
 
+
 def quiet_point(inputs: QuietInputs) -> GateReason | None: ...
+
 
 # buildlimits/outcome_ports.py (EP-M4)
 @dc.dataclass(frozen=True, slots=True)
-class Ticket:                  # opaque; at most one outstanding per port
+class Ticket:  # opaque; at most one outstanding per port
     serial: int
     deadline: float
 
+
 @dc.dataclass(frozen=True, slots=True)
 class Pending: ...
+
 
 @dc.dataclass(frozen=True, slots=True)
 class StatisticsText:
     text: str
 
+
 @dc.dataclass(frozen=True, slots=True)
 class QueryFailure:
     reason: typ.Literal["timeout", "read_error"]
+
 
 @dc.dataclass(frozen=True, slots=True)
 class GenerationFailure:
     reason: typ.Literal["generation_unavailable"]
 
+
 @dc.dataclass(frozen=True, slots=True)
 class StoreFailure:
     reason: StoreReason
 
+
 @dc.dataclass(frozen=True, slots=True)
 class StoreResult:
     operation: StoreOperation
-    reason: StoreReason      # "none" for success
+    reason: StoreReason  # "none" for success
     records: int
     discarded: int
 
+
 @dc.dataclass(frozen=True, slots=True)
 class Salt:
-    key: bytes                 # 32 bytes
-    salt_id: str               # HMAC(key, "buildlimits-salt-id"), hex
+    key: bytes  # 32 bytes
+    salt_id: str  # HMAC(key, "buildlimits-salt-id"), hex
+
 
 class StatisticsPort(typ.Protocol):
     def start(self, now: float) -> Ticket | QueryFailure: ...
-    def poll(self, ticket: Ticket, now: float) -> Pending | StatisticsText | QueryFailure: ...
-    def close(self, ticket: Ticket, /) -> None: ... # idempotent; poll after a terminal result is an error
+    def poll(
+        self, ticket: Ticket, now: float
+    ) -> Pending | StatisticsText | QueryFailure: ...
+    def close(
+        self, ticket: Ticket, /
+    ) -> None: ...  # idempotent; poll after a terminal result is an error
+
 
 @dc.dataclass(frozen=True, slots=True)
-class SampleFailure:                                                           # EP-M8
+class SampleFailure:  # EP-M8
     reason: typ.Literal["server_unknown", "group_unreadable"]
 
+
 class ServerProcessPort(typ.Protocol):
-    def generation(self) -> Generation | None | GenerationFailure: ...         # EP-M5
-    def full_emit_metadata(self) -> frozenset[str] | SampleFailure: ...       # EP-M8; values never leave memory
+    def generation(self) -> Generation | None | GenerationFailure: ...  # EP-M5
+    def full_emit_metadata(
+        self,
+    ) -> frozenset[str] | SampleFailure: ...  # EP-M8; values never leave memory
+
 
 # buildlimits/outcome_sightings.py (EP-M8)
 def request_metadata(argv: cabc.Sequence[str]) -> str | None: ...
 def full_emit_metadata(argv: cabc.Sequence[str]) -> str | None: ...
+
 
 @dc.dataclass(frozen=True, slots=True)
 class ChildSightings:
@@ -3891,10 +3974,12 @@ class ChildSightings:
 
     def sighting(self) -> ChildSighting: ...
 
+
 class OutcomeStorePort(typ.Protocol):
     def append(self, line: OutcomeRecord | WindowSummary) -> None: ...  # non-blocking
-    def results(self) -> tuple[StoreResult, ...]: ...                   # non-blocking
-    def close(self, timeout: float) -> None: ...                        # bounded
+    def results(self) -> tuple[StoreResult, ...]: ...  # non-blocking
+    def close(self, timeout: float) -> None: ...  # bounded
+
 
 type SaltSource = cabc.Callable[[], Salt | StoreFailure]
 ```
@@ -4155,3 +4240,24 @@ Consult these documents:
   extraction and equivalence evidence, and separate deferred EP-K1 to EP-K3 for
   adoption trials. Preserved completed W1 history, outstanding quiet-host
   acceptance, unrun G1 and unstarted EP-M9. No runtime changes.
+
+- 2026-11-23: issue #68 measured why the benchmark had only 10 labels from
+  10,159 events. A copy of the host store held 15,846 rows, all `unattributed`,
+  and a fifteen-minute journal window held 3,835 `cache_outcome` events, all
+  `window_overflow` at 65 groups, with no completed statistics readings. The
+  quiet gate required `queued == 0`, which a host with a queue several hundred
+  deep never satisfies; the bounded window then flushed, and the flush kept the
+  old baseline, so later windows could not balance. ADR 011 removes the queue
+  clause alone: every reading, a first baseline included, still waits until no
+  cached group is moving, because a compilation in flight at the boundary would
+  move counters into the next window. It also resets the baseline on overflow
+  and adds a version 2 store row with `admitted_at`, `outcome_reason` and
+  `outcome_attribution`. The snapshot now carries bounded store, history-loss
+  and observer diagnostics, and the dataset and benchmark commands report the
+  labels, eligible cacheable rows, unknown reasons and admission coverage. The
+  opt-in real-sccache check drives the actual statistics and generation ports
+  and produces exact cold/warm labels, a mixed-window `unknown`, a declined
+  probe, a timeout and a generation change. Sccache 0.14 has no supported
+  per-request signal, so continuous mixed load still yields a low label rate;
+  the host service is not upgraded by this change. See
+  [the issue #68 ExecPlan](issue-68-restore-trustworthy-cache-hit-miss-label-coverage-and-admission-time-evidence-for-the-prediction-benchmark.md).

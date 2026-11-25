@@ -11,6 +11,7 @@ belongs to the output adapter in
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.predict.diagnostics_codec import diagnostics_to_dict
 from buildlimits.predict.journal_codec import journal_to_dict
 from buildlimits.predict.render import render_markdown
 from buildlimits.predict.report_codec import (
@@ -114,6 +115,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
             "stats": stats_to_dict(provenance.snapshot.stats()),
             "source": source_to_dict(provenance.snapshot.source),
             "journal": journal_to_dict(provenance.snapshot.journal),
+            "diagnostics": diagnostics_to_dict(provenance.snapshot.diagnostics),
         },
         "split": split_to_dict(evaluation.walk.split),
         "replay": {
@@ -121,6 +123,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
             "unavailable_admission": evaluation.walk.unavailable_admission,
             "applied_labels": evaluation.walk.applied_labels,
             "unapplied_labels": evaluation.walk.unapplied_labels,
+            "unverified_label_time": evaluation.walk.unverified_label_time,
         },
         "latency": {
             "file": TIMINGS,

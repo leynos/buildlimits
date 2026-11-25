@@ -14,6 +14,7 @@ import typing as typ
 from buildlimits.outcome_segment_gaps import retained_gaps
 from buildlimits.outcome_segment_scan import (
     SegmentEntry,
+    regular_files,
     scan_archived,
     scan_sealed,
 )
@@ -43,8 +44,11 @@ class Inventory:
         Missing sequences at or above the retention floor, oldest first.
     gaps_truncated : bool
         Whether more sequences are missing than ``gaps`` reports.
-    quarantined : tuple[int, ...]
-        Sequences known to be corrupt or unsupported.
+    quarantined_files : int
+        Regular files the quarantine directory holds. A quarantine name is
+        built from the moved file's own name, its fault reason and a random
+        token, so it does not reliably carry a sequence; the count is the
+        evidence the scan can measure.
     missing_sidecars : tuple[int, ...]
         Archives with no sidecar.
     corrupt_sidecars : tuple[int, ...]
@@ -59,7 +63,7 @@ class Inventory:
     archived: tuple[SegmentEntry, ...] = ()
     gaps: tuple[int, ...] = ()
     gaps_truncated: bool = False
-    quarantined: tuple[int, ...] = ()
+    quarantined_files: int = 0
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
@@ -138,24 +142,45 @@ def read_inventory(
     -------
     Inventory
         Entries in sequence order plus the integrity flags a report shows.
+
+    Notes
+    -----
+    An unlistable sealed, archive or quarantine directory propagates
+    ``OSError`` rather than reporting an empty one: a count that was never
+    measured must not read as a measured zero.
     """
     sealed, sealed_meta = scan_sealed(layout.sealed_dir)
     archived, missing, corrupt, orphans = scan_archived(layout.archive_dir)
-    entries = tuple(sorted(sealed, key=lambda entry: entry.sequence))
-    with_meta = tuple(
-        dc.replace(entry, **metadata_fields(sealed_meta.get(entry.sequence)))
-        if entry.sequence in sealed_meta
-        else entry
-        for entry in entries
-    )
+    with_meta = _with_sealed_metadata(sealed, sealed_meta)
     gaps, gaps_truncated = retained_gaps(with_meta, archived, retention_floor)
     return Inventory(
         sealed=with_meta,
         archived=tuple(sorted(archived, key=lambda entry: entry.sequence)),
         gaps=gaps,
         gaps_truncated=gaps_truncated,
+        quarantined_files=len(regular_files(layout.quarantine_dir)),
         missing_sidecars=missing,
         corrupt_sidecars=corrupt,
         orphan_sidecars=orphans,
         retention_floor=retention_floor,
+    )
+
+
+def _with_sealed_metadata(
+    sealed: list[SegmentEntry], sealed_meta: dict[int, dict[str, object]]
+) -> tuple[SegmentEntry, ...]:
+    """Attach each sealed source's writer metadata and order the entries.
+
+    Returns
+    -------
+    tuple[SegmentEntry, ...]
+        The entries in ascending sequence order, each carrying the metadata
+        its own sidecar supplied.
+    """
+    entries = tuple(sorted(sealed, key=lambda entry: entry.sequence))
+    return tuple(
+        dc.replace(entry, **metadata_fields(sealed_meta[entry.sequence]))
+        if entry.sequence in sealed_meta
+        else entry
+        for entry in entries
     )

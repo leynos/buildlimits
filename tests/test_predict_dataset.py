@@ -12,12 +12,18 @@ from outcome_test_helpers import (
     cache_key,
     window_summary,
 )
+from predict_test_helpers import ACTIVE_FILE_ONLY
 
 from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import StoreHistory, build_snapshot, find_gaps
-from buildlimits.predict.journal_provenance import JournalRestarts, count_journal
+from buildlimits.predict.journal_codec import journal_from_dict, journal_to_dict
+from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalRestarts,
+    count_journal,
+)
 from buildlimits.predict.records import decode_history, identity_of, label_of
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 
@@ -41,7 +47,11 @@ def _history(*records: object) -> StoreHistory:
 
 def _one_hit_snapshot() -> Snapshot:
     """Return a snapshot holding one attributed hit."""
-    return build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)
+    return build_snapshot(
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+    )
 
 
 @pytest.mark.parametrize(
@@ -69,7 +79,10 @@ def test_snapshot_redacts_identity_and_keeps_store_order() -> None:
     )
     earlier_stamp = attributed_record(outcome="miss")
     snapshot = build_snapshot(
-        _history(later_stamp, earlier_stamp), now=NOW, gap_threshold_seconds=60.0
+        _history(later_stamp, earlier_stamp),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=60.0,
     )
 
     assert [event.label for event in snapshot.events] == ["hit", "miss"], (
@@ -131,6 +144,7 @@ def test_unknown_outcomes_are_counted_but_not_labelled() -> None:
             attributed_record(outcome="declined"),
         ),
         now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
     )
     stats = snapshot.stats()
 
@@ -143,7 +157,9 @@ def test_window_summaries_never_become_events() -> None:
     """Window summaries carry no compilation identity and are excluded."""
     summary = window_summary(observed_at=OBSERVED_AT)
     snapshot = build_snapshot(
-        _history(summary, attributed_record(outcome="miss")), now=NOW
+        _history(summary, attributed_record(outcome="miss")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
     )
 
     assert len(snapshot.events) == 1, "summary excluded"
@@ -157,7 +173,10 @@ def test_gaps_report_silences_over_the_threshold() -> None:
         outcome="hit", observed_at=OBSERVED_AT + dt.timedelta(hours=2)
     )
     snapshot = build_snapshot(
-        _history(first, second), now=NOW, gap_threshold_seconds=3600.0
+        _history(first, second),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=3600.0,
     )
 
     assert len(snapshot.gaps) == 1, "one gap over an hour"
@@ -172,7 +191,7 @@ def test_gap_detection_ignores_short_silences() -> None:
             outcome="miss", observed_at=OBSERVED_AT + dt.timedelta(seconds=30)
         ),
     )
-    snapshot = build_snapshot(_history(*events), now=NOW)
+    snapshot = build_snapshot(_history(*events), now=NOW, history_loss=ACTIVE_FILE_ONLY)
 
     assert not find_gaps(snapshot.events, threshold_seconds=60.0), "no gap"
 
@@ -185,7 +204,12 @@ def test_snapshot_round_trip_preserves_events_and_gaps(tmp_path: Path) -> None:
             outcome="miss", observed_at=OBSERVED_AT + dt.timedelta(hours=3)
         ),
     )
-    snapshot = build_snapshot(_history(*records), now=NOW, gap_threshold_seconds=60.0)
+    snapshot = build_snapshot(
+        _history(*records),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=60.0,
+    )
     path = tmp_path / "history.jsonl"
 
     save_snapshot(path, snapshot)
@@ -307,9 +331,53 @@ def test_an_empty_journal_window_reports_no_span() -> None:
     assert note.span_start is None and note.span_end is None, "no span"
 
 
+def _encoded_observer_note() -> dict[str, object]:
+    """Return a journal note whose observer block is a measured count."""
+    note = count_journal(
+        (Record("supervisor", "cache_outcome", {}, OBSERVED_AT),),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+    return journal_to_dict(note)
+
+
+def test_an_older_journal_block_has_no_observer_counts() -> None:
+    """A journal note without the observer block decodes as unrecorded, not zero."""
+    encoded = _encoded_observer_note()
+    encoded.pop("observer")
+
+    decoded = journal_from_dict(encoded, label="test")
+
+    assert isinstance(decoded, JournalCounts), decoded
+    assert decoded.observer is None, "absence is distinct from a measured zero"
+
+
+def test_a_measured_empty_journal_keeps_its_zero_counts() -> None:
+    """A queried window with no records still has observer evidence."""
+    note = count_journal((), since="4w", cap=1000, truncated=False)
+
+    assert note.observer is not None, "the query measured an empty window"
+    assert note.observer.requests == 0, "the zero is a measured count"
+
+
+def test_an_incomplete_observer_block_is_refused() -> None:
+    """A present block is a measurement, so a missing field is not a zero."""
+    encoded = _encoded_observer_note()
+    observer = typ.cast("dict[str, object]", encoded["observer"])
+    observer.pop("readings")
+
+    with pytest.raises(TypeError, match="exactly the recorded fields"):
+        journal_from_dict(encoded, label="test")
+
+
 def test_source_provenance_records_the_store_header() -> None:
     """The snapshot keeps the salt identifier and write time it read."""
-    snapshot = build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)
+    snapshot = build_snapshot(
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+    )
     source = snapshot.source
 
     assert dc.asdict(source)["salt_id"] == "fixed-salt", "salt retained"

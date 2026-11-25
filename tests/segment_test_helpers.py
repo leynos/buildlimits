@@ -22,6 +22,14 @@ if typ.TYPE_CHECKING:
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 DIGEST = "a" * 64
 
+# The fields a version 2 outcome row added, which a version 1 release wrote
+# without, and the field version 3 added. Each old document must omit exactly
+# what its own release could not write rather than emitting nulls: a version 2
+# fixture that dropped the version 2 evidence as well would reproduce a version
+# 1 row shape, and no test using it could detect that evidence going missing.
+_V1_OMITTED_FIELDS = ("outcome_reason", "outcome_attribution", "admitted_at")
+_V3_ADDED_FIELDS = ("label_time_provenance",)
+
 __all__ = [
     "DIGEST",
     "NOW",
@@ -31,9 +39,72 @@ __all__ = [
     "sidecar_document",
     "store_layout",
     "swap_after_validation",
+    "version_one_document",
+    "version_two_document",
     "write_private",
     "write_sidecar",
 ]
+
+
+def version_one_document(
+    rows: tuple[StoreRecord, ...], salt_id: str = "salt-1"
+) -> bytes:
+    """Encode one header and rows as a version 1 document.
+
+    A version 1 release wrote its header with ``"version": 1`` and its
+    outcome rows without the admission and classification fields, so a
+    restart fixture must reproduce those bytes to exercise the upgrade rules
+    on a document an older release really produced.
+
+    Returns
+    -------
+    bytes
+        The complete, newline-terminated version 1 document.
+    """
+    header = {
+        "format": "buildlimits-cache-outcomes",
+        "version": 1,
+        "salt_id": salt_id,
+        "written_at": "2026-11-19T00:00:00Z",
+    }
+    lines = [json.dumps(header, separators=(",", ":"))]
+    for row in rows:
+        record = json.loads(outcome_record_encode.encode_line(row, version=1))
+        for field in _V1_OMITTED_FIELDS:
+            record.pop(field, None)
+        lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return ("\n".join(lines) + "\n").encode()
+
+
+def version_two_document(
+    rows: tuple[StoreRecord, ...], salt_id: str = "salt-1"
+) -> bytes:
+    """Encode one header and rows as a version 2 document.
+
+    A version 2 release wrote the admission and classification evidence but no
+    label-time provenance marker, so a fixture that predates that marker omits
+    only it. The version 2 fields stay: dropping them would produce a version 1
+    row shape under a version 2 header, and a test built on such a fixture
+    could not notice that admission time, reason or attribution was lost.
+
+    Returns
+    -------
+    bytes
+        The complete, newline-terminated version 2 document.
+    """
+    header = {
+        "format": "buildlimits-cache-outcomes",
+        "version": 2,
+        "salt_id": salt_id,
+        "written_at": "2026-11-19T00:00:00Z",
+    }
+    lines = [json.dumps(header, separators=(",", ":"))]
+    for row in rows:
+        record = json.loads(outcome_record_encode.encode_line(row, version=2))
+        for field in _V3_ADDED_FIELDS:
+            record.pop(field, None)
+        lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return ("\n".join(lines) + "\n").encode()
 
 
 def history_policy(

@@ -24,6 +24,7 @@ from buildlimits import (
     outcome_archive_files,
     outcome_archive_retain,
     outcome_archive_settled,
+    outcome_records,
 )
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
@@ -31,6 +32,13 @@ from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segment_state import read_retention_floor
 from buildlimits.outcome_segments import archive_name, segment_name
+
+# The plans below pin exact sequences, so the segment bound must hold the same
+# number of rows the original fixtures assumed. A store row grew when the
+# format gained its version 2 evidence, so the bound is derived from the row
+# size instead of a literal that silently changes how many rows fit.
+_ROW_BYTES = len(outcome_records.encode_line(records(NOW, 1)[0]).encode("utf-8")) + 1
+_SEGMENT_BYTES = 4 * _ROW_BYTES
 
 if typ.TYPE_CHECKING:
     import pytest
@@ -147,7 +155,7 @@ def test_a_record_cap_evicts_the_oldest_source_in_the_planning_run(
     heal-only run performs.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    base = policy(segment_bytes=2000)
+    base = policy(segment_bytes=_SEGMENT_BYTES)
     write(store, records(NOW, 12), base)
     active = active_history(layout(tmp_path).active)
 
@@ -203,7 +211,7 @@ def test_an_unreadable_final_plan_records_the_completed_deletion(
     a later run reports the sequence as lost history.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    base = policy(segment_bytes=2000)
+    base = policy(segment_bytes=_SEGMENT_BYTES)
     write(store, records(NOW, 12), base)
 
     def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
@@ -234,7 +242,7 @@ def test_an_unreadable_retention_pass_records_the_completed_deletion(
     must still learn what was removed, and the report must keep the actions.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    base = policy(segment_bytes=2000)
+    base = policy(segment_bytes=_SEGMENT_BYTES)
     write(store, records(NOW, 12), base)
 
     def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:

@@ -13,6 +13,7 @@ from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalRestarts,
     JournalUnavailable,
+    ObserverAccounting,
 )
 from buildlimits.utc_text import optional_utc_moment, optional_utc_text
 
@@ -21,6 +22,31 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.predict.journal_provenance import JournalProvenance
+
+_OBSERVER_COUNT_FIELDS = (
+    "requests",
+    "outcomes",
+    "record_omitted",
+    "record_omitted_unrecorded",
+    "store_records",
+    "store_discarded",
+    "readings",
+    "readings_skipped",
+    "readings_failed",
+)
+_OBSERVER_MAP_FIELDS = (
+    "by_cache_path",
+    "by_backend",
+    "by_result",
+    "by_reason",
+    "by_attribution",
+    "by_origin",
+    "by_omission_reason",
+    "by_store_operation",
+    "by_store_reason",
+    "by_gate_reason",
+    "by_reading_reason",
+)
 
 
 def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
@@ -52,6 +78,25 @@ def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
         },
         "retention": provenance.retention,
         "correlation": provenance.correlation,
+        "observer": (
+            None
+            if provenance.observer is None
+            else _observer_to_dict(provenance.observer)
+        ),
+    }
+
+
+def _observer_to_dict(observer: ObserverAccounting) -> dict[str, object]:
+    """Return the snapshot shape for the recorder's own counts.
+
+    Returns
+    -------
+    dict[str, object]
+        Counts and their closed-vocabulary breakdowns.
+    """
+    return {
+        **{name: getattr(observer, name) for name in _OBSERVER_COUNT_FIELDS},
+        **{name: dict(getattr(observer, name)) for name in _OBSERVER_MAP_FIELDS},
     }
 
 
@@ -147,7 +192,70 @@ def _counts_from(note: cabc.Mapping[str, object], label: str) -> JournalCounts:
         restarts=restarts,
         retention=retention,
         correlation=correlation,
+        observer=_observer_from(note.get("observer"), label),
     )
+
+
+def _observer_from(value: object, label: str) -> ObserverAccounting | None:
+    """Decode the optional recorder-count block.
+
+    A snapshot written before the block existed carries none. Absence is kept
+    distinct from a measured zero: None means the evidence was not recorded,
+    while a present block with zero counts means the queried window held none.
+
+    Returns
+    -------
+    ObserverAccounting | None
+        The validated counts, or None when the block is absent.
+
+    Raises
+    ------
+    TypeError
+        If the block or one of its values has the wrong Python type.
+    ValueError
+        If a count is negative, the store-reason breakdown does not sum to the
+        discarded total it explains, or the omission-reason breakdown does not
+        sum to the omitted total it explains.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        msg = f"{label} journal observer must be an object"
+        raise TypeError(msg)
+    block = typ.cast("dict[str, object]", value)
+    expected = {*_OBSERVER_COUNT_FIELDS, *_OBSERVER_MAP_FIELDS}
+    # A present block is a measurement, so every field the writer emits must be
+    # there. Defaulting a missing field to zero would report an absent count as
+    # a measured one, which is the error this block exists to prevent. The
+    # observer block is part of this branch's unreleased snapshot format, so
+    # requiring the omission fields refuses no document a release wrote.
+    if set(block) != expected:
+        msg = f"{label} journal observer must hold exactly the recorded fields"
+        raise TypeError(msg)
+    counts = {
+        name: _journal_count(block[name], label, f"observer {name}")
+        for name in _OBSERVER_COUNT_FIELDS
+    }
+    if any(count < 0 for count in counts.values()):
+        msg = f"{label} journal observer counts must not be negative"
+        raise ValueError(msg)
+    maps = {
+        name: _tally_from(block[name], label, f"observer {name}")
+        for name in _OBSERVER_MAP_FIELDS
+    }
+    if sum(maps["by_store_reason"].values()) != counts["store_discarded"]:
+        msg = f"{label} journal observer store reasons do not sum to its discards"
+        raise ValueError(msg)
+    if sum(maps["by_omission_reason"].values()) != counts["record_omitted"]:
+        msg = f"{label} journal observer omissions do not sum to its omitted total"
+        raise ValueError(msg)
+    if (
+        counts["record_omitted"] + counts["record_omitted_unrecorded"]
+        > counts["outcomes"]
+    ):
+        msg = f"{label} journal observer omissions exceed its published outcomes"
+        raise ValueError(msg)
+    return ObserverAccounting.from_parts(counts, maps)
 
 
 def _reason_from(note: cabc.Mapping[str, object], label: str) -> str:

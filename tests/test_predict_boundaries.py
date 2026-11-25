@@ -15,10 +15,13 @@ import pytest
 PACKAGE = Path(__file__).resolve().parent.parent / "buildlimits" / "predict"
 
 DOMAIN_MODULES = (
+    "accounting",
     "bootstrap",
     "comparison",
     "config",
     "dataset",
+    "diagnostics_codec",
+    "diagnostics_generations",
     "ensemble_runs",
     "ensembles",
     "evaluation",
@@ -28,11 +31,15 @@ DOMAIN_MODULES = (
     "journal_codec",
     "journal_provenance",
     "metrics",
+    "observer_accounting",
     "predictors",
     "probability",
+    "render_sufficiency",
     "report",
+    "report_blocks",
     "report_codec",
     "scoring",
+    "snapshot_diagnostics_join",
 )
 
 # Modules that reach outside the process: reading and writing files, parsing
@@ -56,6 +63,7 @@ _ADAPTERS = frozenset({
     "buildlimits.predict.benchmark_cli",
     "buildlimits.predict.config_loader",
     "buildlimits.predict.dataset_cli",
+    "buildlimits.predict.dataset_report",
     "buildlimits.predict.paths",
     "buildlimits.predict.provenance",
     "buildlimits.predict.records",

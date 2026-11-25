@@ -250,6 +250,35 @@ def _hmac_digest(value: str, salt: Salt) -> str:
     return hmac.new(salt.key, value.encode(), hashlib.sha256).hexdigest()
 
 
+def generation_digest(invocation: str, pid: int, starttime: int, salt: Salt) -> str:
+    """Return a salted digest naming one sccache server generation.
+
+    The generation is the process identity the recorder reads from the socket
+    peer: an invocation identifier, a process id and a start time. A process id
+    alone is reused by the kernel and a start time alone is not an identity, so
+    all three parts are digested together. The result is a correlation key
+    only: the inputs are joined with a separator that cannot appear in either
+    integer, so two different triples never digest the same text.
+
+    The salt is the store's own, so the digest joins only to history this host
+    wrote and reveals no process id to a reader of the store.
+
+    Returns
+    -------
+    str
+        Lowercase SHA-256 HMAC hex naming this generation.
+
+    Examples
+    --------
+    >>> salt = Salt(b"s" * 32, "test")
+    >>> generation_digest("run", 1, 2, salt) == generation_digest("run", 1, 2, salt)
+    True
+    >>> generation_digest("run", 1, 2, salt) == generation_digest("run", 1, 3, salt)
+    False
+    """
+    return _hmac_digest(f"{invocation}\x00{pid}\x00{starttime}", salt)
+
+
 def _relative_to(path: str, parent: str) -> str | None:
     """Return the suffix below an exact parent path boundary.
 

@@ -25,6 +25,7 @@ from buildlimits.predict.history import (
     label_batches,
     prediction_moments,
     released_labels,
+    unverified_label_count,
 )
 from buildlimits.predict.predictors import single_predictors, update_all
 
@@ -102,6 +103,9 @@ class Walk:
         Eligible labels delivered before at least one prediction.
     unapplied_labels : int
         Eligible labels that arrived too late to inform any prediction.
+    unverified_label_time : int
+        Hit or miss labels withheld because their recorded observation time is
+        unverified. They are neither released nor scored.
     """
 
     events: tuple[Event, ...]
@@ -113,6 +117,7 @@ class Walk:
     unavailable_admission: int
     applied_labels: int
     unapplied_labels: int
+    unverified_label_time: int
 
     def components(self) -> tuple[str, ...]:
         """Return the single predictor names in their fixed order.
@@ -173,6 +178,7 @@ def walk_forward(
         unavailable_admission=len(stream) - sum(len(group) for group in moments),
         applied_labels=replay.applied_labels,
         unapplied_labels=replay.unapplied_labels,
+        unverified_label_time=unverified_label_count(stream),
     )
 
 
@@ -321,6 +327,7 @@ def _phases(
     tuple[Phase | None, ...]
         One phase per event, or None where no eligible label arrived.
     """
+    # Only a verified label can be scored, so only it consumes a phase slot.
     total = sum(1 for event in events if scored_label(event) is not None)
     target = int(total * train_fraction)
     phases: list[Phase | None] = []

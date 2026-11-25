@@ -59,6 +59,11 @@ type EvaluationReason = typ.Literal[
     "store_unavailable",
     "ineligible",
 ]
+type RecordOmission = typ.Literal[
+    "none",
+    "key_unavailable",
+    "label_time_unavailable",
+]
 type StoreOperation = typ.Literal["load", "append", "compact", "seal", "salt"]
 type GateReason = typ.Literal[
     "queued",

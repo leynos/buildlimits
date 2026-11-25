@@ -131,6 +131,7 @@ def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
         "admission_usable": stats.admission_usable,
         "admission_missing": stats.admission_missing,
         "admission_unusable": stats.admission_unusable,
+        "unverified_label_time": stats.unverified_label_time,
         "gaps": [gap_to_dict(gap) for gap in stats.gaps],
     }
 

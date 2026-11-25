@@ -11,6 +11,7 @@ from buildlimits import (
     outcome_resources,
     outcome_shell_keys,
     outcome_shell_stats,
+    outcome_shell_status,
     outcome_store_salt,
     outcome_telemetry,
     supervisor_outcome_setup,
@@ -36,13 +37,15 @@ from buildlimits.outcome_recorder_types import (
 )
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_sampling import ChildSampler
+from buildlimits.outcome_shell_dependencies import (
+    OutcomeDependencies as OutcomeDependencies,
+)
 from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
 from buildlimits.supervisor_outcome_setup import (
     OUTCOME_CLOSE_SECONDS,
     GroupEnding,
     NullOutcomeShell,
-    OutcomeDependencies,
     build_shell,
 )
 
@@ -109,13 +112,22 @@ class OutcomeShell:
                 supervisor.settings.sccache_socket,
                 reaper=reaper,
             )
-        self._recorder = OutcomeRecorder(self._statistics, self._server)
+        self._salt: outcome_key.Salt | None = None
+        self._recorder = OutcomeRecorder(
+            self._statistics,
+            self._server,
+            wall_clock=self._wall_clock,
+            # The salt arrives asynchronously, so the reader consults it at the
+            # moment a reading completes rather than capturing it here.
+            generation_digest=lambda generation: outcome_shell_keys.generation_digest(
+                generation, self._salt
+            ),
+        )
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(
             supervisor.metrics, supervisor.tracer
         )
         self._counters = outcome_shell_stats.OutcomeCounters()
-        self._salt: outcome_key.Salt | None = None
         self._next_gate_at = 0.0
         self._disabled = False
         self._closed = False
@@ -141,19 +153,10 @@ class OutcomeShell:
     def describe(self) -> dict[str, object]:
         """Return bounded live counters without changing recorder state.
 
-        This is a status query, not a loop boundary: the fail-closed
-        ``_guard`` wraps only the methods the supervisor loop calls, so a
-        snapshot fault must not disable a recorder that is still working.
-        A recorder that cannot describe itself reports the fixed unavailable
-        state and keeps running; the next snapshot may succeed.
-
         Returns
         -------
         dict[str, object]
-            The privacy-safe recording state for supervisor status, the fixed
-            disabled state once recording has failed or the shell has closed, or
-            a bounded ``snapshot_unavailable`` marker when the snapshot itself
-            fails.
+            The privacy-safe recording state, or a bounded failure marker.
         """
         if self._disabled or self._closed:
             return supervisor_outcome_setup.disabled_description()
@@ -170,16 +173,7 @@ class OutcomeShell:
         dict[str, object]
             ``limits`` and ``active``, or the bounded failure marker.
         """
-        try:
-            return supervisor_outcome_setup.retention_document(
-                self._supervisor, self._resources.writer
-            )
-        except Exception:  # ruff: ignore[blind-except] - a status read must not fail status.
-            return {
-                "limits": None,
-                "active": None,
-                "reason": "snapshot_unavailable",
-            }
+        return outcome_shell_status.retention(self._supervisor, self._resources.writer)
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
@@ -203,7 +197,8 @@ class OutcomeShell:
         try:
             return action(*args)
         except Exception:  # ruff: ignore[blind-except] - keep recorder faults outside token and admission decisions.
-            # The shield keeps even a defective fault path inside D19's bound.
+            # The shield keeps a defective fault path inside this boundary, so
+            # D19's totality does not depend on _disable being perfect.
             with contextlib.suppress(Exception):
                 self._disable()
             return None
@@ -233,22 +228,24 @@ class OutcomeShell:
                     is_cached=True,
                     payload=payload,
                     now=self._supervisor.clock(),
+                    admitted_at=entry.admitted_at,
+                    observed_at=self._wall_clock(),
                 )
             )
         )
 
     def _emptied(self, ending: GroupEnding) -> None:
-        """Fold an admitted group's completion into the recorder."""
+        """Fold an admitted group's completion into the recorder.
+
+        No label time is supplied here. A group finishing is not a label: the
+        reading that produces one stamps every row it emits with its own
+        completion moment.
+        """
         if not ending.is_cached:
             return
         self._publish(
             self._recorder.advance(
-                Ended(
-                    ending.group_id,
-                    ending.is_clean,
-                    self._supervisor.clock(),
-                    self._wall_clock(),
-                )
+                Ended(ending.group_id, ending.is_clean, self._supervisor.clock())
             )
         )
 
@@ -297,7 +294,8 @@ class OutcomeShell:
         self._telemetry.selection(is_quiet=reason is None)
         self._next_gate_at = now + OUTCOME_TICK_SECONDS
         if reason is None:
-            self._publish(self._recorder.advance(GateOpen(inputs, now)))
+            observed_at = self._wall_clock()
+            self._publish(self._recorder.advance(GateOpen(inputs, now, observed_at)))
             return
         self._counters.skip_reading()
         self._telemetry.reading_skipped(reason)
@@ -326,14 +324,15 @@ class OutcomeShell:
         for result in self._resources.writer.results():
             self._consume_store_result(result)
 
-    def _consume_store_result(self, result: StoreResult) -> None:
+    def _consume_store_result(self, result: object) -> None:
         """Track and publish one aggregated writer result."""
-        self._counters.record_store(result)
+        store = typ.cast("StoreResult", result)
+        self._counters.record_store(store)
         self._telemetry.store_result(
-            operation=result.operation,
-            reason=result.reason,
-            records=result.records,
-            discarded=result.discarded,
+            operation=store.operation,
+            reason=store.reason,
+            records=store.records,
+            discarded=store.discarded,
         )
 
     def _publish(self, outputs: Outputs) -> None:
@@ -349,8 +348,7 @@ class OutcomeShell:
         Returns
         -------
         dict[str, object]
-            Whether recording is still on, plus bounded counters and the last
-            closed reason.
+            Whether recording is still on, plus bounded counters.
         """
         enabled = not isinstance(self._recorder.state, Disabled)
         return {"enabled": enabled, **self._counters.describe()}
@@ -358,10 +356,10 @@ class OutcomeShell:
     def _disable(self) -> None:
         """Request cancellation once, without waiting, and make calls inert.
 
-        This runs under a fault on the selector thread, so it may only ask
-        owned work to stop: D17 bounds a join during supervisor shutdown, not
-        during an ordinary launch, tick or status call. Later ticks finish the
-        reaping and writer shutdown through ``OutcomeResources.service_failed``.
+        This runs under a fault on the selector thread, so it may only ask owned
+        work to stop. D17 bounds a join during supervisor shutdown, not during
+        an ordinary launch, tick or status call; later ticks finish the reaping
+        and writer shutdown through ``OutcomeResources.service_failed``.
         """
         if self._disabled:
             return

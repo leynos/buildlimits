@@ -5,6 +5,7 @@ every field the report later reads. A hand-edited or truncated file is refused
 with the field that is wrong rather than surfacing as a confusing report.
 """
 
+import dataclasses as dc
 import itertools
 import json
 import math
@@ -14,11 +15,16 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits.predict.dataset import Gap, Snapshot, Source
+from buildlimits.predict.diagnostics_codec import diagnostics_from_dict
 from buildlimits.predict.journal_codec import journal_from_dict
 from buildlimits.predict.snapshot_codec import (
-    SNAPSHOT_VERSION,
+    SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
     snapshot_to_dict,
+)
+from buildlimits.predict.snapshot_diagnostics_join import (
+    require_diagnostics_match,
+    require_event_labels_match,
 )
 from buildlimits.utc_text import utc_moment, utc_text
 
@@ -26,6 +32,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+    from buildlimits.predict.accounting import Diagnostics
     from buildlimits.predict.events import Event
 
 _SOURCE_COUNT_FIELDS = ("records_total", "outcome_records", "summary_records")
@@ -92,7 +99,7 @@ def load_snapshot(path: Path) -> Snapshot:
         # type is checked before the value or a corrupt version would pass.
         msg = f"{path} must hold an integer snapshot version"
         raise TypeError(msg)
-    if version != SNAPSHOT_VERSION:
+    if version not in SUPPORTED_SNAPSHOT_VERSIONS:
         msg = f"{path} has an unsupported snapshot version"
         raise ValueError(msg)
     events = document.get("events")
@@ -108,28 +115,78 @@ def load_snapshot(path: Path) -> Snapshot:
     if not isinstance(created, str):
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
-    decoded_events = tuple(event_from_dict(row) for row in events)
+    decoded_events = tuple(event_from_dict(row, version=version) for row in events)
     _require_ordered_clock(path, decoded_events)
+    decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),
-        source=_source_from(path, typ.cast("dict[str, object]", source)),
+        source=decoded_source,
         journal=journal_from_dict(journal, label=str(path)),
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
+        diagnostics=_diagnostics_from(
+            path, document, _DocumentedHistory(decoded_source, decoded_events, version)
+        ),
     )
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _DocumentedHistory:
+    """The already-decoded parts of one snapshot document.
+
+    ``source`` and ``events`` are what the document states about its history,
+    and ``version`` is the shape it was written with. They travel together
+    because a diagnostics block must agree with all three at once: the same
+    records, the same labels, and a version whose fields it can carry.
+    """
+
+    source: Source
+    events: tuple[Event, ...]
+    version: int
+
+
+def _diagnostics_from(
+    path: Path,
+    document: cabc.Mapping[str, object],
+    parts: _DocumentedHistory,
+) -> Diagnostics | None:
+    """Rebuild the optional label-loss diagnostics and join them to the history.
+
+    A version 1 snapshot has no block, and a version 2 snapshot may carry an
+    explicit null when its writer had no counts. Both mean "unavailable", not
+    "empty". A present block must describe the same store its source block
+    does and the same labels its events carry, because the report prints all
+    three figures for one snapshot. The document's own version is passed on,
+    because a version 3 block predates the per-generation map and its absence
+    is a fact about that history rather than damage to the document.
+
+    Returns
+    -------
+    Diagnostics | None
+        The validated diagnostics, or None when the document carries none.
+        Both joins are enforced by the helpers this calls.
+    """
+    value = document.get("diagnostics")
+    if value is None:
+        return None
+    diagnostics = diagnostics_from_dict(value, label=str(path), version=parts.version)
+    require_diagnostics_match(path, parts.source, diagnostics)
+    require_event_labels_match(path, parts.events, diagnostics)
+    return diagnostics
 
 
 def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
     """Refuse a history whose recorded clock ran backwards under admissions.
 
-    The store stamps ``observed_at`` when it appends a record, so a later
-    position carrying an earlier stamp means the clock stepped backwards. No
-    monotonic sequence is stored beside the times, so the two sides of a step
-    cannot be separated: an event admitted later could sort before a label
-    observed earlier, and the schedule would predict with a label not yet
-    observed. A history carrying admission times that crosses a step is
-    refused rather than scored; one with no admission times is unaffected,
-    because it is already reported as unpredicted.
+    The recorder stamps every row of one reading with that reading's own
+    completion moment, so rows a store appended together share a time and a
+    later position carrying an earlier stamp means the wall clock stepped
+    backwards. No monotonic sequence is stored beside the times, so the two
+    sides of a step cannot be separated: an event admitted later could sort
+    before a label observed earlier, and the schedule would predict with a
+    label not yet observed. A history carrying admission times that crosses a
+    step is refused rather than scored; one with no admission times is
+    unaffected, because it is already reported as unpredicted.
 
     Raises
     ------

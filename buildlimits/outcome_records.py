@@ -11,6 +11,9 @@ from buildlimits.outcome_record_encode import (
     encode_line as encode_line,
 )
 from buildlimits.outcome_record_format import (
+    FORMAT_VERSION as FORMAT_VERSION,
+)
+from buildlimits.outcome_record_format import (
     MAX_COMPACT_BYTES as MAX_COMPACT_BYTES,
 )
 from buildlimits.outcome_record_format import (
@@ -52,6 +55,7 @@ MAX_COMPACT_RECORDS = 10_000
 RETENTION_DAYS = 30
 
 __all__ = [
+    "FORMAT_VERSION",
     "MAX_COMPACT_BYTES",
     "MAX_COMPACT_RECORDS",
     "MAX_RECORD_BYTES",
@@ -115,7 +119,13 @@ def compact(
     """
     _require_utc(now)
     active = _legacy_policy() if policy is None else policy
-    header = dc.replace(decoded.header, written_at=now)
+    # A compaction rewrites the whole document, so its replacement header
+    # describes what the file now is. It always names the current format:
+    # leaving an older version at the top would let the next append write a
+    # current-format row beneath a header that says the file cannot hold one,
+    # which a reader of that older version reports as a corrupt row rather
+    # than a version mismatch.
+    header = dc.replace(decoded.header, written_at=now, version=FORMAT_VERSION)
     records = list(decoded.records)
     if clock_skew:
         reason: StoreReason = "clock_skew"

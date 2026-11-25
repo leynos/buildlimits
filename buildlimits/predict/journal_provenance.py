@@ -1,29 +1,55 @@
 """Describe what the user journal can and cannot contribute.
 
-The journal is the only source that could bound the history's retention, but
-neither source it names carries a joinable compilation key: adapter records
-hold per-compilation metrics without an identity, and supervisor records hold
-admission and queue events without a compilation identity. The join is
-therefore reported as unavailable, with the record counts and the retention
-span that *are* available, rather than guessed at.
+The journal is the only source that can show the observer's own view of label
+loss: how many requests were admitted, which cache path they took, which
+outcomes the recorder published, and how many readings it refused or skipped.
+It cannot join any of those counts to a store row, because neither source it
+names carries a per-compilation identity. Admission times therefore come from
+the outcome store, while the journal supplies bounded denominators and the
+retention span.
 
 Reading the journal is an adapter concern. The command that owns a journal
 reader hands its records to :func:`count_journal`, so this module depends on
 the fields it counts and never on the query that produced them.
+
+The observer's own counts live in
+:mod:`buildlimits.predict.observer_accounting`, because they measure a closed
+vocabulary rather than describe the provenance note they travel with. They are
+re-exported here so a caller that already holds a
+:class:`~buildlimits.predict.journal_provenance.JournalCounts` needs one
+import.
 """
 
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.predict.observer_accounting import (
+    ObserverAccounting as ObserverAccounting,
+)
+from buildlimits.predict.observer_accounting import (
+    observer_accounting as observer_accounting,
+)
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+__all__ = [
+    "JournalCounts",
+    "JournalProvenance",
+    "JournalRecord",
+    "JournalRestarts",
+    "JournalUnavailable",
+    "ObserverAccounting",
+    "count_journal",
+    "observer_accounting",
+]
+
 _CORRELATION_LIMIT = (
     "no joinable per-compilation admission record: adapter rows carry metrics "
-    "without an identity and supervisor rows carry queue events without a "
-    "compilation identity, so the journal bounds retention and adds no "
-    "admission time to a store row"
+    "without an identity and supervisor rows carry queue and outcome events "
+    "without a compilation identity, so the journal supplies counts and a "
+    "retention span while admission times come from the outcome store"
 )
 
 
@@ -49,6 +75,11 @@ class JournalRecord(typ.Protocol):
     @property
     def timestamp(self) -> dt.datetime | None:
         """When the record was written, or None when it carries no time."""
+        ...
+
+    @property
+    def fields(self) -> cabc.Mapping[str, str]:
+        """The validated, prefix-free schema fields the record carries."""
         ...
 
 
@@ -97,6 +128,10 @@ class JournalCounts:
         How far back the query is reliable, in words.
     correlation : str
         The join the journal cannot support.
+    observer : ObserverAccounting | None
+        The recorder's own bounded counts from the same window, or None when
+        an older snapshot carries no observer block. None is not a measured
+        zero: it means the evidence was not recorded.
     """
 
     span: str
@@ -109,6 +144,7 @@ class JournalCounts:
     restarts: JournalRestarts
     retention: str
     correlation: str
+    observer: ObserverAccounting | None = None
 
     @property
     def available(self) -> bool:
@@ -201,6 +237,7 @@ def count_journal(
         ),
         retention=_retention_note(since, cap=cap, truncated=truncated),
         correlation=_CORRELATION_LIMIT,
+        observer=observer_accounting(window),
     )
 
 

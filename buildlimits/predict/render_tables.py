@@ -3,12 +3,19 @@
 Held-out comparison, calibration, ablation and origin tables are pure
 formatting over the result document. They live apart from
 `buildlimits.predict.render` so each table can be read next to the values it
-prints, and so the prose that introduces the report stays in one place.
+prints, and so the prose that introduces the report stays in one place. The
+data-sufficiency block, which describes the input rather than the scores, is in
+:mod:`buildlimits.predict.render_sufficiency`.
 """
 
 import typing as typ
 
-from buildlimits.predict.formatting import MISSING, as_count, as_percent, as_score
+from buildlimits.predict.formatting import (
+    MISSING,
+    as_count,
+    as_percent,
+    as_score,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

@@ -1,5 +1,6 @@
 """Tests for the operating-system side of admitted groups."""
 
+import datetime as dt
 import selectors
 import typing as typ
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 import pytest
 from request_helpers import launch_pending
 
-from buildlimits import launch
+from buildlimits import cgroups, launch
 from buildlimits.cache_backend import CacheBackend, DirectCache
 from buildlimits.cache_modes import is_cache
 from buildlimits.config import SupervisorConfig
@@ -164,6 +165,58 @@ def test_abandon_held_stops_and_forgets_the_group(
 
     assert child.abandoned, "the held child was stopped"
     assert "g1" not in groups.running, "the abandoned group was forgotten"
+
+
+class _Manager:
+    """A user manager that records the scopes it is asked to create."""
+
+    def __init__(self) -> None:
+        """Start with no recorded scopes."""
+        self.calls: list[tuple[str, int, str]] = []
+
+    def start_scope(self, unit: str, pid: int, slice_unit: str) -> None:
+        """Record one successful scope request."""
+        self.calls.append((unit, pid, slice_unit))
+
+
+def test_placement_captures_the_admission_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    selector: selectors.BaseSelector,
+) -> None:
+    """The UTC admission moment is read where admission is decided.
+
+    The clock advances once placement gets past the admission decision, so a
+    timestamp read any later would carry the wrong moment and fail here.
+    """
+    admission_moment = dt.datetime(2026, 10, 24, 12, 30, tzinfo=dt.UTC)
+    later_moment = admission_moment + dt.timedelta(minutes=5)
+    # Placement advances the wall clock once it gets past the admission
+    # decision. A timestamp read any later than that decision carries the
+    # release moment instead, and the assertion below catches it.
+    clock = [admission_moment]
+    manager = _Manager()
+
+    def spawn_after_the_decision(_spec: object) -> _Child:
+        """Start the child, then move the wall clock on."""
+        clock[0] = later_moment
+        return _Child()
+
+    monkeypatch.setattr(launch, "spawn_held", spawn_after_the_decision)
+    monkeypatch.setattr(cgroups, "wait_for_membership", lambda *_args: True)
+    groups = _placing_groups(selector, manager)
+    groups.wall_clock = lambda: clock[0]
+    entry = _entry(cacheable=False)
+
+    running = groups.place(entry, "g1", cached=False)
+
+    assert running is not None, "the child was placed in its scope"
+    assert entry.admitted == pytest.approx(0.0), (
+        "the monotonic admission time is unchanged"
+    )
+    assert entry.admitted_at == admission_moment, (
+        "the wall-clock admission time is the decision moment, not the release"
+    )
+    assert manager.calls, "the manager created the scope"
 
 
 def test_a_child_that_cannot_start_fails_the_launch(

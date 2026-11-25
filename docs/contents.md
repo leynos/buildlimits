@@ -64,6 +64,9 @@
 - [ADR 010: archived cache-outcome history](adrs/adr-0010-archived-cache-outcome-history.md)
   records why closed history is sealed and verified, how logical-byte retention
   and the timer-facing command work, and the schema and salt guarantees.
+- [ADR 011: cache-outcome admission time and label-loss accounting](adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
+  records the version 3 store fields, the bounded observer/store/snapshot
+  diagnostics, and the quiet-point and overflow repairs behind issue #68.
 
 ## Conventions
 
@@ -92,6 +95,11 @@
 - [Archive cache outcomes as XZ ExecPlan](execplans/issue-63-archive-cache-outcomes-as-xz-through-a-timer-friendly-cli.md)
   records the issue #63 implementation phases, the writer and archiver split,
   and the verification plan.
+
+- [Restore trustworthy cache hit/miss label coverage ExecPlan](execplans/issue-68-restore-trustworthy-cache-hit-miss-label-coverage-and-admission-time-evidence-for-the-prediction-benchmark.md)
+  records the issue #68 measured label loss, the admission-time and diagnostics
+  implementation, the controlled real-sccache evidence and the host
+  before/after limits.
 
 - [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
   steps and tasks with dependencies and success criteria.

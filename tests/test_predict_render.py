@@ -6,6 +6,9 @@ from render_helpers import data_section, empty_document, entry, scored_document
 
 from buildlimits.predict.render import UNDERPOWERED, render_markdown
 
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
+
 # The note a run without admission times must print, kept whole so a dropped
 # clause fails the test rather than sliding past a substring check.
 _ADMISSION_NOTE = (
@@ -50,6 +53,82 @@ def test_a_scored_report_prints_its_tables_exactly() -> None:
         ],
         "origin": ["| `base-rate` | 0.2000 |"],
     }, "the documented formats, row by row"
+
+
+def test_the_report_states_its_label_loss_denominators(
+    snapshot: SnapshotAssertion,
+) -> None:
+    """The sufficiency block names the rows, labels and refusal reasons.
+
+    The measured closed-history bullet carries the quarantined file count as
+    well as the archived, sealed and gap counts, so the Markdown report states
+    the same evidence the plain command report prints.
+    """
+    document = empty_document()
+    data = data_section(document)
+    typ.cast("dict[str, object]", data["source"]).update(
+        records_total=9,
+        outcome_records=8,
+        summary_records=1,
+    )
+    data["diagnostics"] = {
+        "store": {
+            "records_total": 9,
+            "outcome_records": 8,
+            "summary_records": 1,
+            "by_result": {"hit": 2, "miss": 1, "unattributed": 5},
+            "by_reason": {"none": 3, "mixed_window": 5},
+            "by_attribution": {"solo": 3, "none": 5},
+            "by_origin": {"registry": 8},
+            "by_parser_class": {"cacheable": 8},
+            "by_child_sighting": {"unavailable": 8},
+            "by_server_version": {"0.14.0": 8},
+            "admission_recorded": 3,
+            "admission_missing": 5,
+            "labels": 3,
+            "cacheable_records": 8,
+            "cacheable_labels": 3,
+        },
+        "history": {
+            "active_only": False,
+            "archived": 4,
+            "sealed": 1,
+            "gaps": 2,
+            "gaps_truncated": False,
+            "retention_floor": 7,
+            "quarantined": 2,
+        },
+    }
+
+    markdown = render_markdown(document)
+
+    section = _data_sufficiency_section(markdown)
+    assert section == snapshot, "the sufficiency block is a stable input contract"
+    assert "- Closed history: archived 4, sealed 1, gaps 2, quarantined 2" in section, (
+        "the quarantined count is stated beside the other measured counts"
+    )
+
+
+def _data_sufficiency_section(markdown: str) -> str:
+    """Return the report's data-sufficiency block as one bounded string.
+
+    Returns
+    -------
+    str
+        The heading and bullets up to the next top-level heading. The block is
+        a stable input contract, so a formatting or count change is visible.
+    """
+    lines = markdown.splitlines()
+    start = lines.index("## Data sufficiency")
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("## ")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end]).strip()
 
 
 def test_an_unranked_report_omits_the_detail_tables() -> None:

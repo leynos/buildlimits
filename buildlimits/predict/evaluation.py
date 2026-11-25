@@ -174,6 +174,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         if phase is not None and row is not None
     )
     status = _status(labelled, predictable, compared.against_base_rate, config)
+    withheld = walk.unverified_label_time
     return Evaluation(
         status=status,
         walk=walk,
@@ -185,7 +186,13 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         verdict_alpha=compared.verdict_alpha,
         best_single=compared.best_single,
         against_best_single=compared.against_best_single,
-        verdict=_verdict(labelled, predictable, compared.against_base_rate, config),
+        verdict=_verdict(
+            labelled,
+            predictable,
+            compared.against_base_rate,
+            config,
+            withheld=withheld,
+        ),
         minimum_scored_events=config.minimum_scored_events,
     )
 
@@ -236,11 +243,13 @@ def _is_evidence(interval: Interval | None, config: Config) -> bool:
     )
 
 
-def _verdict(
+def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate; pylint: disable=too-many-arguments
     labelled: int,
     predictable: int,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
+    *,
+    withheld: int = 0,
 ) -> str:
     """State the outcome in one sentence, negative results included.
 
@@ -249,6 +258,11 @@ def _verdict(
     over at least two blocks, for that interval to mean anything. That
     interval has already been widened for the family of comparisons, so the
     claim as a whole holds at the configured level.
+
+    A history whose labels were withheld because their recorded time is
+    unverified must not read as one that simply carried few labels. The
+    insufficient-data sentence names the withheld count beside the verified
+    one, so the reader can tell which shortage the run met.
 
     Returns
     -------
@@ -259,7 +273,7 @@ def _verdict(
     if status == STATUS_INSUFFICIENT:
         return (
             f"insufficient data: {labelled} labelled events, "
-            f"{config.minimum_labelled_events} required"
+            f"{config.minimum_labelled_events} required" + _withheld_note(withheld)
         )
     if status == STATUS_INSUFFICIENT_ADMISSION:
         return (
@@ -280,3 +294,30 @@ def _verdict(
     if not improving:
         return "nothing beats the base rate on the held-out period"
     return "beats the base rate on the held-out period: " + ", ".join(sorted(improving))
+
+
+def _withheld_note(withheld: int) -> str:
+    """Name the labels a run withheld because their time is unverified.
+
+    A store row's recorded label time can be a lower bound rather than proof,
+    so those labels are neither released nor scored. Reporting the count keeps
+    a withheld history distinct from one that recorded few labels at all.
+
+    Returns
+    -------
+    str
+        A clause naming the count, or the empty string when none was withheld.
+
+    Examples
+    --------
+    >>> _withheld_note(0)
+    ''
+    >>> _withheld_note(3)
+    '; 3 more withheld because their recorded label time is unverified'
+    """
+    return (
+        ""
+        if not withheld
+        else f"; {withheld} more withheld because their recorded label time is "
+        "unverified"
+    )
