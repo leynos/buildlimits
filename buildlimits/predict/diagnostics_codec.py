@@ -9,20 +9,17 @@ reconciles the totals before any of them can be trusted.
 import typing as typ
 
 from buildlimits.predict.accounting import (
-    UNRECORDED,
     Diagnostics,
     HistoryLoss,
     StoreAccounting,
     checked_counts,
 )
-
-_GENERATION_VERSION = 4
-"""The first snapshot version whose diagnostics state a per-generation map.
-
-It matches ``snapshot_codec.SNAPSHOT_VERSION``; the constant is repeated here
-rather than imported because the snapshot codec imports this module, and the
-two would otherwise form a cycle.
-"""
+from buildlimits.predict.diagnostics_generations import (
+    GENERATION_MAPS,
+    GENERATION_VERSION,
+    require_generation_labels,
+    unrecorded_generations,
+)
 
 _STORE_COUNT_FIELDS = (
     "records_total",
@@ -44,6 +41,14 @@ _STORE_MAP_FIELDS = (
     "by_server_version",
     "by_generation",
 )
+_LABEL_MAP_FIELDS = ("labels_by_generation",)
+"""Maps that partition the labelled rows rather than all the outcome rows.
+
+A breakdown of every row must sum to ``outcome_records``; a breakdown of the
+labels must sum to ``labels`` instead. Mixing the two kinds in one loop would
+either double-count the labelled rows or refuse a valid document, so the two
+families are named apart.
+"""
 
 
 def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | None:
@@ -68,7 +73,10 @@ def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | 
             "labels": store.labels,
             "cacheable_records": store.cacheable_records,
             "cacheable_labels": store.cacheable_labels,
-            **{name: dict(getattr(store, name)) for name in _STORE_MAP_FIELDS},
+            **{
+                name: dict(getattr(store, name))
+                for name in (*_STORE_MAP_FIELDS, *_LABEL_MAP_FIELDS)
+            },
         },
         "history": {
             "active_only": history.active_only,
@@ -84,7 +92,7 @@ def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | 
 
 
 def diagnostics_from_dict(
-    value: object, *, label: str, version: int = _GENERATION_VERSION
+    value: object, *, label: str, version: int = GENERATION_VERSION
 ) -> Diagnostics:
     """Validate one decoded diagnostics block and restore its counts.
 
@@ -119,9 +127,9 @@ def diagnostics_from_dict(
 def _is_required_map(name: str, value: dict[str, object], version: int) -> bool:
     """Report whether one breakdown must be present in this document.
 
-    Every breakdown but the per-generation one has always been written, so its
-    absence is corruption. The per-generation map arrived with version 4, and a
-    document written before it genuinely has no measurement to read: its
+    Every breakdown but the generation pair has always been written, so its
+    absence is corruption. The two generation maps arrived with version 4, and a
+    document written before them genuinely has no measurement to read: their
     absence is a fact about the history, not damage to the document.
 
     Returns
@@ -131,11 +139,11 @@ def _is_required_map(name: str, value: dict[str, object], version: int) -> bool:
     """
     if name in value:
         return True
-    return name != "by_generation" or version >= _GENERATION_VERSION
+    return name not in GENERATION_MAPS or version >= GENERATION_VERSION
 
 
 def _store_accounting_from(
-    value: dict[str, object], label: str, *, version: int = _GENERATION_VERSION
+    value: dict[str, object], label: str, *, version: int = GENERATION_VERSION
 ) -> StoreAccounting:
     """Validate the retained-store counts and their reconciliation.
 
@@ -166,12 +174,21 @@ def _store_accounting_from(
         for name in _STORE_MAP_FIELDS
         if _is_required_map(name, value, version)
     }
+    label_maps = {
+        name: checked_counts(value.get(name), label=f"{label} {name}")
+        for name in _LABEL_MAP_FIELDS
+        if _is_required_map(name, value, version)
+    }
     if "by_generation" not in maps:
         # An older snapshot cannot carry the dimension, and its rows cannot
         # supply one after the fact. Every outcome row it holds is therefore
         # stated as unattributed rather than left out of a breakdown that must
-        # account for all of them.
-        maps["by_generation"] = {UNRECORDED: outcome_records}
+        # account for all of them, and every labelled row with it: a history
+        # that names no generation cannot say which generation a label came
+        # from either.
+        maps["by_generation"], label_maps["labels_by_generation"] = (
+            unrecorded_generations(outcome_records, counts["labels"])
+        )
     if counts["records_total"] != outcome_records + counts["summary_records"]:
         msg = f"{label} totals do not reconcile"
         raise ValueError(msg)
@@ -185,6 +202,9 @@ def _store_accounting_from(
     if labels != maps["by_result"].get("hit", 0) + maps["by_result"].get("miss", 0):
         msg = f"{label} labelled count disagrees with its result breakdown"
         raise ValueError(msg)
+    require_generation_labels(
+        label_maps["labels_by_generation"], maps["by_generation"], labels, label
+    )
     cacheable = counts["cacheable_records"]
     cacheable_labels = counts["cacheable_labels"]
     _require_cacheable(
@@ -212,6 +232,7 @@ def _store_accounting_from(
         by_child_sighting=maps["by_child_sighting"],
         by_server_version=maps["by_server_version"],
         by_generation=maps["by_generation"],
+        labels_by_generation=label_maps["labels_by_generation"],
     )
 
 

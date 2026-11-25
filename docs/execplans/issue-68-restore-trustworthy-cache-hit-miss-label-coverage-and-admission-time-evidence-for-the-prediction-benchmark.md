@@ -99,7 +99,7 @@ only information available before admission.
 - The snapshot carries bounded diagnostics: retained rows by result, reason,
   attribution, origin, parser class, child sighting and sccache version;
   admission-time coverage; the eligible cacheable denominator; and closed
-  history loss. The snapshot format is version 3, and every event states
+  history loss. The snapshot format is version 4, and every event states
   `label_observed_verified`, so an unverified label time is neither released
   nor scored (ADR 011 D6).
 - The dataset command records the observer's own journal counts, including
@@ -383,14 +383,15 @@ could not have seen. The dataset command cannot distinguish a pre-fix row from
 a fixed one — both are version 2 store rows — so it must not claim verification
 for either.
 
-The snapshot format is version 3, and each event carries an explicit
-`label_observed_verified` boolean. A per-event marker was chosen over a
-snapshot-wide `label_time_provenance` name because the fact is a property of
-one row: a snapshot that later holds rows of mixed provenance can state both,
-which a single document-wide marker cannot. The dataset command emits every
-version 2 store row as unverified; the version 3 store row that carries its own
-marker, added by the later review round below, is the first source that can
-emit a verified event.
+The snapshot format is version 4. Each event carries an explicit
+`label_observed_verified` boolean, and the diagnostics carry the per-generation
+maps version 4 added. A per-event marker was chosen over a snapshot-wide
+`label_time_provenance` name because the fact is a property of one row: a
+snapshot that later holds rows of mixed provenance can state both, which a
+single document-wide marker cannot. The dataset command emits every version 2
+store row as unverified; the version 3 store row that carries its own marker,
+added by the later review round below, is the first source that can emit a
+verified event.
 
 `events.scored_label` returns None for an unverified hit or miss, so training,
 scoring and the phase schedule all withhold it through one rule. The replay

@@ -782,13 +782,15 @@ measured `none`.
 
 Label loss is also broken down by sccache server generation. A store row names
 the generation its reading observed as a salted digest, so the report can count
-labels and losses per generation without recording a process id. Only a window
-the recorder actually attributed carries a digest: a window whose server
-changed, a first baseline and an overflow all count under `unrecorded`, because
-none of them proves which single server produced their rows. A history written
-before the field existed reports `by generation: unavailable` rather than a
-measured zero, since no later reader can recover evidence that was never
-written.
+labels and losses per generation without recording a process id. Each
+generation is printed as its row count and the number of those rows that carry
+a label, so a generation that produced only refusals is distinguishable from
+one that produced only labels. Only a window the recorder actually attributed
+carries a digest: a window whose server changed, a first baseline and an
+overflow all count under `unrecorded`, because none of them proves which single
+server produced their rows. A history written before the field existed reports
+`by generation: unavailable` rather than a measured zero, since no later reader
+can recover evidence that was never written.
 
 An outcome row records the UTC wall-clock moment the supervisor admitted the
 compilation. That time is read where admission is decided, not derived from the

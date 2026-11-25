@@ -352,8 +352,10 @@ the shell never supplied.
   version 3 store is scorable, because its rows state their provenance; an
   operator who needs one must run the current recorder and let new rows
   accumulate, since no older row can be promoted.
-- The snapshot format is version 3. A version 1 or 2 snapshot still loads, with
-  its events unverified; a version 3 event that omits the marker is refused.
+- The snapshot format is version 4. A version 1 or 2 snapshot still loads, with
+  its events unverified; a version 3 or later event that omits the marker is
+  refused. Version 4 adds the per-generation diagnostics block, and a version 1
+  to 3 snapshot loads without one, every outcome row counted as `unrecorded`.
 - A published outcome that produced no store row is counted by its closed
   reason, and an event whose omission evidence is absent is counted as
   unrecorded rather than as a measured `none`; see D7. The report names the

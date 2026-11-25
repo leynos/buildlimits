@@ -62,6 +62,12 @@ class StoreAccounting:
         or whose window named no single server. The digest is a correlation
         key, never a process identity, so a breakdown by it separates label
         loss per generation without disclosing one.
+    labels_by_generation : Mapping[str, int]
+        The labelled rows of each generation, on the same buckets as
+        ``by_generation``. A generation's loss is the difference between the
+        two maps, so a reader can see that one server produced labels while
+        another produced only refusals without cross-referencing two
+        differently bucketed totals. It sums to ``labels``.
     admission_recorded : int
         Outcome rows carrying an admission time.
     admission_missing : int
@@ -91,6 +97,7 @@ class StoreAccounting:
     labels: int
     cacheable_records: int
     cacheable_labels: int
+    labels_by_generation: cabc.Mapping[str, int] = dc.field(default_factory=dict)
 
     @property
     def labelled_fraction(self) -> float:
@@ -183,7 +190,7 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
             admitted += int(record.admitted_at is not None)
             if record.parser_class == "cacheable":
                 cacheable += 1
-                cacheable_labels += int(record.outcome in {"hit", "miss"})
+                cacheable_labels += int(_is_label(record))
         else:
             summaries += 1
     return StoreAccounting(
@@ -198,6 +205,7 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
         by_child_sighting=_frozen(counters.sighting),
         by_server_version=_frozen(counters.version),
         by_generation=_frozen(counters.generation),
+        labels_by_generation=_frozen(counters.generation_labels),
         admission_recorded=admitted,
         admission_missing=outcomes - admitted,
         labels=counters.result["hit"] + counters.result["miss"],
@@ -220,6 +228,9 @@ class _DimensionCounters:
     sighting: collections.Counter[str] = dc.field(default_factory=collections.Counter)
     version: collections.Counter[str] = dc.field(default_factory=collections.Counter)
     generation: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    generation_labels: collections.Counter[str] = dc.field(
+        default_factory=collections.Counter
+    )
 
     def add(self, record: OutcomeRecord) -> None:
         """Count one outcome row on every dimension."""
@@ -230,7 +241,21 @@ class _DimensionCounters:
         self.parser[record.parser_class] += 1
         self.sighting[record.child_sighting] += 1
         self.version[record.key.toolchain_identity.server_version] += 1
-        self.generation[record.generation_digest or UNRECORDED] += 1
+        bucket = record.generation_digest or UNRECORDED
+        self.generation[bucket] += 1
+        if _is_label(record):
+            self.generation_labels[bucket] += 1
+
+
+def _is_label(record: OutcomeRecord) -> bool:
+    """Report whether one row carries an attributed cache hit or miss.
+
+    Returns
+    -------
+    bool
+        Whether the row's result is a label rather than a refusal.
+    """
+    return record.outcome in {"hit", "miss"}
 
 
 def _frozen(counts: collections.Counter[str]) -> dict[str, int]:

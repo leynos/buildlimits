@@ -126,11 +126,31 @@ def _generation_line(store: cabc.Mapping[str, object]) -> str:
     counts = store.get("by_generation")
     if not isinstance(counts, dict) or not counts:
         return f"- Label loss {generation_unavailable_line()}"
-    measured = {
-        _short_digest(key): value
-        for key, value in typ.cast("dict[str, object]", counts).items()
-    }
-    return f"- By generation: {as_counts(measured)}"
+    labelled = store.get("labels_by_generation")
+    labelled = labelled if isinstance(labelled, dict) else {}
+    pairs = ", ".join(
+        f"{_short_digest(key)}={_labelled_of(value, labelled.get(key))}"
+        for key, value in sorted(typ.cast("dict[str, object]", counts).items())
+    )
+    return f"- By generation (rows, of which labelled): {pairs}"
+
+
+def _labelled_of(rows: object, labelled: object) -> str:
+    """Return one generation's row count with its labelled share.
+
+    A generation that produced many refusals and a generation that produced
+    none read identically when only the row count is printed. Showing the
+    labelled share beside it is what turns the bucket into evidence about
+    label loss rather than about traffic.
+
+    Returns
+    -------
+    str
+        ``rows/labels`` for one bucket, so ``12/3`` is three labels in twelve
+        rows.
+    """
+    labelled_count = labelled if isinstance(labelled, int) else 0
+    return f"{as_count(rows)}/{labelled_count}"
 
 
 def _short_digest(key: str) -> str:

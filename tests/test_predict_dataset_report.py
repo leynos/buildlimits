@@ -10,7 +10,7 @@ import dataclasses as dc
 import typing as typ
 from pathlib import Path
 
-from outcome_test_helpers import OBSERVED_AT
+from outcome_test_helpers import OBSERVED_AT, attributed_record
 from predict_test_helpers import journal_note
 
 from buildlimits.metrics_records import Record
@@ -133,3 +133,56 @@ def test_the_plain_report_prints_both_store_and_journal_evidence(
     assert "label loss: no diagnostics recorded" not in output, (
         "a present store block is not described as absent"
     )
+
+
+def test_a_history_without_generation_evidence_is_named(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty history reports the dimension as unavailable, not as zero.
+
+    The snapshot this test builds holds no outcome rows, so its generation map
+    is empty. Printing that as a measured breakdown would claim the dimension
+    was measured and found empty, which is a different statement from the
+    evidence never having existed.
+    """
+    output = _report(journal_note(), with_diagnostics=True, capsys=capsys)
+
+    assert "by generation: unavailable" in output, (
+        "an unmeasured dimension is named rather than printed as a zero"
+    )
+
+
+def test_a_store_holding_generation_evidence_prints_its_buckets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A populated generation map is printed as measured counts.
+
+    The report must read the evidence the snapshot carries. Printing the
+    unavailable sentence for a snapshot that holds a populated map would hide
+    the very measurement the dimension was added to supply.
+    """
+    first = "a" * 64
+    history = decode_history(
+        DecodedStore(
+            StoreHeader("fixed-salt", OBSERVED_AT),
+            tuple(
+                dc.replace(attributed_record(outcome="hit"), generation_digest=first)
+                for _ in range(2)
+            ),
+        )
+    )
+    snapshot = build_snapshot(
+        history,
+        now=OBSERVED_AT,
+        history_loss=HistoryLoss.active_file_only(),
+        journal=journal_note(),
+    )
+
+    dataset_report.report_snapshot(snapshot, Path("out.jsonl"))
+    output = capsys.readouterr().out
+
+    assert "by generation: unavailable" not in output, (
+        "a measured map is never reported as unavailable"
+    )
+    assert first in output, "the generation digest the rows carry is printed"
+    assert "by generation: " in output, "the measured breakdown is printed"

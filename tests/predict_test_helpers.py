@@ -256,9 +256,12 @@ def record_events(
         now=now,
         history_loss=HistoryLoss.active_file_only(),
     )
-    path = Path(tempfile.mkdtemp()) / "history.jsonl"
-    save_snapshot(path, snapshot)
-    return load_snapshot(path).events
+    # The directory is removed on both paths: a leaked one per call would
+    # accumulate for the whole session, since nothing else owns it.
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "history.jsonl"
+        save_snapshot(path, snapshot)
+        return load_snapshot(path).events
 
 
 _PROVENANCE_VERSION = 3

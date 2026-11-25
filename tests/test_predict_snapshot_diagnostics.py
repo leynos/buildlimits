@@ -17,6 +17,10 @@ from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.dataset import StoreHistory, build_snapshot
+from buildlimits.predict.diagnostics_generations import (
+    require_generation_labels,
+    unrecorded_generations,
+)
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
@@ -71,7 +75,9 @@ def _as_version(document: dict[str, object], version: int) -> dict[str, object]:
         if isinstance(block, dict):
             store = typ.cast("dict[str, object]", block).get("store")
             if isinstance(store, dict):
-                typ.cast("dict[str, object]", store).pop("by_generation", None)
+                mutable = typ.cast("dict[str, object]", store)
+                mutable.pop("by_generation", None)
+                mutable.pop("labels_by_generation", None)
     return document
 
 
@@ -242,6 +248,11 @@ def test_diagnostics_labels_must_describe_the_events(tmp_path: Path) -> None:
     store["labels"] = 0
     store["cacheable_labels"] = 0
     store["by_result"] = {"unattributed": 1}
+    # The per-generation maps partition the same two totals, so a block that
+    # says it holds no labels must also say none of its rows were labelled.
+    # Leaving them contradicting `labels` would refuse the block before the
+    # event join this test is about could run.
+    store["labels_by_generation"] = {}
 
     with pytest.raises(ValueError, match="hit events but its diagnostics"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
@@ -314,4 +325,71 @@ def test_an_unavailable_inventory_survives_the_snapshot(tmp_path: Path) -> None:
     )
     assert loaded.diagnostics.history.active_only is False, (
         "the read was not active-only"
+    )
+
+
+@pytest.mark.parametrize(
+    ("rows", "labelled", "expected"),
+    [
+        pytest.param({"a": 1}, {"b": 1}, "name unknown buckets", id="unknown-bucket"),
+        pytest.param(
+            {"a": 1},
+            {"a": 2},
+            "exceed their own generation totals",
+            id="labels-exceed-rows",
+        ),
+        pytest.param(
+            {"a": 1, "unrecorded": 1},
+            {"a": 1},
+            "do not sum to the labelled count",
+            id="labels-do-not-sum",
+        ),
+    ],
+)
+def test_a_generation_label_map_that_cannot_describe_a_history_is_refused(
+    rows: dict[str, int], labelled: dict[str, int], expected: str
+) -> None:
+    """Each way the labelled map can contradict its document is refused.
+
+    The labelled map partitions the labelled rows while the row map partitions
+    all of them, so a document that breaks either relationship states two
+    histories at once. A reader that printed it would report counts no single
+    store ever held.
+    """
+    # The document's own labelled total is one more than the map states, which
+    # is the only way the sum rule can be the one that fires.
+    declared = sum(labelled.values()) + (expected.endswith("labelled count"))
+    with pytest.raises(ValueError, match=expected):
+        require_generation_labels(labelled, rows, labels=declared, label="doc")
+
+
+def test_a_generation_label_map_that_reconciles_is_accepted() -> None:
+    """The control case proves the refusals above come from the maps.
+
+    Without it, a check that refused every labelled map would satisfy each
+    refusal while making the dimension unreadable.
+    """
+    require_generation_labels(
+        {"a": 1}, {"a": 2, "unrecorded": 1}, labels=1, label="doc"
+    )
+
+
+def test_a_pre_generation_history_states_all_of_its_labels_as_unrecorded() -> None:
+    """An older document's fallback accounts for its labels, not just its rows.
+
+    A history that names no generation cannot say which generation a label came
+    from either, so both maps have to carry the same bucket. Dropping the
+    labelled map instead would leave it failing to sum to the labelled total.
+    """
+    rows, labelled = unrecorded_generations(outcome_records=4, labels=3)
+
+    assert rows == {"unrecorded": 4}, "every row is unattributed"
+    assert labelled == {"unrecorded": 3}, "every label is unattributed too"
+    require_generation_labels(labelled, rows, labels=3, label="doc")
+
+
+def test_an_empty_history_states_no_generation_buckets() -> None:
+    """A store with no rows gets no fabricated bucket at all."""
+    assert unrecorded_generations(outcome_records=0, labels=0) == ({}, {}), (
+        "an empty store names no bucket rather than an empty one"
     )

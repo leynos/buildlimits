@@ -45,11 +45,14 @@ class LaunchPayload:
 class OutcomeEvent:
     """One journal-ready classification for a cached launch.
 
-    ``record_omitted`` names why this published outcome produced no store row,
-    or ``none`` when it was stored. The event and any row for it are built from
-    the same launch in one transition, so the token describes that launch
-    rather than a later guess: an event that cannot be stored says so instead
-    of leaving a gap the writer's own discard counts can never see.
+    ``record_omitted`` names whether this outcome was withheld before it reached
+    the store: a closed reason when the launch had no key or no label moment, or
+    ``none`` when a candidate row was built for it. ``none`` is not proof that a
+    row reached the file. The event and its candidate row are built from the
+    same launch in one transition, so the token describes that launch rather
+    than a later guess, and the writer may still discard the row or leave it
+    queued. What the reason does prove is that an outcome the writer's own
+    discard counts could never see is counted by cause instead of vanishing.
     """
 
     cache_result: CacheResult

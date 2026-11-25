@@ -202,17 +202,26 @@ def test_an_overflowed_window_states_no_generation() -> None:
     )
 
 
-def test_store_accounting_counts_each_generation_and_reconciles() -> None:
-    """The breakdown by generation sums to the rows and separates label loss.
+def _second_generation() -> Generation:
+    """Return a generation distinct from the shared fixture's own.
 
-    Two generations each contribute one labelled and one unlabelled row, and a
-    third row states no generation at all. The map must show exactly those
-    three buckets, sum to the outcome rows, and keep the unattributed row out
-    of either generation's count.
+    Returns
+    -------
+    Generation
+        A server identity no other case uses.
     """
-    first = _digest()
-    second = _digest(outcome_module("outcome_attribution").Generation("run-b", 11, 21))
-    base = OutcomeRecord(
+    return outcome_module("outcome_attribution").Generation("run-b", 11, 21)
+
+
+def _generation_row() -> OutcomeRecord:
+    """Return one outcome row valid in every field but its generation.
+
+    Returns
+    -------
+    OutcomeRecord
+        The base row each generation case replaces one field of.
+    """
+    return OutcomeRecord(
         key=cache_key(),
         outcome="hit",
         origin="registry",
@@ -224,6 +233,19 @@ def test_store_accounting_counts_each_generation_and_reconciles() -> None:
         outcome_reason="none",
         outcome_attribution="solo",
     )
+
+
+def test_store_accounting_counts_each_generation_and_reconciles() -> None:
+    """The breakdown by generation sums to the rows and separates label loss.
+
+    Two generations each contribute one labelled and one unlabelled row, and a
+    third row states no generation at all. The map must show exactly those
+    three buckets, sum to the outcome rows, and keep the unattributed row out
+    of either generation's count.
+    """
+    first = _digest()
+    second = _digest(_second_generation())
+    base = _generation_row()
     records = (
         dc.replace(base, outcome="miss", generation_digest=first),
         dc.replace(
@@ -253,6 +275,56 @@ def test_store_accounting_counts_each_generation_and_reconciles() -> None:
     )
     assert accounting.by_generation[first] == 2, (
         "the first generation's labelled and unlabelled rows are both counted"
+    )
+    assert accounting.labels_by_generation == {first: 1, second: 1}, (
+        "each generation's labelled rows are counted on the same buckets"
+    )
+    assert sum(accounting.labels_by_generation.values()) == accounting.labels, (
+        "the labelled breakdown sums to the labelled total, not the row total"
+    )
+    assert all(
+        count <= accounting.by_generation[bucket]
+        for bucket, count in accounting.labels_by_generation.items()
+    ), "no generation can have more labels than rows"
+
+
+def test_the_labelled_breakdown_shows_which_generation_produced_no_labels() -> None:
+    """A generation that produced only refusals is visible as such.
+
+    Row counts alone cannot separate a busy generation from a productive one,
+    which is the whole reason the labelled map exists. One generation here
+    yields two labels and the other yields none, and the two maps must say so.
+    """
+    productive = _digest()
+    barren = _digest(_second_generation())
+    base = _generation_row()
+    records = (
+        dc.replace(base, generation_digest=productive),
+        dc.replace(base, outcome="miss", generation_digest=productive),
+        dc.replace(
+            base,
+            outcome="unattributed",
+            outcome_reason="mixed_window",
+            generation_digest=barren,
+        ),
+        dc.replace(
+            base,
+            outcome="unattributed",
+            outcome_reason="count_mismatch",
+            generation_digest=barren,
+        ),
+    )
+
+    accounting = store_accounting(records)
+
+    assert accounting.by_generation == {productive: 2, barren: 2}, (
+        "both generations handled the same number of rows"
+    )
+    assert accounting.labels_by_generation == {productive: 2}, (
+        "only the productive generation appears in the labelled map"
+    )
+    assert accounting.labels_by_generation.get(barren, 0) == 0, (
+        "the barren generation is absent rather than counted as one label"
     )
 
 

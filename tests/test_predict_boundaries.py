@@ -21,6 +21,7 @@ DOMAIN_MODULES = (
     "config",
     "dataset",
     "diagnostics_codec",
+    "diagnostics_generations",
     "ensemble_runs",
     "ensembles",
     "evaluation",

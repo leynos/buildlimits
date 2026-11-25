@@ -312,7 +312,10 @@ def test_a_present_generation_map_is_printed_as_measured_counts() -> None:
 
     The digest is a correlation key, not a name a human reads, so the report
     prints a short prefix while the store keeps the full value. The absent
-    bucket must stay recognizable: it counts rows that name no generation.
+    bucket must stay recognizable: it counts rows that name no generation. The
+    labelled share is printed beside each row count, because a generation that
+    produced only refusals and one that produced only labels read identically
+    when only the total is shown.
     """
     document = _diagnostics_document()
     store = _store_block(document)
@@ -321,18 +324,21 @@ def test_a_present_generation_map_is_printed_as_measured_counts() -> None:
         "b" * 64: 2,
         "unrecorded": 1,
     }
+    store["labels_by_generation"] = {"a" * 64: 3, "b" * 64: 0}
 
     markdown = render_markdown(document)
 
     line = next(
-        line for line in markdown.splitlines() if line.startswith("- By generation:")
+        line
+        for line in markdown.splitlines()
+        if line.startswith("- By generation (rows, of which labelled):")
     )
     assert "by generation: unavailable" not in markdown, (
         "a measured map is never reported as unavailable"
     )
-    assert f"{'a' * 12}=3" in line, "the first generation's count is printed"
-    assert f"{'b' * 12}=2" in line, "the second generation's count is printed"
-    assert "unrecorded=1" in line, "the absent bucket stays recognizable"
+    assert f"{'a' * 12}=3/3" in line, "a labelled generation shows both counts"
+    assert f"{'b' * 12}=2/0" in line, "a generation with no labels says so"
+    assert "unrecorded=1/0" in line, "the absent bucket stays recognizable"
     assert "a" * 64 not in line, "the full digest is not repeated in the report"
 
 

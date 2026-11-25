@@ -164,6 +164,7 @@ def _counts(**overrides: object) -> dict[str, object]:
         "by_child_sighting": {"unavailable": 3},
         "by_server_version": {"0.14.0": 3},
         "by_generation": {"unrecorded": 3},
+        "labels_by_generation": {"unrecorded": 2},
     }
     block.update(overrides)
     return block
@@ -224,6 +225,7 @@ def test_generated_reconciling_counts_survive_the_round_trip(
         "by_child_sighting": {"unavailable": outcomes} if outcomes else {},
         "by_server_version": {"0.14.0": outcomes} if outcomes else {},
         "by_generation": {"unrecorded": outcomes} if outcomes else {},
+        "labels_by_generation": {"unrecorded": 0} if outcomes else {},
     })
     document = {
         "store": store,

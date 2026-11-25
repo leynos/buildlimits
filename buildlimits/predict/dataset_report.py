@@ -8,6 +8,7 @@ validated by the snapshot loader.
 import sys
 import typing as typ
 
+from buildlimits.predict.accounting import UNRECORDED
 from buildlimits.predict.formatting import (
     TRUNCATED_OBSERVER_NOTE,
     as_counts,
@@ -17,6 +18,7 @@ from buildlimits.predict.journal_provenance import JournalCounts
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.predict.accounting import HistoryLoss, StoreAccounting
@@ -146,7 +148,25 @@ def _report_store(store: StoreAccounting) -> None:
         ("server version", store.by_server_version),
     ):
         print(f"by {label}: {as_counts(counts)}")
-    print(generation_unavailable_line())
+    print(_generation_line(store.by_generation))
+
+
+def _generation_line(by_generation: cabc.Mapping[str, int]) -> str:
+    """Return the per-generation line for one store's retained rows.
+
+    A history written before the field existed has no generation evidence, and
+    its rows count under ``unrecorded`` alone. Printing that as a measurement
+    would report a dimension as zero rather than as absent, so the unavailable
+    sentence is kept for exactly that case.
+
+    Returns
+    -------
+    str
+        The measured breakdown, or the statement that none is available.
+    """
+    if not by_generation or set(by_generation) <= {UNRECORDED}:
+        return generation_unavailable_line()
+    return f"by generation: {as_counts(by_generation)}"
 
 
 def _report_history(history: HistoryLoss) -> None:

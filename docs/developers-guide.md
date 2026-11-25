@@ -210,10 +210,11 @@ for the same reason.
 values and decisions sit in domain modules, and everything that reaches outside
 the process is an adapter at its edge. The domain modules are `accounting`,
 `bootstrap`, `comparison`, `config`, `dataset`, `diagnostics_codec`,
-`ensemble_runs`, `ensembles`, `evaluation`, `events`, `fitting`, `harness`,
-`journal_codec`, `journal_provenance`, `metrics`, `observer_accounting`,
-`predictors`, `probability`, `render_sufficiency`, `report`, `report_blocks`,
-`report_codec`, `scoring` and `snapshot_diagnostics_join`.
+`diagnostics_generations`, `ensemble_runs`, `ensembles`, `evaluation`, `events`,
+`fitting`, `harness`, `journal_codec`, `journal_provenance`, `metrics`,
+`observer_accounting`, `predictors`, `probability`, `render_sufficiency`,
+`report`, `report_blocks`, `report_codec`, `scoring` and
+`snapshot_diagnostics_join`.
 
 `accounting` is the bounded label-loss value: it folds decoded store rows into
 counts by cache result, outcome reason, attribution, origin, parser class,
@@ -425,11 +426,11 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_footprints`                                                               | Approved sccache counter footprint table and the composition rules that accept a window delta                                                                                                          |
 | `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                                                                                                                                   |
 | `json_values`                                                                      | Pure JSON object and non-negative integer validators shared by boundary adapters                                                                                                                       |
-| `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden                                                                                                                                          |
+| `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden, and `generation_digest`: the salted correlation key over `(invocation, pid, starttime)`                                                 |
 | `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                                                                                                                            |
 | `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                                                                                                                     |
 | `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                                                                                                                             |
-| `outcome_record_key`                                                               | Path-free cache key and toolchain-identity validation shared by the encoder and decoder                                                                                                                |
+| `outcome_record_key`                                                               | Path-free cache key and toolchain-identity validation shared by the encoder and decoder, and the optional generation-digest shape check                                                                |
 | `outcome_record_lines`                                                             | Bounded JSON Lines scanning that turns a document or one raw row into parsed values                                                                                                                    |
 | `outcome_record_encode`                                                            | Deterministic JSON Lines encoding for cache-outcome store values, in the shape its document version holds                                                                                              |
 | `outcome_record_codec`                                                             | Strict JSON Lines decoding for cache-outcome store values                                                                                                                                              |
@@ -504,7 +505,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                                                                                                                                |
 | `outcome_process_sampler`                                                          | Bounded control-group inspection and per-process metadata caching                                                                                                                                      |
 | `outcome_sampling`, `outcome_recorder_sampling`                                    | Sampling cadence, failure back-off and pure recorder sample folding                                                                                                                                    |
-| `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching and privacy-safe supervisor key assembly                                                                                                                                      |
+| `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching, and privacy-safe supervisor key and generation-digest assembly that supplies the store salt once it arrives                                                                  |
 | `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path                                                                                                   |
 | `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                                                                                                                               |
 | `outcome_shell_dependencies`                                                       | The optional collaborators an enabled outcome shell accepts: environment, writer, statistics, server, reaper and wall clock, each defaulting to `None`; the fields are the shell's intended test seams |
@@ -962,31 +963,37 @@ rather than trusting a separate count field. `tracing_export` reserves
 `statistics_read` and the three store operations with the fixed
 `statistics_query`, `store_io` and `salt` failure categories.
 
-The outcome store is version 3. `OutcomeRecord` carries `admitted_at`,
+The outcome store is version 4. `OutcomeRecord` carries `admitted_at`,
 `outcome_reason` and `outcome_attribution` beside the version 1 fields, plus
 `label_time_provenance`, which the current recorder writes as `verified` for
-every row it dates at the statistics reading. A version 1 row decodes the
-version 2 fields as `None`; a version 1 or 2 row decodes the provenance marker
-as `None`, which means unproven, never false. A present but malformed admission
-time or marker is corruption rather than absence. The accepted row shape is
-fixed by the document version, so a version 3 row that omits the marker is
-corrupt, and the encoder refuses to write a verified row into an older
-document: the older shape has nowhere to state it. `Groups.place` reads the UTC
-wall clock at the same point as the monotonic `entry.admitted`, `Launched`
-carries the value, and the recorder copies it onto every row emitted for that
-launch. `observed_at` is the time the label or refusal became known, and the
-recorder takes it from the event that caused the emission: the poll result
-whose query returned, the gate that opened, or the stop that closed recording.
-A group's completion time is carried on `Ended` and on the retained launch as
-evidence, and is never a row's label time, because sccache exposes no label
-until the statistics query that reads it returns. Every row one reading emits,
-its window summary included, shares that reading's moment, so two launches
-finishing out of order cannot produce a store whose recorded clock runs
-backwards. `_row_time` falls back to the launch's completion only for a purely
-synthetic event that carries no wall clock at all. `observed_at` is never
-reduced by `runtime_seconds` to manufacture an admission time. The dataset
-adapter maps the value onto `Event.admitted_at`, and `Snapshot.stats()` counts
-the rows whose admission is at or before their own label.
+every row it dates at the statistics reading, and `generation_digest`, the
+salted key described below. A version 1 row decodes the version 2 fields as
+`None`; a version 1 or 2 row decodes the provenance marker as `None`, which
+means unproven, never false; a version 1 to 3 row decodes the digest as `None`,
+which means no single generation can be attributed to it. A present but
+malformed admission time, marker or digest is corruption rather than absence.
+The accepted row shape is fixed by the document version, so a version 3 or
+later row that omits the marker is corrupt, and the encoder refuses to write a
+verified row or a digest into an older document: the older shape has nowhere to
+state either. `outcome_key.generation_digest` is the one place the triple is
+joined, and `outcome_shell_keys.generation_digest` the one place the shell
+supplies the salt, so a recorder without a salt states no generation rather
+than an unkeyed one. `Groups.place` reads the UTC wall clock at the same point
+as the monotonic `entry.admitted`, `Launched` carries the value, and the
+recorder copies it onto every row emitted for that launch. `observed_at` is the
+time the label or refusal became known, and the recorder takes it from the
+event that caused the emission: the poll result whose query returned, the gate
+that opened, or the stop that closed recording. A group's completion time is
+carried on `Ended` and on the retained launch as evidence, and is never a row's
+label time, because sccache exposes no label until the statistics query that
+reads it returns. Every row one reading emits, its window summary included,
+shares that reading's moment, so two launches finishing out of order cannot
+produce a store whose recorded clock runs backwards. `_row_time` falls back to
+the launch's completion only for a purely synthetic event that carries no wall
+clock at all. `observed_at` is never reduced by `runtime_seconds` to
+manufacture an admission time. The dataset adapter maps the value onto
+`Event.admitted_at`, and `Snapshot.stats()` counts the rows whose admission is
+at or before their own label.
 
 `StoreHeader` carries the `version` its document was read at or will be written
 with, defaulting to `FORMAT_VERSION`, and decoding preserves the file's own
@@ -1015,13 +1022,26 @@ is told apart from a failed write (`save_failed`, `seal_failed`, `corrupt`,
 the map sums to `store_discarded` and a clean append adds nothing to it. The
 snapshot loader reconciles the stored counts before a report can print them, so
 a corrupted or hand-edited block is refused, and the journal codec requires the
-store-reason map to sum to the discarded total. Issue #68 also asks for label
-loss by sccache generation. A store row's key names the server _version_, not
-the generation the recorder observed, so no per-generation breakdown can be
-measured from retained history; both reports print the dimension as
-unavailable, with that reason, rather than omitting it or filling it with a
-count the history cannot support. Adding a generation field to the row was
-rejected because no report could reconcile it with the rows already written.
+store-reason map to sum to the discarded total.
+
+Issue #68 also asks for label loss by sccache generation, and a version 4 row
+answers it with a correlation key rather than a process identity. The
+generation is `(invocation, pid, starttime)`; persisting that would put a host
+detail in a privacy-safe store, so `outcome_key.generation_digest` HMACs the
+triple under the store's own salt, joining the parts with a byte neither an
+invocation nor an integer can contain. Only an **attributing** reading writes a
+digest: the reducer withholds it from every other emission, so a baseline, a
+refusal, a `generation_changed` window and an overflow all write null, because
+none of them proves which single server produced their rows. `StoreAccounting`
+therefore holds two maps on the same buckets, `by_generation` for rows and
+`labels_by_generation` for the labelled rows within them, with `unrecorded` for
+rows that name no generation. The pair is what separates a busy generation from
+a productive one; a row total alone cannot. The loader requires the labelled
+map to name only buckets the row map holds, never to exceed its own bucket's
+total, and to sum to `labels` rather than to the row count, because the two
+maps partition different totals. A version 1 to 3 snapshot has neither map and
+loads with every row and every label under `unrecorded`, which is what its
+history states.
 
 Two more observer rules keep its denominators honest. `store_records` counts
 only `operation == "append"` results: a compaction reports the rows it retained
