@@ -252,16 +252,44 @@ def test_an_invalid_row_before_the_final_row_fails_the_whole_document() -> None:
     assert decoded.reason == "corrupt", "a doctored middle row is corruption"
 
 
-def test_every_refused_key_is_refused_by_its_own_field() -> None:
-    """The refusal names the invalid field set rather than a shared row shape.
+def _field_pairs() -> tuple[tuple[CacheKey, CacheKey, str], ...]:
+    """Return one (broken, repaired, field) triple per refused key field.
 
-    A key that is valid in every field but one must be storable once that field
-    is repaired, which proves the refusals above came from the field under test
-    rather than from a row that was broken some other way.
+    Each pair differs from the valid key in exactly one field, so a refusal
+    cannot come from the row being broken some other way, and the repaired key
+    differs from the broken one only in that same field.
+
+    Returns
+    -------
+    tuple[tuple[CacheKey, CacheKey, str], ...]
+        The pairs, each named by the field it exercises.
     """
-    broken = dc.replace(_key(), crate_name="a/b")
+    valid = _key()
+    return (
+        (dc.replace(valid, crate_name="a/b"), valid, "crate_name"),
+        (dc.replace(valid, crate_origin="bogus:thing"), valid, "crate_origin"),
+        (dc.replace(valid, target="/abs/path"), valid, "target"),
+        (dc.replace(valid, argument_digest="z" * 64), valid, "argument_digest"),
+    )
 
+
+@pytest.mark.parametrize(
+    ("broken", "repaired", "field"),
+    _field_pairs(),
+    ids=[field for _, _, field in _field_pairs()],
+)
+def test_every_refused_field_is_refused_by_itself(
+    broken: CacheKey, repaired: CacheKey, field: str
+) -> None:
+    """Each refused field is refused by itself, and only itself.
+
+    The broken key differs from the valid one in a single field, so the refusal
+    cannot come from the row's shape. Restoring that field makes the row
+    storable again, which proves the refusal tracked the field under test.
+    """
+    assert broken != repaired, f"the case really changes {field}"
     with pytest.raises(ValueError, match="cache key fields are invalid"):
         encode_line(_record(broken))
-    repaired = dc.replace(broken, crate_name="serde")
-    assert encode_line(_record(repaired)), "repairing the one field makes it storable"
+    assert encode_line(_record(repaired)), (
+        f"restoring {field} makes the row storable again"
+    )
