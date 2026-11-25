@@ -17,6 +17,7 @@ from outcome_recorder_test_helpers import (
     complete_query,
     launch_payload,
     outcome_module,
+    recorder_progress,
     stats_text,
 )
 
@@ -97,3 +98,66 @@ def test_a_label_is_not_released_before_its_query_completed() -> None:
     assert summary.observed_at == DELAYED_READING_AT, (
         "the summary is dated at the same reading moment"
     )
+
+
+def test_an_overflow_resets_the_baseline_and_a_later_hit_is_attributed() -> None:
+    """An overflowing window discards the baseline, so the next one can balance.
+
+    The overflowed requests remain in sccache's cumulative counters, so keeping
+    the old baseline would make every later window's delta include requests it
+    does not hold. The reset is what lets a later reading attribute a solo hit
+    at all; without it, this test's final label never appears.
+    """
+    recorder = outcome_module("outcome_recorder")
+    payload = launch_payload(recorder, cache_key())
+    state = baseline_state(recorder)
+    for index in range(65):
+        state, _ = recorder.advance(
+            state,
+            recorder.Launched(
+                group_id=f"overflow-{index}",
+                is_cached=True,
+                payload=payload,
+                now=float(index),
+            ),
+        )
+
+    assert recorder_progress(state).baseline is None, (
+        "the overflowed window cannot keep a baseline it no longer balances"
+    )
+
+    state, _ = begin_query(state, recorder, clear_gate_event(recorder, 100.0))
+    state, _ = complete_query(state, recorder, stats_text(), 100.5)
+    assert recorder_progress(state).baseline is not None, (
+        "the next reading establishes a fresh baseline"
+    )
+
+    state, _ = recorder.advance(
+        state,
+        recorder.Launched(
+            group_id="after-overflow",
+            is_cached=True,
+            payload=payload,
+            now=101.0,
+        ),
+    )
+    state, _ = recorder.advance(
+        state,
+        recorder.Ended(
+            group_id="after-overflow", is_clean=True, now=101.5, observed_at=OBSERVED_AT
+        ),
+    )
+    state, _ = begin_query(state, recorder, clear_gate_event(recorder, 102.0))
+    _state, output = complete_query(
+        state,
+        recorder,
+        stats_text(compile_requests=1, requests_executed=1, cache_hits=1),
+        102.5,
+    )
+
+    rows = [record for record in output.records if isinstance(record, OutcomeRecord)]
+
+    assert len(rows) == 1, "the later launch is attributed on its own"
+    assert rows[0].outcome == "hit", "a solo hit is labelled rather than guessed"
+    assert rows[0].outcome_attribution == "solo", "the attribution is the solo case"
+    assert rows[0].outcome_reason == "none", "a label carries no refusal reason"
