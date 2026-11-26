@@ -14,10 +14,12 @@ upgrades and restarts the service.
 import datetime as dt
 import time
 import typing as typ
+from pathlib import Path
 
 import pytest
 from differential_trace_test_helpers import cached_entry
 from outcome_shell_test_support import (
+    OutcomeWorld,
     OutcomeWorldOptions,
     admitted_launch,
     make_outcome_world,
@@ -36,20 +38,14 @@ from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config
+from buildlimits.predict.dataset import Snapshot
 from buildlimits.predict.events import label_moment
 from buildlimits.predict.harness import walk_forward
+from buildlimits.predict.history import released_labels
 from buildlimits.predict.timing import audit
 from buildlimits.supervisor_outcome_setup import GroupEnding
+from buildlimits.supervisor_outcomes import OutcomeShell
 from buildlimits.supervisor_placement import mark_admission
-
-if typ.TYPE_CHECKING:
-    from pathlib import Path
-
-    from outcome_shell_test_support import OutcomeWorld
-
-    from buildlimits.predict.dataset import Snapshot
-    from buildlimits.supervisor import Supervisor
-    from buildlimits.supervisor_outcomes import OutcomeShell
 
 pytestmark = [
     *sccache_host_marks(),
@@ -100,10 +96,11 @@ def _compile_invocation(
     before placement, so the entry carries the moment the decision was applied
     rather than a time the test chose for it.
     """
-    shell = typ.cast("OutcomeShell", world.shell)
+    assert isinstance(world.shell, OutcomeShell), "the world built the shell"
+    shell = world.shell
     entry = cached_entry()
     launch = admitted_launch(world.admission, request_id)
-    mark_admission(typ.cast("Supervisor", world.supervisor), entry)
+    mark_admission(typ.cast("typ.Any", world.supervisor), entry)
     shell.launched(entry, launch.group_id)
     result = _run_compile(
         _compile_command(tools.executable, tools.source, tools.output, metadata),
@@ -124,7 +121,8 @@ def _measured_store(world: OutcomeWorld, store: Path) -> list[StoreRecord]:
     it was handed. Closing the shell bounds that flush; the file is then read
     through the store's own decoder.
     """
-    shell = typ.cast("OutcomeShell", world.shell)
+    assert isinstance(world.shell, OutcomeShell), "the world built the shell"
+    shell = world.shell
     shell.close(timeout=0.1)
     return list(decoded_store(store.read_text(encoding="utf-8"), "shell's").records)
 
@@ -156,33 +154,63 @@ def _assert_measured_rows(measured: list[OutcomeRecord]) -> None:
         )
 
 
-def _assert_replayed(snapshot: object) -> None:
+def _assert_each_event(measured: list[OutcomeRecord], snapshot: Snapshot) -> None:
+    """Assert each stored row survives as the snapshot event it became.
+
+    Field by field, and per invocation: the attempt, the generation that
+    stamped it, the generation digest, the completion moment and the decision
+    and label moments all have to be the ones the row recorded. A snapshot that
+    kept only the row count, or that swapped two invocations' identities, would
+    still satisfy a count-based check.
+    """
+    assert isinstance(snapshot, Snapshot), "the loader returned a snapshot"
+    labelled = [event for event in snapshot.events if event.label in {"hit", "miss"}]
+    assert len(labelled) == len(measured), "one event per measured row"
+    for record, occurred in zip(measured, labelled, strict=True):
+        assert occurred.label == record.outcome, "the label survives"
+        assert occurred.attempt == record.attempt, "the attempt survives"
+        assert occurred.supervisor_generation == record.supervisor_generation, (
+            "the clock domain survives"
+        )
+        assert occurred.generation_digest == record.generation_digest, (
+            "the generation digest survives"
+        )
+        assert occurred.completed_at == record.completed_at, (
+            "the completion moment survives"
+        )
+        assert occurred.admitted_at == record.admitted_at, (
+            "the decision moment survives"
+        )
+        assert label_moment(occurred) == record.observed_at, (
+            "the label moment survives as the reading that accepted it"
+        )
+        assert occurred.label_observed_verified, "and survives as proof"
+
+
+def _assert_replayed(snapshot: Snapshot) -> None:
     """Assert the snapshot and the replay keep both measured invocations."""
-    typed = typ.cast("Snapshot", snapshot)
-    labelled = [event for event in typed.events if event.label in {"hit", "miss"}]
-    assert [event.label for event in labelled] == ["miss", "hit"], (
-        "both measured labels survive the store and the snapshot"
-    )
-    assert all(event.label_observed_verified for event in labelled), (
-        "each label's moment survives as proof"
-    )
+    labelled = [event for event in snapshot.events if event.label in {"hit", "miss"}]
     assert all(
         event.admitted_at is not None
         and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
         for event in labelled
     ), "each decision precedes the moment its label was accepted"
 
-    verdict = audit(typed.events)
+    verdict = audit(snapshot.events)
     assert verdict.uncorrelated == 0, "both rows name a complete attempt pair"
     assert verdict.conflicts == 0 and verdict.duplicates == 0, (
         "the measured rows neither repeat nor contradict one another"
     )
-    walk = walk_forward(typed.events, load_config())
+    walk = walk_forward(snapshot.events, load_config())
     assert sum(len(group) for group in walk.moments) == len(labelled), (
         "the replay answers both measured admissions"
     )
-    assert typed.diagnostics is not None, "the accounting block is present"
-    assert typed.diagnostics.store.by_server_version, (
+    released = released_labels(snapshot.events)
+    assert [moment for moment, _index in released] == [
+        label_moment(event) for event in labelled
+    ], "each label is released at the reading that accepted it"
+    assert snapshot.diagnostics is not None, "the accounting block is present"
+    assert snapshot.diagnostics.store.by_server_version, (
         "the snapshot states the sccache version its rows were measured against"
     )
 
@@ -193,13 +221,14 @@ def test_measured_cold_and_warm_compiles_survive_the_shell_path(
     """The shell's own path keeps identity, timing and provenance to replay."""
     tools = toolchain(tmp_path)
     socket = tmp_path / "s.sock"
-    store = store_path({"HOME": str(tmp_path)})
+    store = Path(store_path({"HOME": str(tmp_path)}))
 
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
     ) as (_server, _scoped):
         world = _measured_world(tmp_path, tools, socket)
-        shell = typ.cast("OutcomeShell", world.shell)
+        assert isinstance(world.shell, OutcomeShell), "the world built the shell"
+        shell = world.shell
         _tick_until(shell, "readings", 1, "take the baseline")
         for request_id, metadata in ((1, "shell-cold"), (2, "shell-cold")):
             _compile_invocation(world, tools, request_id, metadata)
@@ -210,7 +239,9 @@ def test_measured_cold_and_warm_compiles_survive_the_shell_path(
     _assert_measured_rows(measured)
 
     decoded = decoded_store(store.read_text(encoding="utf-8"), "shell's")
-    _assert_replayed(snapshot_of(decoded, tmp_path, "measured"))
+    snapshot = snapshot_of(decoded, tmp_path, "measured")
+    _assert_each_event(measured, snapshot)
+    _assert_replayed(snapshot)
 
 
 def _measured_world(tmp_path: Path, tools: Toolchain, socket: Path) -> OutcomeWorld:

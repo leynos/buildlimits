@@ -62,32 +62,42 @@ def independence(stream: tuple[Event, ...], timing: TimingAudit) -> tuple[bool, 
     )
 
 
-def _decision_usable(event: Event, reason: str | None) -> bool:
-    """Return whether the row's decision time survives the audit.
+def _decision_usable(event: Event) -> bool:
+    """Return whether the row records a decision the clock can order.
 
-    Each half is asked of the row's own evidence, not of the audit's first
+    Each half is asked of the row's own evidence, never of the audit's first
     closed reason. ``timing_exclusion`` reports one reason, so a row missing
     both times is excluded as ``no_admission_time``; reading that reason as
     proof that its availability was fine would count the row twice over.
+    ``admission_moment`` is the same predicate the replay uses, so an
+    admission recorded after its own observation cannot count here either.
 
     Returns
     -------
     bool
-        Whether the row records a decision the clock can order.
+        Whether the row has an admission moment the clock can order.
     """
-    return event.admitted_at is not None and reason != "admission_after_availability"
+    return admission_moment(event) is not None
 
 
-def _availability_usable(event: Event, reason: str | None) -> bool:
-    """Return whether the row's availability time survives the audit.
+def _availability_usable(event: Event) -> bool:
+    """Return whether the row proves a label time its own completion precedes.
+
+    The completion comparison is made here rather than taken from the audit's
+    reason, because ``timing_exclusion`` reports ``admission_after_availability``
+    first and would hide a completion that is later still.
 
     Returns
     -------
     bool
-        Whether the row proves its label time and no closed reason withholds
-        the other half of the pair it must be ordered against.
+        Whether the row proves its label time and no later completion
+        contradicts it.
     """
-    return label_moment(event) is not None and reason not in _UNAVAILABILITY_REASONS
+    available = label_moment(event)
+    if available is None:
+        return False
+    completed = event.completed_at
+    return completed is None or completed <= available
 
 
 def _is_independent(event: Event, reason: str | None) -> bool:
@@ -105,20 +115,6 @@ def _is_independent(event: Event, reason: str | None) -> bool:
         and event.supervisor_generation is not None
         and reason not in CORRELATION_REASONS
     )
-
-
-_UNAVAILABILITY_REASONS = frozenset({
-    "no_availability_time",
-    "completion_after_availability",
-})
-"""Reasons that say the row's own label time is not usable.
-
-The two admission reasons are deliberately absent: a row whose decision is
-missing or late still states when its label became known, and the audit's
-first closed reason must not be read as evidence that the availability is
-missing too. A row missing both times has no ``label_moment`` at all, so it
-counts as unavailable here on its own evidence.
-"""
 
 
 @dc.dataclass(slots=True)
@@ -140,9 +136,9 @@ class _Tally:
         self.independent += 1
         if reason is None:
             self.usable += 1
-        if _decision_usable(event, reason):
+        if _decision_usable(event):
             self.admission_usable += 1
-        if _availability_usable(event, reason):
+        if _availability_usable(event):
             self.availability_usable += 1
 
 

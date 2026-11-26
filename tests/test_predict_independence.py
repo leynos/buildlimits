@@ -31,6 +31,7 @@ from buildlimits.predict.timing import audit
 
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Label
+    from buildlimits.predict.harness import Walk
 
 
 def test_repeated_attempts_do_not_satisfy_the_label_gate() -> None:
@@ -228,6 +229,62 @@ def test_a_row_missing_both_times_counts_as_neither_half() -> None:
     )
     assert evaluate(walk, config).status == STATUS_INSUFFICIENT, (
         "the timing halves tie, so neither shortage is named"
+    )
+
+
+def _beside_usable(extra: Event) -> Walk:
+    """Return the walk for five usable rows beside one defective row.
+
+    Returns
+    -------
+    Walk
+        The replay of the six rows under the test thresholds.
+    """
+    config = dc.replace(predict_config(), minimum_labelled_events=10)
+    return walk_forward((*_correlated(5, prefix="a"), extra), config)
+
+
+def test_an_unverified_row_cannot_lend_its_unordered_decision() -> None:
+    """The first closed reason is not a statement about the other half.
+
+    The row is unverified and its admission (30) follows its own observation
+    (20), so the audit reports ``no_availability_time``. Its admission still
+    cannot count as a usable decision: ``admission_moment`` rejects the
+    ordering, and the diagnostic population must agree with the replay about
+    what is usable.
+    """
+    unordered = dc.replace(
+        event(0, moments=(1.0, None)),
+        admitted_at=EPOCH + dt.timedelta(seconds=30),
+        observed_at=EPOCH + dt.timedelta(seconds=20),
+        label_observed_verified=False,
+    )
+    walk = _beside_usable(unordered)
+
+    assert walk.admission_usable_labelled == 5, (
+        "an admission after its own observation is not a usable decision"
+    )
+    assert walk.availability_usable_labelled == 5, "nor does it lend availability"
+
+
+def test_a_late_completion_withholds_availability_despite_another_reason() -> None:
+    """A completion later than the label is its own defect, whatever came first.
+
+    The row's admission is also after its availability, so the audit names
+    ``admission_after_availability``. Its completion is later still, so the
+    availability count must not take the audit's first reason as proof that the
+    label time is sound.
+    """
+    contradictory = dc.replace(
+        event(0, moments=(1.0, 5.0)),
+        admitted_at=EPOCH + dt.timedelta(seconds=30),
+        completed_at=EPOCH + dt.timedelta(seconds=25),
+    )
+    walk = _beside_usable(contradictory)
+
+    assert walk.admission_usable_labelled == 5, "the late decision is not usable"
+    assert walk.availability_usable_labelled == 5, (
+        "a completion after the label withholds the availability too"
     )
 
 
