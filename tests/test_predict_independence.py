@@ -13,15 +13,22 @@ the count names only the labelled, verified rows that justify it.
 
 import dataclasses as dc
 import datetime as dt
+import typing as typ
 
 from predict_test_helpers import hand_event, predict_config
 from predict_timing_helpers import event
 
 from buildlimits.predict.evaluation import evaluate
-from buildlimits.predict.events import EPOCH
+from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import walk_forward
-from buildlimits.predict.sufficiency import STATUS_INSUFFICIENT
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_AVAILABILITY,
+)
 from buildlimits.predict.timing import audit
+
+if typ.TYPE_CHECKING:
+    from buildlimits.predict.events import Label
 
 
 def test_repeated_attempts_do_not_satisfy_the_label_gate() -> None:
@@ -58,6 +65,35 @@ def test_repeated_attempts_do_not_satisfy_the_label_gate() -> None:
     )
 
 
+def _legacy(count: int, *, start: int = 0, label: str = "hit") -> tuple[Event, ...]:
+    """Return ``count`` rows that carry a verified time but no attempt pair.
+
+    Each row keeps the moment its label was accepted and loses only the
+    correlation identity, which is what a version 3 or 4 row looks like after
+    extraction.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The legacy rows, in append order.
+    """
+    return tuple(
+        dc.replace(
+            hand_event(
+                start + index,
+                moments=(
+                    EPOCH + dt.timedelta(seconds=start + index),
+                    EPOCH + dt.timedelta(seconds=start + index + 1),
+                ),
+                label=typ.cast("Label", label),
+            ),
+            attempt=None,
+            supervisor_generation=None,
+        )
+        for index in range(count)
+    )
+
+
 def test_a_legacy_row_replays_but_does_not_claim_independence() -> None:
     """A row with no attempt pair is evidence of a label, not of independence.
 
@@ -67,7 +103,31 @@ def test_a_legacy_row_replays_but_does_not_claim_independence() -> None:
     purpose is to require independent labels. Otherwise a legacy history could
     satisfy the gate with rows whose duplication the document cannot rule out.
     """
-    legacy = tuple(
+    legacy = _legacy(12)
+    config = dc.replace(predict_config(), minimum_labelled_events=10)
+
+    walk = walk_forward(legacy, config)
+
+    assert walk.labelled == 12, "every legacy row carries a label"
+    assert walk.independent_labelled == 0, "none of them proves its independence"
+    assert walk.usable_labelled == 0, "and none of them counts toward the gate"
+    assert sum(len(group) for group in walk.moments) == 12, "each row still replays"
+    assert evaluate(walk, config).status == STATUS_INSUFFICIENT, (
+        "the gate is not cleared by rows whose independence is unknown"
+    )
+
+
+def test_a_mixed_history_cannot_compose_one_gate_out_of_two_populations() -> None:
+    """Independent-but-unverified labels plus scored legacy rows are not enough.
+
+    Twenty correlated rows prove their independence but not their timing, and
+    twelve legacy rows prove their timing but not their independence. Either
+    population alone is large enough to look like evidence, and the legacy rows
+    do supply scored held-out rows. The gate counts their intersection, which
+    is empty, so the verdict names the availability evidence it is short of
+    rather than reporting a comparison the history cannot support.
+    """
+    unverified = tuple(
         dc.replace(
             hand_event(
                 index,
@@ -76,21 +136,22 @@ def test_a_legacy_row_replays_but_does_not_claim_independence() -> None:
                     EPOCH + dt.timedelta(seconds=index + 1),
                 ),
                 label="hit",
+                verified=False,
             ),
-            attempt=None,
-            supervisor_generation=None,
+            attempt=f"u{index}",
         )
-        for index in range(12)
+        for index in range(20)
     )
+    legacy = _legacy(12, start=100, label="miss")
     config = dc.replace(predict_config(), minimum_labelled_events=10)
 
-    walk = walk_forward(legacy, config)
+    walk = walk_forward(unverified + legacy, config)
 
-    assert walk.labelled == 12, "every legacy row carries a label"
-    assert walk.usable_labelled == 0, "none of them proves its independence"
-    assert sum(len(group) for group in walk.moments) == 12, "each row still replays"
-    assert evaluate(walk, config).status == STATUS_INSUFFICIENT, (
-        "the gate is not cleared by rows whose independence is unknown"
+    assert walk.labelled == 32, "both populations carry labels"
+    assert walk.independent_labelled == 20, "the correlated rows are independent"
+    assert walk.usable_labelled == 0, "but none of the rows is jointly usable"
+    assert evaluate(walk, config).status == STATUS_INSUFFICIENT_AVAILABILITY, (
+        "the verdict names the timing evidence the history is short of"
     )
 
 

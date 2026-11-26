@@ -22,13 +22,13 @@ historical row is retroactively repaired.
 All six commit gates pass at the final commit: `check-fmt`, `lint` (ruff,
 interrogate, both Pylint sweeps, Ambrleaks, Skylos, Nose duplication and the
 action linters), `typecheck`, `test`, `markdownlint` and `nixie`. The opt-in
-`test-sccache-host` suite runs the real observer check against sccache 0.14.0
-and it passes. Its sibling latency-budget test, which this branch does not
-touch, fails on this host: the fake-`/proc` baseline read alone measured a p99
-of 3.02 ms in one run and 1.98 ms in another against a 2.0 ms absolute
-threshold, with the host at load average 20 or more. That is a host-load effect
-on an unrelated test, not a regression in this change, and the test remains
-unmodified here.
+`test-sccache-host` suite runs the real observer check and the measured shell
+trace against sccache 0.14.0, and it passes. One sibling latency-budget test,
+which this branch does not touch, is load-sensitive: at load average 20 or more
+the fake-`/proc` baseline read alone measured a p99 of 3.02 ms in one run and
+1.98 ms in another against a 2.0 ms absolute threshold, while the whole suite
+passed at load average 13. That is a host-load effect on an unrelated test, not
+a regression in this change, and the test remains unmodified here.
 
 One lesson worth recording: `make test` collects the package's doctests as well
 as `tests/`, so a focused `pytest tests/...` run during development does not
@@ -100,6 +100,30 @@ so the status decision — the counts, the closed status vocabulary and the two
 predicates — moved to `predict/sufficiency.py`. The evaluation and the verdict
 it assembles now read one shared decision rather than two copies of it, which
 is also what the first lesson above asks for.
+
+### Resolved: the fourth round joined the two evidence properties
+
+The fourth assessment found the remaining composition: the gate required
+independence but not a verified time, so independent-but-unverified labels
+could clear the minimum while repeated legacy rows supplied the scored rows the
+held-out comparison needs. The gate now counts the intersection — a complete
+pair, no correlation exclusion, and a timing the audit accepts — and
+`Walk.independent_labelled` keeps the independence count for diagnosis.
+`insufficient label-availability times` is reported when independence is
+plentiful and the withheld timing is the real shortage. Regression:
+`tests/test_predict_independence.py::test_a_mixed_history_cannot_compose_one_gate_out_of_two_populations`.
+
+The same round asked for the measured trace to start at the production
+admission boundary rather than at a record the observer test builds itself.
+`tests/test_sccache_outcome_shell_trace.py` now drives `mark_admission`, the
+shell's launch and ending hooks, a real sccache compile, the store writer, the
+store reader, the snapshot files, the audit and the replay in one opt-in run.
+`tests/outcome_shell_test_support.py` gained the two injectable ports and the
+supervisor handle that let it do so without duplicating the world builder.
+
+The lesson is the same one the third round taught in a different place: two
+counts that describe different properties cannot be interchanged just because
+each is individually plausible. A gate has to name the conjunction it needs.
 
 ## The problem
 

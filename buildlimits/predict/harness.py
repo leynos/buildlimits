@@ -11,12 +11,7 @@ import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits.predict.events import (
-    Features,
-    admission_moment,
-    label_moment,
-    scored_label,
-)
+from buildlimits.predict.events import Features, scored_label
 from buildlimits.predict.history import (
     admission_schedule,
     features,
@@ -25,8 +20,9 @@ from buildlimits.predict.history import (
     unverified_label_count,
 )
 from buildlimits.predict.phases import Split, phases, split
+from buildlimits.predict.populations import population
 from buildlimits.predict.predictors import single_predictors, update_all
-from buildlimits.predict.timing import CORRELATION_REASONS, TimingAudit, audit
+from buildlimits.predict.timing import TimingAudit, audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -84,12 +80,24 @@ class Walk:
         verified. This is the label-coverage denominator, kept apart from the
         phase counts so a honeypot of unverified labels cannot hide behind
         ``insufficient data``.
-    usable_labelled : int
+    independent_labelled : int
         Labelled events that carry a complete attempt pair and no correlation
-        exclusion. This is the population the minimum-label gate counts: a
-        repeated or contradictory append cannot inflate it, and a row whose
-        independence cannot be established does not claim to be independent
-        evidence. A legacy row still replays; it simply does not count here.
+        exclusion. This is the independence count a report states beside the
+        gate's population: a repeated or contradictory append cannot inflate
+        it, and a row whose independence cannot be established does not claim
+        to be independent evidence.
+    usable_labelled : int
+        The independent labels whose timing the audit also accepts. This is
+        the population the minimum-label gate counts, so a history cannot clear
+        it with labels that are independent but unverified, or verified but
+        of unknown independence. A legacy row still replays and scores; it
+        simply does not count here.
+    admission_usable_labelled : int
+        The independent labels whose decision time is usable. Compared with
+        ``availability_usable_labelled``, it names which half of the timing
+        evidence a failing gate is actually short of.
+    availability_usable_labelled : int
+        The independent labels whose availability time is usable.
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
     unavailable_availability : int
@@ -111,7 +119,10 @@ class Walk:
     moments: tuple[tuple[int, ...], ...]
     timing: TimingAudit
     labelled: int
+    independent_labelled: int
     usable_labelled: int
+    admission_usable_labelled: int
+    availability_usable_labelled: int
     unavailable_admission: int
     unavailable_availability: int
     applied_labels: int
@@ -172,7 +183,7 @@ def walk_forward(
         )
         for name in replay.probabilities
     }
-    counts = _population(stream, timing)
+    counts = population(stream, timing)
     return Walk(
         events=stream,
         rows=rows,
@@ -182,70 +193,15 @@ def walk_forward(
         moments=moments,
         timing=timing,
         labelled=counts.labelled,
+        independent_labelled=counts.independent_labelled,
         usable_labelled=counts.usable_labelled,
+        admission_usable_labelled=counts.admission_usable_labelled,
+        availability_usable_labelled=counts.availability_usable_labelled,
         unavailable_admission=counts.unavailable_admission,
         unavailable_availability=counts.unavailable_availability,
         applied_labels=replay.applied_labels,
         unapplied_labels=replay.unapplied_labels,
         unverified_label_time=unverified_label_count(stream),
-    )
-
-
-@dc.dataclass(frozen=True, slots=True)
-class _Population:
-    """The label and time counts a walk reports beside its predictions.
-
-    They are read together by the evidence gates, and kept apart from the
-    replay so that each count is decided once from the same stream and audit.
-    """
-
-    labelled: int
-    usable_labelled: int
-    unavailable_admission: int
-    unavailable_availability: int
-
-
-def _is_independent(event: Event, reason: str | None) -> bool:
-    """Return whether a row is an independent label the gate may count.
-
-    Returns
-    -------
-    bool
-        Whether the row carries a hit or miss label, names a complete attempt
-        pair, and no correlation exclusion rejects it.
-    """
-    return (
-        event.label != "unknown"
-        and event.attempt is not None
-        and event.supervisor_generation is not None
-        and reason not in CORRELATION_REASONS
-    )
-
-
-def _population(stream: tuple[Event, ...], timing: TimingAudit) -> _Population:
-    """Count the labelled and timed rows the evidence gates read.
-
-    Returns
-    -------
-    _Population
-        The labelled population, the independent part of it, and the rows
-        missing an admission or an availability time.
-    """
-    return _Population(
-        labelled=sum(1 for event in stream if event.label != "unknown"),
-        usable_labelled=sum(
-            1
-            for index, event in enumerate(stream)
-            if _is_independent(event, timing.reasons[index])
-        ),
-        unavailable_admission=sum(
-            1 for event in stream if admission_moment(event) is None
-        ),
-        unavailable_availability=sum(
-            1
-            for event in stream
-            if admission_moment(event) is not None and label_moment(event) is None
-        ),
     )
 
 

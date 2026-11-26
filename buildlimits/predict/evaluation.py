@@ -175,10 +175,13 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     compared = compare(walk, ensembles, config)
     counts = EvidenceCounts(
         labelled=walk.labelled,
+        independent_labelled=walk.independent_labelled,
         usable_labelled=walk.usable_labelled,
         admission_recorded=sum(
             1 for event in walk.events if event.admitted_at is not None
         ),
+        admission_usable_labelled=walk.admission_usable_labelled,
+        availability_usable_labelled=walk.availability_usable_labelled,
         unverified_label_time=walk.unverified_label_time,
         predictable=_predictable_count(walk),
         unavailable_availability=walk.unavailable_availability,
@@ -272,9 +275,9 @@ def _insufficient_verdict(
     """
     if status == STATUS_INSUFFICIENT:
         return (
-            f"insufficient data: {counts.usable_labelled} independent labelled "
-            f"events, {config.minimum_labelled_events} required"
-            + _withheld_note(withheld)
+            f"insufficient data: {counts.usable_labelled} labelled events with "
+            f"independent, verified times, {config.minimum_labelled_events} "
+            "required" + _withheld_note(withheld)
         )
     if status == STATUS_INSUFFICIENT_ADMISSION:
         return (

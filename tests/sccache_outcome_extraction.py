@@ -20,7 +20,7 @@ from buildlimits.outcome_record_format import (
 )
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
-from buildlimits.predict.dataset import build_snapshot
+from buildlimits.predict.dataset import Snapshot, build_snapshot
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 
@@ -31,15 +31,20 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import StoreRecord
 
 
-def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) -> None:
-    """Prove the measured rows survive the store files and the snapshot files.
+def round_trip(records: list[StoreRecord], tmp_path: Path, salt_id: str) -> Snapshot:
+    """Write rows to the store, re-read them, and save and load a snapshot.
 
     The rows are written through the same writer the supervisor uses and read
     back from the file, then the snapshot is saved and loaded the same way, so
-    the trace covers the bytes an operator would keep rather than an in-memory
+    a check covers the bytes an operator would keep rather than an in-memory
     document.
+
+    Returns
+    -------
+    Snapshot
+        The history the store's own reader and the snapshot loader accept.
     """
-    header = StoreHeader(salt.salt_id, dt.datetime.now(dt.UTC))
+    header = StoreHeader(salt_id, dt.datetime.now(dt.UTC))
     store = tmp_path / "cache-outcomes.jsonl"
     outcome_store_io.replace_store(store, header, typ.cast("typ.Any", records))
     decoded = decode_lines(store.read_text(encoding="utf-8"))
@@ -52,7 +57,12 @@ def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) ->
     )
     path = tmp_path / "history.jsonl"
     save_snapshot(path, snapshot)
-    snapshot = load_snapshot(path)
+    return load_snapshot(path)
+
+
+def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) -> None:
+    """Prove the measured rows survive the store files and the snapshot files."""
+    snapshot = round_trip(records, tmp_path, salt.salt_id)
     stats = snapshot.stats()
     outcome_rows = len(outcomes(tuple(records)))
 
@@ -108,7 +118,6 @@ def _assert_replay_trace(snapshot: object, records: list[StoreRecord]) -> None:
     records : list[StoreRecord]
         The retained rows, in the order the recorder produced them.
     """
-    from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import label_moment
     from buildlimits.predict.harness import walk_forward
 

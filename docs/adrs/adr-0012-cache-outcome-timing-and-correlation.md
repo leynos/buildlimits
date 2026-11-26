@@ -139,13 +139,25 @@ checked against. A row that states one half of the pair is not this case: it
 claims a correlation it cannot honour, so the snapshot loader refuses it rather
 than letting it evade the correlation gate.
 
-The minimum-label gate counts labels whose independence is provable: a complete
-pair and no correlation exclusion. A history that is mostly retries of a few
-attempts therefore cannot clear a label threshold it does not meet, and neither
-can a history of legacy rows whose independence was never recorded. Those rows
-still replay and still score — ADR §D4 keeps them compatible — they simply do
-not claim to be the independent evidence the gate exists to require. A row
-withheld only for its timing still counts as a recorded label.
+The minimum-label gate counts jointly usable labels: a complete attempt pair,
+no correlation exclusion, *and* a timing the audit accepts. The two properties
+are required together because either one alone is cheap to satisfy. A history
+that is mostly retries of a few attempts cannot clear the gate on repeated
+appends, a history of legacy rows cannot clear it on unrecorded independence,
+and — the case that joins the two — a history cannot clear it by pairing
+independent-but-unverified labels with verified-but-uncorrelated rows, since
+the intersection of those populations is empty. The counts remain published for
+diagnosis: the recorded-label count and the independence count say whether the
+history was simply too small, and the admission-usable and availability-usable
+counts, restricted to the independent labels, name which half of the timing
+evidence is the binding constraint when it was not. A tie between them is not a
+timing shortage, so the verdict says the labels themselves are insufficient
+rather than guessing.
+
+Those rows are not discarded. A legacy row whose time is verified still replays
+and still scores — ADR §D4 keeps that compatibility — and a row withheld for
+its timing still counts as a recorded label for diagnosis. Neither counts as
+the joint evidence the gate exists to require.
 
 ### D5: the snapshot is version 7 and carries the correlation evidence
 
