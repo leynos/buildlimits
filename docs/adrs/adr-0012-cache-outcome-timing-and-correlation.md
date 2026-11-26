@@ -155,7 +155,12 @@ timing shortage, so the verdict says the labels themselves are insufficient
 rather than guessing. Each timing count is derived from the row's own evidence,
 never from the audit's first closed reason: a row that lacks both times is
 excluded as one reason, and reading that reason as proof that the other half
-was fine would count the row twice over.
+was fine would count the row twice over. The decision count uses
+`admission_moment`, the predicate the replay uses, so an admission recorded
+after its own observation is not usable here either. The availability count
+compares the completion moment with the verified label moment directly, because
+`timing_exclusion` names `admission_after_availability` first and would
+otherwise hide a later completion.
 
 The same independence requirement reaches the held-out comparison. A decisive
 interval is paired only over held-out rows that name a distinct invocation, so

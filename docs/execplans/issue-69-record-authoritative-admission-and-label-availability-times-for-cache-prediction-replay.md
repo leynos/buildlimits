@@ -147,7 +147,18 @@ Three gaps remained after the joint gate.
   records afterwards. It now leaves the writer to the shell, so the bytes come
   from the shell's asynchronous `StoreWriter`, and it snapshots and replays
   from that file. `tests/sccache_outcome_extraction.py` exposes `decoded_store`
-  and `snapshot_of`, so both real-sccache checks share one extraction path.
+  and `snapshot_of`, so both real-sccache checks share one extraction path. A
+  sixth round closed the last two gaps in that work. The decision count now uses
+  `admission_moment` rather than a reason comparison, and the availability
+  count compares the completion moment with the verified label moment directly,
+  so a row whose admission follows its own observation cannot lend a usable
+  decision, and a row whose completion follows its label cannot lend a usable
+  availability. The measured trace also compares each stored row with the
+  snapshot event it became — attempt, generation, generation digest,
+  completion, decision and label moment — and asserts the replay releases each
+  label at that retained moment. Regressions:
+  `::test_an_unverified_row_cannot_lend_its_unordered_decision` and
+  `::test_a_late_completion_withholds_availability_despite_another_reason`.
 
 ## The problem
 
