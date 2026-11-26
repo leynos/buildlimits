@@ -19,29 +19,94 @@ from buildlimits.utc_text import utc_text
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
-    from pathlib import Path
 
     from buildlimits.predict.events import Event
 
+__all__ = ["ClockOrderError", "require_ordered_clock"]
+
+
+class ClockOrderError(ValueError):
+    """A history whose recorded clock cannot order it.
+
+    The decision is stated in the domain's own terms — the moments it compared
+    — so a caller that knows which file it was reading can attach that fact
+    where the file is opened rather than passing a path down here.
+
+    Attributes
+    ----------
+    available : datetime
+        The later-appended label time the rule refused.
+    decision : datetime | None
+        The earlier decision it preceded, when that was the failing rule.
+    earlier : datetime | None
+        The earlier label time it stepped back from, for the ordering rule.
+    """
+
+    def __init__(
+        self,
+        *,
+        available: dt.datetime,
+        decision: dt.datetime | None = None,
+        earlier: dt.datetime | None = None,
+    ) -> None:
+        """State the two moments the rule compared."""
+        self.available = available
+        self.decision = decision
+        self.earlier = earlier
+        super().__init__(self._describe())
+
+    def _describe(self) -> str:
+        """Return the sentence the persistence adapter reports verbatim.
+
+        Returns
+        -------
+        str
+            The closed description of the disorder.
+        """
+        if self.decision is not None:
+            return (
+                f"a label available at {utc_text(self.available)} follows a "
+                f"decision taken at {utc_text(self.decision)}; "
+                "label-availability times cannot precede a decision the clock "
+                "already recorded"
+            )
+        earlier = typ.cast("dt.datetime", self.earlier)
+        return (
+            f"{utc_text(self.available)} follows {utc_text(earlier)}; "
+            "label-availability times cannot order a history whose clock ran "
+            "backwards"
+        )
+
+    def at(self, path: object) -> ClockOrderError:
+        """Return an equal disorder whose message names ``path``.
+
+        Returns
+        -------
+        ClockOrderError
+            The same moments, with the reader's location stated.
+        """
+        located = ClockOrderError(
+            available=self.available,
+            decision=self.decision,
+            earlier=self.earlier,
+        )
+        located.args = (f"{path} records {located}",)
+        return located
+
 
 def _require_after_decision(
-    path: Path, available: dt.datetime, decision: dt.datetime | None
+    available: dt.datetime, decision: dt.datetime | None
 ) -> None:
     """Refuse a label time that precedes a decision the file already holds.
 
     Raises
     ------
-    ValueError
+    ClockOrderError
         If a later-appended label time is earlier than an earlier decision.
     """
     if decision is None or available >= decision:
         return
-    msg = (
-        f"{path} records a label available at {utc_text(available)} "
-        f"after a decision taken at {utc_text(decision)}; label-availability "
-        "times cannot precede a decision the clock already recorded"
-    )
-    raise ValueError(msg)
+    raise ClockOrderError(available=available, decision=decision)
 
 
 def _later(
@@ -61,7 +126,7 @@ def _later(
     return max(latest, candidate)
 
 
-def require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
+def require_ordered_clock(events: cabc.Sequence[Event]) -> None:
     """Refuse a history whose recorded clock ran backwards.
 
     The recorder stamps every row of one reading with that reading's own
@@ -83,26 +148,21 @@ def require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
 
     Raises
     ------
-    ValueError
+    ClockOrderError
         If an admission-bearing history records an earlier verified label time
-        after a later one.
+        after a later one, or a label before an earlier decision.
     """
     if not any(event.admitted_at is not None for event in events):
         return
     usable = timing_audit(events).usable
-    verified = _verified_label_times(path, events, usable)
+    verified = _verified_label_times(events, usable)
     for earlier, later in itertools.pairwise(verified):
         if later < earlier:
-            msg = (
-                f"{path} records {utc_text(later)} after {utc_text(earlier)}; "
-                "label-availability times cannot order a history whose clock "
-                "ran backwards"
-            )
-            raise ValueError(msg)
+            raise ClockOrderError(available=later, earlier=earlier)
 
 
 def _verified_label_times(
-    path: Path, events: cabc.Sequence[Event], usable: cabc.Sequence[bool]
+    events: cabc.Sequence[Event], usable: cabc.Sequence[bool]
 ) -> list[dt.datetime]:
     """Return the verified label times whose append order a clock can order.
 
@@ -132,7 +192,7 @@ def _verified_label_times(
     for index, event in enumerate(events):
         available = label_moment(event) if usable[index] else None
         if available is not None:
-            _require_after_decision(path, available, latest_admission)
+            _require_after_decision(available, latest_admission)
             verified.append(available)
         latest_admission = _later(latest_admission, event.admitted_at)
     return verified

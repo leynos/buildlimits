@@ -221,16 +221,17 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         completed_at=_parse_stamp(row.get("completed_at")),
         attempt=attempt,
         supervisor_generation=generation,
-        generation_digest=_digest(row.get("generation_digest")),
-        record_evidence=_digest(row.get("record_evidence")),
+        generation_digest=_digest(row.get("generation_digest"), "generation_digest"),
+        record_evidence=_digest(row.get("record_evidence"), "record_evidence"),
     )
 
 
-def _digest(value: object) -> str | None:
-    """Validate one optional salted generation digest.
+def _digest(value: object, name: str) -> str | None:
+    """Validate one optional digest field.
 
-    A malformed value is refused by :func:`_optional_text`, which names this
-    field rather than reporting a generic shape error.
+    A malformed value is refused by :func:`_optional_text`, which names the
+    field the caller supplied, so a bad ``record_evidence`` is never reported
+    as a bad ``generation_digest``.
 
     Returns
     -------
@@ -239,7 +240,7 @@ def _digest(value: object) -> str | None:
     """
     return _optional_text(
         value,
-        name="generation_digest",
+        name=name,
         allowed=_LOWER_HEX,
         length=_DIGEST_LENGTH,
     )

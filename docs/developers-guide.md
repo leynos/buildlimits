@@ -212,9 +212,9 @@ the process is an adapter at its edge. The domain modules are `accounting`,
 `bootstrap`, `comparison`, `config`, `dataset`, `diagnostics_codec`,
 `diagnostics_generations`, `ensemble_runs`, `ensembles`, `evaluation`, `events`,
 `fitting`, `harness`, `journal_codec`, `journal_provenance`, `metrics`,
-`observer_accounting`, `populations`, `predictors`, `probability`,
+`observer_accounting`, `phases`, `populations`, `predictors`, `probability`,
 `render_sufficiency`, `report`, `report_blocks`, `report_codec`, `scoring`,
-`snapshot_diagnostics_join` and `sufficiency`.
+`snapshot_clock`, `snapshot_diagnostics_join`, `sufficiency` and `timing`.
 
 `accounting` is the bounded label-loss value: it folds decoded store rows into
 counts by cache result, outcome reason, attribution, origin, parser class,
@@ -402,6 +402,9 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.render_sufficiency`                                                       | The report's data-sufficiency block: the denominators, admission coverage, withheld labels, the per-generation label-loss breakdown and closed-history loss a reader judges the scores against         |
 | `predict.sufficiency`                                                              | The evidence-sufficiency decision: the population counts the gates are read against, the closed status vocabulary, and `evidence_status`/`has_evidence`; shared by the evaluation and its renderer     |
 | `predict.report_blocks`                                                            | The frozen `ReportData` value and `report_data`, which split a report document's `data`, `stats`, `source`, `journal` and `diagnostics` blocks; read by `render_sufficiency` and the other renderers   |
+| `predict.phases`                                                                   | The tuning/held-out split, placed between label batches so one reading never straddles the boundary, and the summary of where it fell                                                                  |
+| `predict.timing`                                                                   | The per-event audit: the closed exclusion vocabulary, duplicate and conflict classification, the scored and uncorrelated counts, and `exclusions`                                                      |
+| `predict.snapshot_clock`                                                           | The chronology rules a snapshot must satisfy: verified label times in append order, and no label before a decision the file already recorded                                                           |
 | `predict.populations`                                                              | The label populations the evidence gates read: recorded, independent, jointly usable, and the two timing halves that name which evidence a failing gate lacks                                          |
 | `predict.observer_accounting`                                                      | Bounded recorder counts from the journal, with appends counted apart from compactions and seals, and omitted outcomes counted by cause                                                                 |
 | `outcome_record_time`                                                              | The canonical UTC text with a trailing `Z`, its strict parser, and the sentinel that separates an absent optional timestamp from a corrupt one                                                         |
@@ -1021,6 +1024,11 @@ scored populations separately. The correlation pair
 `(supervisor_generation, attempt)` is what tells one invocation from another,
 and `predict.timing.audit` classifies each event against the decision,
 availability and correlation gates with a closed exclusion vocabulary.
+`predict.snapshot_clock` owns the two chronology rules a history must satisfy
+before it may be scored. It is a domain module, so it raises `ClockOrderError`
+carrying the moments it compared rather than a filesystem path; the
+`snapshot_store` adapter catches it and re-raises `error.at(path)`, which is
+where the file being read is known.
 
 `StoreHeader` carries the `version` its document was read at or will be written
 with, defaulting to `FORMAT_VERSION`, and decoding preserves the file's own

@@ -16,7 +16,7 @@ from pathlib import Path
 from buildlimits.predict.dataset import Gap, Snapshot, Source
 from buildlimits.predict.diagnostics_codec import diagnostics_from_dict
 from buildlimits.predict.journal_codec import journal_from_dict
-from buildlimits.predict.snapshot_clock import require_ordered_clock
+from buildlimits.predict.snapshot_clock import ClockOrderError, require_ordered_clock
 from buildlimits.predict.snapshot_codec import (
     SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
@@ -53,7 +53,10 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     the earlier readable file would already be gone. The rule raises the same
     ``ValueError`` the loader reports.
     """
-    require_ordered_clock(path, snapshot.events)
+    try:
+        require_ordered_clock(snapshot.events)
+    except ClockOrderError as error:
+        raise error.at(path) from error
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
@@ -116,7 +119,10 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
     decoded_events = tuple(event_from_dict(row, version=version) for row in events)
-    require_ordered_clock(path, decoded_events)
+    try:
+        require_ordered_clock(decoded_events)
+    except ClockOrderError as error:
+        raise error.at(path) from error
     decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),

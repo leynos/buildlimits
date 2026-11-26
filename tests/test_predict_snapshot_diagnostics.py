@@ -282,3 +282,32 @@ def test_an_unavailable_inventory_survives_the_snapshot(tmp_path: Path) -> None:
     assert loaded.diagnostics.history.active_only is False, (
         "the read was not active-only"
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("attempt", "a" * 16, "must be stated together"),
+        ("supervisor_generation", "generation-a", "must be stated together"),
+        ("generation_digest", "abc", "generation_digest is outside its bounded shape"),
+        ("record_evidence", "z" * 64, "record_evidence is outside its bounded shape"),
+    ],
+)
+def test_a_version_seven_document_with_broken_correlation_is_refused(
+    tmp_path: Path, field: str, value: object, reason: str
+) -> None:
+    """A version 7 field that cannot be trusted fails the load, not silently.
+
+    Each case is a document a plausible implementation could write by
+    omission: half a correlation pair, a truncated digest, or a digest in the
+    wrong alphabet. The loader must refuse each one rather than accepting the
+    row with the field dropped, because a dropped pair would let the row evade
+    the duplicate and conflict gates while a truncated digest would compare as
+    if it were complete evidence.
+    """
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0][field] = value
+
+    with pytest.raises(ValueError, match=reason):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
