@@ -13,12 +13,6 @@ reported for every predictor that scored a held-out row, not only the leader.
 
 import typing as typ
 
-from buildlimits.predict.evaluation import (
-    STATUS_INSUFFICIENT,
-    STATUS_INSUFFICIENT_ADMISSION,
-    STATUS_INSUFFICIENT_AVAILABILITY,
-    STATUS_INSUFFICIENT_HELDOUT,
-)
 from buildlimits.predict.formatting import (
     MISSING,
     admission_line,
@@ -35,6 +29,12 @@ from buildlimits.predict.render_tables import (
     origin_table,
 )
 from buildlimits.predict.report_blocks import ReportData, report_data
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_ADMISSION,
+    STATUS_INSUFFICIENT_AVAILABILITY,
+    STATUS_INSUFFICIENT_HELDOUT,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

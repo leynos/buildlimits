@@ -9,17 +9,19 @@ from predict_test_helpers import hand_event, predict_config
 
 from buildlimits.predict.bootstrap import block_bootstrap
 from buildlimits.predict.ensemble_runs import tuning_indices
-from buildlimits.predict.evaluation import (
-    STATUS_INSUFFICIENT,
-    STATUS_INSUFFICIENT_HELDOUT,
-    STATUS_OK,
-    _is_evidence,
-    evaluate,
-)
+from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import Series, walk_forward
 from buildlimits.predict.metrics import summarize
 from buildlimits.predict.scoring import heldout_positions, rows_for
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_HELDOUT,
+    STATUS_OK,
+)
+from buildlimits.predict.sufficiency import (
+    has_evidence as _is_evidence,
+)
 from buildlimits.predict.synthetic import STEP, identity, persistent
 
 if typ.TYPE_CHECKING:

@@ -85,10 +85,11 @@ class Walk:
         phase counts so a honeypot of unverified labels cannot hide behind
         ``insufficient data``.
     usable_labelled : int
-        Labelled events that no correlation exclusion rejects. This is the
-        population the minimum-label gate counts, so a repeated or
-        contradictory append cannot inflate it into a verdict, while a row
-        withheld only for its timing still counts as a recorded label.
+        Labelled events that carry a complete attempt pair and no correlation
+        exclusion. This is the population the minimum-label gate counts: a
+        repeated or contradictory append cannot inflate it, and a row whose
+        independence cannot be established does not claim to be independent
+        evidence. A legacy row still replays; it simply does not count here.
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
     unavailable_availability : int
@@ -171,7 +172,7 @@ def walk_forward(
         )
         for name in replay.probabilities
     }
-    admitted = sum(1 for event in stream if admission_moment(event) is not None)
+    counts = _population(stream, timing)
     return Walk(
         events=stream,
         rows=rows,
@@ -180,22 +181,71 @@ def walk_forward(
         split=split(stream, assigned),
         moments=moments,
         timing=timing,
+        labelled=counts.labelled,
+        usable_labelled=counts.usable_labelled,
+        unavailable_admission=counts.unavailable_admission,
+        unavailable_availability=counts.unavailable_availability,
+        applied_labels=replay.applied_labels,
+        unapplied_labels=replay.unapplied_labels,
+        unverified_label_time=unverified_label_count(stream),
+    )
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _Population:
+    """The label and time counts a walk reports beside its predictions.
+
+    They are read together by the evidence gates, and kept apart from the
+    replay so that each count is decided once from the same stream and audit.
+    """
+
+    labelled: int
+    usable_labelled: int
+    unavailable_admission: int
+    unavailable_availability: int
+
+
+def _is_independent(event: Event, reason: str | None) -> bool:
+    """Return whether a row is an independent label the gate may count.
+
+    Returns
+    -------
+    bool
+        Whether the row carries a hit or miss label, names a complete attempt
+        pair, and no correlation exclusion rejects it.
+    """
+    return (
+        event.label != "unknown"
+        and event.attempt is not None
+        and event.supervisor_generation is not None
+        and reason not in CORRELATION_REASONS
+    )
+
+
+def _population(stream: tuple[Event, ...], timing: TimingAudit) -> _Population:
+    """Count the labelled and timed rows the evidence gates read.
+
+    Returns
+    -------
+    _Population
+        The labelled population, the independent part of it, and the rows
+        missing an admission or an availability time.
+    """
+    return _Population(
         labelled=sum(1 for event in stream if event.label != "unknown"),
         usable_labelled=sum(
             1
             for index, event in enumerate(stream)
-            if event.label != "unknown"
-            and timing.reasons[index] not in CORRELATION_REASONS
+            if _is_independent(event, timing.reasons[index])
         ),
-        unavailable_admission=len(stream) - admitted,
+        unavailable_admission=sum(
+            1 for event in stream if admission_moment(event) is None
+        ),
         unavailable_availability=sum(
             1
             for event in stream
             if admission_moment(event) is not None and label_moment(event) is None
         ),
-        applied_labels=replay.applied_labels,
-        unapplied_labels=replay.unapplied_labels,
-        unverified_label_time=unverified_label_count(stream),
     )
 
 

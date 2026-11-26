@@ -119,20 +119,32 @@ and the refusal reason and attribution. Two rows naming one invocation but
 different recorded evidence did not come from one reading, so they are a
 contradiction rather than an idempotent retry.
 
-A row that proved its time but names no invocation still releases: the marker
-and the pair answer different questions, and requiring both would make every
-version 3 or 4 row unscorable for a fact it never could have carried. Such a
-row takes no part in duplicate or conflict detection, and the audit reports it
-as uncorrelated rather than inventing an identity. That count is published
-beside the scored population, so a report states how many labels rest on
-evidence whose independence a repeated append cannot be checked against. A row
-that states one half of the pair is not this case: it claims a correlation it
-cannot honour, so the snapshot loader refuses it rather than letting it evade
-the correlation gate.
+A repeated attempt whose copies do not both carry the digest is *ambiguous*,
+not identical. Snapshots written before format 7 hold no `record_evidence`, so
+two rows that differ only in attribution would otherwise compare equal on the
+fields the event does map and be accepted as one reading. Silence is not
+agreement: the audit excludes every copy as a conflict, and the store is
+re-extracted to recover the evidence. Only copies whose digests are present and
+equal are an idempotent duplicate.
 
-The minimum-label gate counts independent labelled rows, meaning those no
-correlation exclusion rejects. A history that is mostly retries of a few
-attempts therefore cannot clear a label threshold it does not meet, while a row
+A labelled row that proved its time but names no invocation still releases: the
+marker and the pair answer different questions, and requiring both would make
+every version 3 or 4 row unscorable for a fact it never could have carried.
+Such a row takes no part in duplicate or conflict detection, and the audit
+reports it as uncorrelated rather than inventing an identity. The count covers
+labelled, verified rows only — an `unknown` outcome carries no label and is not
+counted. It is published beside the scored population, so a report states how
+many labels rest on evidence whose independence a repeated append cannot be
+checked against. A row that states one half of the pair is not this case: it
+claims a correlation it cannot honour, so the snapshot loader refuses it rather
+than letting it evade the correlation gate.
+
+The minimum-label gate counts labels whose independence is provable: a complete
+pair and no correlation exclusion. A history that is mostly retries of a few
+attempts therefore cannot clear a label threshold it does not meet, and neither
+can a history of legacy rows whose independence was never recorded. Those rows
+still replay and still score — ADR §D4 keeps them compatible — they simply do
+not claim to be the independent evidence the gate exists to require. A row
 withheld only for its timing still counts as a recorded label.
 
 ### D5: the snapshot is version 7 and carries the correlation evidence
@@ -166,6 +178,19 @@ boot epochs cannot be compared, so they stay inside the process where they were
 taken, and the persisted UTC moments are the only cross-process ordering claim.
 The supervisor generation names the process that made that claim; rows from
 different generations are never joined as one attempt.
+
+The two chronology rules are stated over the file, not over a process, so they
+hold across a supervisor restart by construction. A restarted supervisor
+appends after every row already in the file, and both rules compare a new row
+with the rows behind it whatever generation wrote them; a new process whose
+wall clock has stepped backwards therefore fails the check instead of being
+excused as a fresh clock domain. A delayed delivery is stamped when the reading
+is accepted, not when it was taken, so its position in the file and its stamp
+move together: an ordinary delay lands later than every row already written,
+and can cross neither rule. A stamp that is behind because the clock itself
+stepped back is not a delay, and it is caught wherever the file can see the
+contradiction — against a later verified label by the first rule, against an
+earlier recorded decision by the second.
 
 ### D7: reports separate the two evidence gates
 

@@ -23,6 +23,15 @@ import typing as typ
 from buildlimits.predict.comparison import compare
 from buildlimits.predict.ensemble_runs import EnsembleRun, run_ablations, run_ensembles
 from buildlimits.predict.scoring import ablation_metrics, all_metrics
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_ADMISSION,
+    STATUS_INSUFFICIENT_AVAILABILITY,
+    STATUS_OK,
+    EvidenceCounts,
+    evidence_status,
+    has_evidence,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -31,30 +40,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
     from buildlimits.predict.harness import Walk
     from buildlimits.predict.metrics import Metrics
-
-STATUS_OK = "ok"
-STATUS_INSUFFICIENT = "insufficient data"
-STATUS_INSUFFICIENT_ADMISSION = "insufficient admission times"
-STATUS_INSUFFICIENT_AVAILABILITY = "insufficient label-availability times"
-STATUS_INSUFFICIENT_HELDOUT = "insufficient held-out evidence"
-# One block resamples to itself, so its interval has no width to judge.
-MINIMUM_BLOCKS = 2
-
-
-@dc.dataclass(frozen=True, slots=True)
-class _EvidenceCounts:
-    """The population counts every status and verdict sentence is decided from.
-
-    They travel together because each gate is read against the others: a label
-    shortage, a decision shortage and an availability shortage are told apart
-    by comparing these three numbers, so passing them separately invites a
-    caller to pair one gate's denominator with another gate's numerator.
-    """
-
-    labelled: int
-    usable_labelled: int
-    predictable: int
-    unavailable_availability: int
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -188,13 +173,17 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     metrics = all_metrics(walk, ensembles, config)
     ablated = ablation_metrics(walk, ablations, config)
     compared = compare(walk, ensembles, config)
-    counts = _EvidenceCounts(
+    counts = EvidenceCounts(
         labelled=walk.labelled,
         usable_labelled=walk.usable_labelled,
+        admission_recorded=sum(
+            1 for event in walk.events if event.admitted_at is not None
+        ),
+        unverified_label_time=walk.unverified_label_time,
         predictable=_predictable_count(walk),
         unavailable_availability=walk.unavailable_availability,
     )
-    status = _status(counts, compared.against_base_rate, config)
+    status = evidence_status(counts, compared.against_base_rate, config)
     return Evaluation(
         status=status,
         walk=walk,
@@ -234,58 +223,8 @@ def _predictable_count(walk: Walk) -> int:
     )
 
 
-def _status(
-    counts: _EvidenceCounts,
-    against_base: cabc.Mapping[str, Interval | None],
-    config: Config,
-) -> str:
-    """Return the status the evidence supports.
-
-    The minimum-label gate counts independent labelled rows, so repeated
-    appends cannot clear it. A run that clears it can still hold no event with a
-    usable admission time, and then nothing could be predicted at all. A source
-    that records the decision but never the moment a label became available is
-    reported separately, because the decision time alone cannot prove the label
-    was knowable before a later prediction. When predictions do exist, too few
-    paired rows, or rows forming a single block, are likewise reported
-    separately.
-
-    Returns
-    -------
-    str
-        ``ok``, ``insufficient data``, ``insufficient admission times``,
-        ``insufficient label-availability times`` or ``insufficient held-out
-        evidence``.
-    """
-    if counts.usable_labelled < config.minimum_labelled_events:
-        return STATUS_INSUFFICIENT
-    if counts.predictable == 0:
-        if counts.unavailable_availability:
-            return STATUS_INSUFFICIENT_AVAILABILITY
-        return STATUS_INSUFFICIENT_ADMISSION
-    if not any(_is_evidence(interval, config) for interval in against_base.values()):
-        return STATUS_INSUFFICIENT_HELDOUT
-    return STATUS_OK
-
-
-def _is_evidence(interval: Interval | None, config: Config) -> bool:
-    """Return whether an interval carries enough held-out evidence to judge.
-
-    Returns
-    -------
-    bool
-        Whether the interval was paired over enough rows, in at least two
-        blocks, for its width to mean anything.
-    """
-    return (
-        interval is not None
-        and interval.rows >= config.minimum_scored_events
-        and interval.blocks >= MINIMUM_BLOCKS
-    )
-
-
 def _verdict(
-    counts: _EvidenceCounts,
+    counts: EvidenceCounts,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
     *,
@@ -308,7 +247,7 @@ def _verdict(
     str
         The verdict.
     """
-    status = _status(counts, against_base, config)
+    status = evidence_status(counts, against_base, config)
     if status != STATUS_OK:
         return _insufficient_verdict(status, counts, config, withheld=withheld)
     improving = _improving_predictors(against_base, config)
@@ -319,7 +258,7 @@ def _verdict(
 
 def _insufficient_verdict(
     status: str,
-    counts: _EvidenceCounts,
+    counts: EvidenceCounts,
     config: Config,
     *,
     withheld: int,
@@ -369,7 +308,7 @@ def _improving_predictors(
     return [
         name
         for name, interval in against_base.items()
-        if interval is not None and _is_evidence(interval, config) and interval.high < 0
+        if interval is not None and has_evidence(interval, config) and interval.high < 0
     ]
 
 

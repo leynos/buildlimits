@@ -66,9 +66,10 @@ class TimingAudit:
     conflicts : int
         Rows whose attempt identity also appeared with different evidence.
     uncorrelated : int
-        Verified rows that name no complete attempt pair. They release and
-        score, but a repeated append among them cannot be detected, so the
-        report states how many labels rest on that weaker evidence.
+        Labelled, verified rows that name no complete attempt pair. They release
+        and score, but a repeated append among them cannot be detected, so the
+        report states how many labels rest on that weaker evidence. An unknown
+        outcome is not a label and is not counted here.
     """
 
     usable: tuple[bool, ...]
@@ -164,15 +165,15 @@ def audit(events: cabc.Sequence[Event]) -> TimingAudit:
 
 
 def _is_uncorrelated(event: Event) -> bool:
-    """Return whether a verified row names no complete attempt pair.
+    """Return whether a labelled, verified row names no complete attempt pair.
 
     Returns
     -------
     bool
-        Whether the row proves its label time but cannot be joined to one
-        invocation.
+        Whether the row proves a label time but cannot be joined to one
+        invocation. An unknown outcome carries no label and is not counted.
     """
-    if label_moment(event) is None:
+    if event.label not in {"hit", "miss"} or label_moment(event) is None:
         return False
     return event.attempt is None or event.supervisor_generation is None
 
@@ -204,8 +205,10 @@ def _attempt_verdicts(
     """Classify repeated and contradictory attempt identities.
 
     One append may be retried after a crash, so two rows with the same attempt
-    identity are allowed only when their recorded evidence is identical; the
-    later copy is an idempotent duplicate. Rows that disagree about the same
+    identity are allowed only when their recorded evidence is identical and
+    complete enough to prove it; the later copy is then an idempotent
+    duplicate. A pair that agrees only because neither row states its evidence
+    is ambiguous, not a retry. Rows that disagree about the same
     attempt are unusable together, because nothing in the document says which
     one the observer accepted.
 
@@ -241,11 +244,33 @@ def _classify_attempt(
     if len(indices) < _MINIMUM_GROUP:
         return 0, 0, {}
     first = _fingerprint(stream[indices[0]])
-    if all(_fingerprint(stream[index]) == first for index in indices[1:]):
+    agrees = all(_fingerprint(stream[index]) == first for index in indices[1:])
+    if agrees and _evidence_complete(stream, indices):
         duplicate: ExclusionReason = "duplicate_attempt"
         return 0, len(indices) - 1, dict.fromkeys(indices[1:], duplicate)
+    # Rows that agree on the fields we carry but not on the evidence behind
+    # them are not provably a retry: an older snapshot states no generation or
+    # evidence digest, so two different readings can look identical. Excluding
+    # both is the only reading that does not retain the wrong one.
     conflict: ExclusionReason = "conflicting_attempt"
     return len(indices), 0, dict.fromkeys(indices, conflict)
+
+
+def _evidence_complete(
+    stream: cabc.Sequence[Event], indices: cabc.Sequence[int]
+) -> bool:
+    """Report whether every row of one attempt states its own evidence.
+
+    Returns
+    -------
+    bool
+        Whether each row carries a generation digest and a record digest.
+    """
+    return all(
+        stream[index].generation_digest is not None
+        and stream[index].record_evidence is not None
+        for index in indices
+    )
 
 
 def _fingerprint(event: Event) -> tuple[object, ...]:

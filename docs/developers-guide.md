@@ -213,8 +213,8 @@ the process is an adapter at its edge. The domain modules are `accounting`,
 `diagnostics_generations`, `ensemble_runs`, `ensembles`, `evaluation`, `events`,
 `fitting`, `harness`, `journal_codec`, `journal_provenance`, `metrics`,
 `observer_accounting`, `predictors`, `probability`, `render_sufficiency`,
-`report`, `report_blocks`, `report_codec`, `scoring` and
-`snapshot_diagnostics_join`.
+`report`, `report_blocks`, `report_codec`, `scoring`,
+`snapshot_diagnostics_join` and `sufficiency`.
 
 `accounting` is the bounded label-loss value: it folds decoded store rows into
 counts by cache result, outcome reason, attribution, origin, parser class,
@@ -400,6 +400,7 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                                                                      |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                                                              |
 | `predict.render_sufficiency`                                                       | The report's data-sufficiency block: the denominators, admission coverage, withheld labels, the per-generation label-loss breakdown and closed-history loss a reader judges the scores against         |
+| `predict.sufficiency`                                                              | The evidence-sufficiency decision: the population counts the gates are read against, the closed status vocabulary, and `evidence_status`/`has_evidence`; shared by the evaluation and its renderer     |
 | `predict.report_blocks`                                                            | The frozen `ReportData` value and `report_data`, which split a report document's `data`, `stats`, `source`, `journal` and `diagnostics` blocks; read by `render_sufficiency` and the other renderers   |
 | `predict.observer_accounting`                                                      | Bounded recorder counts from the journal, with appends counted apart from compactions and seals, and omitted outcomes counted by cause                                                                 |
 | `outcome_record_time`                                                              | The canonical UTC text with a trailing `Z`, its strict parser, and the sentinel that separates an absent optional timestamp from a corrupt one                                                         |

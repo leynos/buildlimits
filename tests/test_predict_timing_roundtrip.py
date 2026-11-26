@@ -9,16 +9,22 @@ The causal replay scenarios are in ``test_predict_timing_causal.py``.
 """
 
 import dataclasses as dc
+import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
 
+from outcome_test_helpers import attributed_record
+from predict_store_helpers import record_events
+from predict_test_helpers import write_json
 from predict_timing_helpers import event, reviewer_stream, snapshot
 from render_helpers import empty_document
 
 from buildlimits.predict.dataset import Snapshot, SnapshotStats
 from buildlimits.predict.render import render_markdown
+from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
+from buildlimits.predict.timing import audit
 
 
 def test_the_snapshot_round_trip_preserves_identity_and_chronology(
@@ -162,6 +168,58 @@ def test_a_repeated_attempt_with_another_generation_is_a_conflict() -> None:
     assert stats.duplicates == 0, "a differing generation is not an idempotent retry"
     assert stats.conflicts == 2, "both rows are excluded as contradictory"
     assert stats.scored == 0, "no side of the contradiction is scored"
+
+
+def test_an_attribution_only_difference_is_a_conflict_through_a_store() -> None:
+    """Evidence the event does not map still separates one attempt's rows.
+
+    Attribution, refusal reason, parser class and child sighting have no event
+    field, so two rows that differ only there would look identical. The record
+    digest carries them, which makes the pair a contradiction rather than an
+    idempotent retry.
+    """
+    record = attributed_record(outcome="hit")
+    first = dc.replace(
+        record,
+        admitted_at=record.observed_at - dt.timedelta(seconds=2),
+        label_time_provenance="verified",
+        completed_at=record.observed_at,
+        attempt="g1",
+        supervisor_generation="gen",
+        outcome_attribution="solo",
+    )
+    second = dc.replace(first, outcome_attribution="unanimous")
+    events = record_events((first, second), now=record.observed_at)
+
+    verdict = audit(events)
+
+    assert verdict.duplicates == 0, "a differing attribution is not a retry"
+    assert verdict.conflicts == 2, "both rows are excluded as contradictory"
+    assert verdict.reasons == ("conflicting_attempt", "conflicting_attempt"), (
+        "the audit names the closed reason for both copies"
+    )
+
+
+def test_an_older_snapshot_cannot_prove_an_exact_duplicate(
+    tmp_path: Path,
+) -> None:
+    """A version 6 row states no record digest, so a repeat is ambiguous.
+
+    The fields that do survive can agree while the evidence behind them was
+    never carried. Retaining one copy would be a guess about which reading the
+    document meant, so both are excluded instead.
+    """
+    original = event(0, moments=(1.0, 5.0), attempt="same")
+    document = snapshot_to_dict(snapshot((original, original)))
+    document["snapshot_version"] = 6
+    for row in typ.cast("list[object]", document["events"]):
+        typ.cast("dict[str, object]", row).pop("record_evidence")
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+    verdict = audit(loaded.events)
+
+    assert verdict.duplicates == 0, "missing evidence is not proof of a retry"
+    assert verdict.conflicts == 2, "the ambiguous pair is excluded"
 
 
 def test_a_duplicate_attempt_is_not_counted_as_missing_availability() -> None:

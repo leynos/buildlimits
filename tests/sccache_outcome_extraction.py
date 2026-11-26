@@ -12,8 +12,8 @@ import typing as typ
 import pytest
 from sccache_outcome_observer_support import outcomes
 
+from buildlimits import outcome_store_io
 from buildlimits.outcome_record_codec import decode_lines
-from buildlimits.outcome_record_encode import encode_line
 from buildlimits.outcome_record_format import (
     DecodedStore,
     StoreHeader,
@@ -22,20 +22,27 @@ from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.records import decode_history
+from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 
 if typ.TYPE_CHECKING:
+    from pathlib import Path
+
     from buildlimits.outcome_key import Salt
     from buildlimits.outcome_record_format import StoreRecord
 
 
-def assert_extraction(records: list[StoreRecord], salt: Salt) -> None:
-    """Prove the retained rows encode, decode and extract without loss."""
+def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) -> None:
+    """Prove the measured rows survive the store files and the snapshot files.
+
+    The rows are written through the same writer the supervisor uses and read
+    back from the file, then the snapshot is saved and loaded the same way, so
+    the trace covers the bytes an operator would keep rather than an in-memory
+    document.
+    """
     header = StoreHeader(salt.salt_id, dt.datetime.now(dt.UTC))
-    document = (
-        "\n".join((encode_line(header), *(encode_line(record) for record in records)))
-        + "\n"
-    )
-    decoded = decode_lines(document)
+    store = tmp_path / "cache-outcomes.jsonl"
+    outcome_store_io.replace_store(store, header, typ.cast("typ.Any", records))
+    decoded = decode_lines(store.read_text(encoding="utf-8"))
     if not isinstance(decoded, DecodedStore):
         pytest.fail(f"the retained rows did not decode: {decoded.reason}")
     snapshot = build_snapshot(
@@ -43,6 +50,9 @@ def assert_extraction(records: list[StoreRecord], salt: Salt) -> None:
         now=header.written_at,
         history_loss=HistoryLoss.active_file_only(),
     )
+    path = tmp_path / "history.jsonl"
+    save_snapshot(path, snapshot)
+    snapshot = load_snapshot(path)
     stats = snapshot.stats()
     outcome_rows = len(outcomes(tuple(records)))
 
@@ -73,6 +83,11 @@ def assert_extraction(records: list[StoreRecord], salt: Salt) -> None:
         record.label_time_provenance == "verified"
         for record in outcomes(tuple(records))
     ), "every real row proves the moment its label became known"
+    assert all(
+        record.generation_digest is not None
+        for record in outcomes(tuple(records))
+        if record.outcome in {"hit", "miss"}
+    ), "each labelled row names the sccache generation its reading observed"
     assert snapshot.diagnostics is not None, "the accounting block is present"
     assert snapshot.diagnostics.store.by_result["hit"] == 1, "one real hit"
     assert snapshot.diagnostics.store.by_result["miss"] == 1, "one real miss"

@@ -42,6 +42,18 @@ def _snapshot(*events: Event) -> Snapshot:
     )
 
 
+def _load(tmp_path: Path, *events: Event) -> Snapshot:
+    """Write ``events`` as a snapshot document and read it back.
+
+    Returns
+    -------
+    Snapshot
+        The history the reader accepted.
+    """
+    document = snapshot_to_dict(_snapshot(*events))
+    return load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def _backward() -> tuple[Event, Event]:
     """Return two verified events whose second was observed before the first.
 
@@ -119,10 +131,8 @@ def test_a_verified_history_with_a_backward_clock_is_refused(
     tmp_path: Path,
 ) -> None:
     """Across the step a label could sort before the prediction that used it."""
-    document = snapshot_to_dict(_snapshot(*_backward()))
-
     with pytest.raises(ValueError, match="ran backwards"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+        _load(tmp_path, *_backward())
 
 
 def _pair(
@@ -147,24 +157,32 @@ def test_a_label_available_before_an_earlier_decision_is_refused(
 ) -> None:
     """A step that leaves label times increasing can still cross a decision.
 
-    The first row records a decision at ten and a label at twenty. The second
-    row is appended later but claims its label was available at five. Label
-    times alone still increase, yet the second label precedes a decision the
-    file already recorded, which no monotonic clock can produce. Releasing it
-    would let a prediction at ten read a label whose reading returned first.
+    The first row proves its label at five. The second is appended between the
+    labels and records a decision at thirty, but withholds its own label. The
+    third proves its label at twenty. The verified label times a clock can
+    order are therefore five then twenty — increasing, so the availability
+    rule sees nothing — yet the later label precedes a decision the file
+    already recorded, which no monotonic clock can produce. Only the
+    decision-crossing rule catches this history.
     """
-    decision = EPOCH + dt.timedelta(seconds=10)
-    document = snapshot_to_dict(
-        _snapshot(
-            *_pair(
-                (decision, EPOCH + dt.timedelta(seconds=20)),
-                (EPOCH, EPOCH + dt.timedelta(seconds=5)),
-            )
-        )
+    first = hand_event(0, moments=(EPOCH, EPOCH + dt.timedelta(seconds=5)), label="hit")
+    between = hand_event(
+        1,
+        moments=(EPOCH + dt.timedelta(seconds=30), EPOCH),
+        label="miss",
+        verified=False,
+    )
+    third = hand_event(
+        2,
+        moments=(
+            EPOCH + dt.timedelta(seconds=10),
+            EPOCH + dt.timedelta(seconds=20),
+        ),
+        label="miss",
     )
 
     with pytest.raises(ValueError, match="cannot precede a decision"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+        _load(tmp_path, first, between, third)
 
 
 def test_a_slow_build_appended_after_a_later_decision_is_allowed(
@@ -177,25 +195,65 @@ def test_a_slow_build_appended_after_a_later_decision_is_allowed(
     decision precedes its own label and follows nothing later than itself, so
     the history is ordered.
     """
-    document = snapshot_to_dict(
-        _snapshot(
-            *_pair(
-                (EPOCH + dt.timedelta(seconds=1), EPOCH + dt.timedelta(seconds=5)),
-                (EPOCH + dt.timedelta(seconds=3), EPOCH + dt.timedelta(seconds=20)),
-            )
-        )
+    loaded = _load(
+        tmp_path,
+        *_pair(
+            (EPOCH + dt.timedelta(seconds=1), EPOCH + dt.timedelta(seconds=5)),
+            (EPOCH + dt.timedelta(seconds=3), EPOCH + dt.timedelta(seconds=20)),
+        ),
     )
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
     assert len(loaded.events) == 2, "both readings are ordered by their own moments"
 
 
+def test_a_restart_does_not_reset_the_clock_it_must_order(tmp_path: Path) -> None:
+    """A new supervisor generation appends after the file, not after zero.
+
+    Both rows prove their label times, so the availability rule applies, and
+    they were written by different supervisor generations. The check is a
+    property of the file, not of either process: the second generation's
+    earlier stamp is still a step, so it is refused rather than excused as a
+    fresh clock domain.
+    """
+    first = dc.replace(
+        hand_event(0, moments=(EPOCH, EPOCH + dt.timedelta(seconds=10)), label="hit"),
+        supervisor_generation="generation-one",
+    )
+    second = dc.replace(
+        hand_event(1, moments=(EPOCH, EPOCH + dt.timedelta(seconds=5)), label="hit"),
+        supervisor_generation="generation-two",
+    )
+
+    with pytest.raises(ValueError, match="ran backwards"):
+        _load(tmp_path, first, second)
+
+
+def test_a_delayed_reading_lands_after_the_rows_already_written(
+    tmp_path: Path,
+) -> None:
+    """A late delivery is stamped late, so it cannot cross an earlier decision.
+
+    The first row is a reading taken at ten for a build decided at five. The
+    second row's build was decided at zero, but its statistics were only
+    delivered at thirty, so it was appended afterwards and stamped then. Its
+    decision precedes the first row's, which is harmless: the rule compares a
+    label with decisions recorded before it, and the only such decision is
+    later than nothing. The history loads.
+    """
+    loaded = _load(
+        tmp_path,
+        *_pair(
+            (EPOCH + dt.timedelta(seconds=5), EPOCH + dt.timedelta(seconds=10)),
+            (EPOCH, EPOCH + dt.timedelta(seconds=30)),
+        ),
+    )
+
+    assert len(loaded.events) == 2, "acceptance order, not decision order, is stored"
+
+
 def test_an_unverified_history_may_report_a_backward_clock(tmp_path: Path) -> None:
     """The step only matters where verified availability would release labels."""
-    document = snapshot_to_dict(_snapshot(*_unverified()))
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+    loaded = _load(tmp_path, *_unverified())
 
     assert len(loaded.events) == 2, "the history is still readable"
     assert not any(event.label_observed_verified for event in loaded.events), (
@@ -246,9 +304,7 @@ def test_rows_sharing_one_reading_load_and_score(tmp_path: Path) -> None:
         ),
     )
 
-    loaded = load_snapshot(
-        write_json(tmp_path / "history.jsonl", snapshot_to_dict(_snapshot(*shared)))
-    )
+    loaded = _load(tmp_path, *shared)
     walk = walk_forward(loaded.events, predict_config())
 
     assert len(loaded.events) == 2, "the shared moment is not a clock step"

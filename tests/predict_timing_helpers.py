@@ -8,6 +8,7 @@ document round-trip tests, so "verified" has one definition.
 
 import dataclasses as dc
 import datetime as dt
+import hashlib
 import typing as typ
 
 from buildlimits.predict.config_loader import load_config
@@ -73,6 +74,10 @@ def event(
         completed_at=moment,
         attempt=f"g{index}" if attempt is None else attempt,
         supervisor_generation="generation-a",
+        generation_digest=hashlib.sha256(f"gen|{index}".encode()).hexdigest(),
+        record_evidence=hashlib.sha256(
+            f"evidence|{index}|{moments}|{label}".encode()
+        ).hexdigest(),
     )
 
 

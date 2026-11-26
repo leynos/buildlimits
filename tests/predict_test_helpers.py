@@ -74,7 +74,10 @@ def hand_event(
     admitted_at, observed_at = moments
     derived = hashlib.sha256(
         f"{index}|{admitted_at}|{observed_at}|{label}".encode()
-    ).hexdigest()[:16]
+    ).hexdigest()
+    evidence = hashlib.sha256(
+        f"{index}|{admitted_at}|{observed_at}|{label}|{verified}".encode()
+    ).hexdigest()
     return Event(
         identity=identity(index),
         origin="git",
@@ -84,8 +87,10 @@ def hand_event(
         runtime_seconds=1.0,
         label_observed_verified=verified,
         completed_at=observed_at,
-        attempt=f"a{derived}",
+        attempt=f"a{derived[:16]}",
         supervisor_generation="test-generation",
+        generation_digest=derived,
+        record_evidence=evidence,
     )
 
 

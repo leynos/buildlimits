@@ -2839,3 +2839,7 @@ reason = "Matching recorder-suite preludes: both modules name the same shared fi
 members = ["tests/test_outcome_shell_admission.py", "tests/test_predict_cold_warm_trace.py"]
 reason = "Matching shell-suite preludes: both drive a cached group through the same port fakes and assert on the rows the shell's writer receives, so they name the same fixtures. A shared re-export would hide which of those each suite actually depends on, and the two suites assert different contracts."
 
+
+[[tool.duplication_gate.allow]]
+members = ["tests/sccache_outcome_extraction.py", "tests/predict_store_helpers.py"]
+reason = "Matching store-to-snapshot import preludes: both modules write rows through the store and read the snapshot back, so both name the same builder, decoder, accounting scope and snapshot store. Sharing the prelude through a re-export module would hide which of those each module depends on, and one is the shared fixture while the other is the controlled run's assertion step."

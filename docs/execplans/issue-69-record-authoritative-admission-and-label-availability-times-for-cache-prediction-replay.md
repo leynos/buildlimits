@@ -22,8 +22,13 @@ historical row is retroactively repaired.
 All six commit gates pass at the final commit: `check-fmt`, `lint` (ruff,
 interrogate, both Pylint sweeps, Ambrleaks, Skylos, Nose duplication and the
 action linters), `typecheck`, `test`, `markdownlint` and `nixie`. The opt-in
-host checks also pass: `test-sccache-host` against the real sccache 0.14.0, and
-`test-systemd-user` for the systemd cache-outcome scenarios.
+`test-sccache-host` suite runs the real observer check against sccache 0.14.0
+and it passes. Its sibling latency-budget test, which this branch does not
+touch, fails on this host: the fake-`/proc` baseline read alone measured a p99
+of 3.02 ms in one run and 1.98 ms in another against a 2.0 ms absolute
+threshold, with the host at load average 20 or more. That is a host-load effect
+on an unrelated test, not a regression in this change, and the test remains
+unmodified here.
 
 One lesson worth recording: `make test` collects the package's doctests as well
 as `tests/`, so a focused `pytest tests/...` run during development does not
@@ -57,9 +62,44 @@ two designs rather than choosing one:
   proves its time but names no invocation still releases; it simply takes no
   part in duplicate or conflict detection and is reported as uncorrelated.
 
-The store and snapshot formats are therefore version 5: the base's version 4
-fields plus this branch's correlation group. Version 1 to 4 documents still
-load, and their newer evidence decodes as absent rather than guessed.
+The store format is therefore version 5 and the snapshot format version 7: the
+base's version 4 fields plus this branch's correlation group, and the snapshot
+additions that let a repeated attempt be checked on complete evidence. Version
+1 to 4 documents still load, and their newer evidence decodes as absent rather
+than guessed.
+
+### Resolved: the third assessment round tightened the independence claim
+
+The assessments showed that publishing an `uncorrelated` count was not the same
+as keeping uncorrelated rows out of the independent-label gate, and that "same
+attempt, same fingerprint" was only a duplicate when the fingerprint was
+complete. Three rules changed, and ADR 012 §D4 to §D6 record them:
+
+- `Walk.usable_labelled` now requires a complete pair and no correlation
+  exclusion. A legacy row still replays and scores, but it does not count as
+  one of the independent labels the minimum gate exists to require. The gate's
+  diagnostic fallbacks are unchanged in meaning: when enough recorded labels
+  exist but too few are usable, the verdict names the missing admission or
+  availability evidence.
+- `TimingAudit.uncorrelated` counts labelled, verified rows only. An `unknown`
+  outcome carries no label, so counting it overstated how much of the gate
+  rested on unverifiable independence.
+- A repeated attempt whose copies do not both carry the evidence digest is
+  ambiguous, not identical, and is excluded as a conflict. A pre-format-7
+  snapshot cannot supply the digest, so re-extraction is the documented
+  recovery rather than trusting a partial comparison.
+
+Two lessons are worth recording. First, a count that is merely published does
+not constrain the gate that consumes the same population; the two must be
+expressed against one predicate or they drift apart silently. Second, silence
+is not agreement: comparing recorded evidence has to distinguish "equal" from
+"absent", or the weaker case is promoted to the stronger one by default.
+
+The added gate pushed `predict/evaluation.py` past the 400-line module limit,
+so the status decision — the counts, the closed status vocabulary and the two
+predicates — moved to `predict/sufficiency.py`. The evaluation and the verdict
+it assembles now read one shared decision rather than two copies of it, which
+is also what the first lesson above asks for.
 
 ## The problem
 

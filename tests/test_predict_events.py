@@ -8,6 +8,7 @@ the causality rule rather than the format upgrade.
 
 import dataclasses as dc
 import datetime as dt
+import hashlib
 import typing as typ
 
 import pytest
@@ -32,6 +33,8 @@ def _causal(seconds: int, label: str, attempt: str | None = None) -> Event:
     than two observations.
     """
     moment = EPOCH + dt.timedelta(seconds=seconds)
+    token = f"g{seconds}" if attempt is None else attempt
+    derived = hashlib.sha256(f"{seconds}|{label}|{token}".encode()).hexdigest()
     return Event(
         "a" * 64,
         ORIGIN,
@@ -41,8 +44,10 @@ def _causal(seconds: int, label: str, attempt: str | None = None) -> Event:
         1.0,
         label_observed_verified=True,
         completed_at=moment,
-        attempt=f"g{seconds}" if attempt is None else attempt,
+        attempt=token,
         supervisor_generation="test-generation",
+        generation_digest=derived,
+        record_evidence=derived,
     )
 
 
@@ -60,6 +65,12 @@ def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
         completed_at=moment,
         attempt=f"g{identity[:4]}-{admitted}-{observed}",
         supervisor_generation="test-generation",
+        generation_digest=hashlib.sha256(
+            f"{identity}|{admitted}|{observed}".encode()
+        ).hexdigest(),
+        record_evidence=hashlib.sha256(
+            f"{identity}|{admitted}|{observed}|hit".encode()
+        ).hexdigest(),
     )
 
 
