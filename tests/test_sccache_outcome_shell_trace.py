@@ -28,12 +28,13 @@ from sccache_host import (
     _run_compile,
     sccache_host_marks,
 )
-from sccache_outcome_extraction import round_trip
+from sccache_outcome_extraction import decoded_store, snapshot_of
 from sccache_outcome_observer_support import Toolchain, toolchain
 
 from buildlimits.effects import Exit
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord
+from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.events import label_moment
 from buildlimits.predict.harness import walk_forward
@@ -46,6 +47,7 @@ if typ.TYPE_CHECKING:
 
     from outcome_shell_test_support import OutcomeWorld
 
+    from buildlimits.predict.dataset import Snapshot
     from buildlimits.supervisor import Supervisor
     from buildlimits.supervisor_outcomes import OutcomeShell
 
@@ -114,44 +116,21 @@ def _compile_invocation(
     world.admission.server_activity(active_compiles=0)
 
 
-def _measured_rows(world: OutcomeWorld) -> list[StoreRecord]:
-    """Close the shell and return every record it wrote, summary included."""
+def _measured_store(world: OutcomeWorld, store: Path) -> list[StoreRecord]:
+    """Close the shell and read the store file its own writer produced.
+
+    The shell owns a real ``StoreWriter``, so this reads the bytes its
+    asynchronous append path flushed rather than a fake's list of the records
+    it was handed. Closing the shell bounds that flush; the file is then read
+    through the store's own decoder.
+    """
     shell = typ.cast("OutcomeShell", world.shell)
     shell.close(timeout=0.1)
-    assert world.writer.is_closed, "the shell closed its writer"
-    return list(_rows(world))
+    return list(decoded_store(store.read_text(encoding="utf-8"), "shell's").records)
 
 
-def test_measured_cold_and_warm_compiles_survive_the_shell_path(
-    tmp_path: Path,
-) -> None:
-    """The shell's own path keeps identity, timing and provenance to replay."""
-    tools = toolchain(tmp_path)
-    socket = tmp_path / "s.sock"
-
-    with _private_server(
-        tools.executable, tools.environment, tmp_path / "server.log"
-    ) as (_server, _scoped):
-        world = make_outcome_world(
-            tmp_path,
-            OutcomeWorldOptions(
-                statistics_port=SccacheStatistics(
-                    tools.executable, tools.environment, socket
-                ),
-                server_port=PeerServerProcess(socket),
-                supervisor_generation="observer-generation",
-                clock=time.monotonic,
-                wall_clock=lambda: dt.datetime.now(dt.UTC),
-            ),
-        )
-        shell = typ.cast("OutcomeShell", world.shell)
-        _tick_until(shell, "readings", 1, "take the baseline")
-        for request_id, metadata in ((1, "shell-cold"), (2, "shell-cold")):
-            _compile_invocation(world, tools, request_id, metadata)
-            _tick_until(shell, "outcomes", request_id, "label the invocation")
-
-    records = _measured_rows(world)
-    measured = [record for record in records if isinstance(record, OutcomeRecord)]
+def _assert_measured_rows(measured: list[OutcomeRecord]) -> None:
+    """Assert the shell's own rows carry identity, timing and provenance."""
     assert [record.outcome for record in measured] == ["miss", "hit"], (
         "the real server misses once and then serves the same key"
     )
@@ -176,8 +155,11 @@ def test_measured_cold_and_warm_compiles_survive_the_shell_path(
             "decision, completion and label are distinct ordered moments"
         )
 
-    snapshot = round_trip(records, tmp_path, "test-salt")
-    labelled = [event for event in snapshot.events if event.label in {"hit", "miss"}]
+
+def _assert_replayed(snapshot: object) -> None:
+    """Assert the snapshot and the replay keep both measured invocations."""
+    typed = typ.cast("Snapshot", snapshot)
+    labelled = [event for event in typed.events if event.label in {"hit", "miss"}]
     assert [event.label for event in labelled] == ["miss", "hit"], (
         "both measured labels survive the store and the snapshot"
     )
@@ -190,16 +172,65 @@ def test_measured_cold_and_warm_compiles_survive_the_shell_path(
         for event in labelled
     ), "each decision precedes the moment its label was accepted"
 
-    verdict = audit(snapshot.events)
+    verdict = audit(typed.events)
     assert verdict.uncorrelated == 0, "both rows name a complete attempt pair"
     assert verdict.conflicts == 0 and verdict.duplicates == 0, (
         "the measured rows neither repeat nor contradict one another"
     )
-    walk = walk_forward(snapshot.events, load_config())
+    walk = walk_forward(typed.events, load_config())
     assert sum(len(group) for group in walk.moments) == len(labelled), (
         "the replay answers both measured admissions"
     )
-    assert snapshot.diagnostics is not None, "the accounting block is present"
-    assert snapshot.diagnostics.store.by_server_version, (
+    assert typed.diagnostics is not None, "the accounting block is present"
+    assert typed.diagnostics.store.by_server_version, (
         "the snapshot states the sccache version its rows were measured against"
+    )
+
+
+def test_measured_cold_and_warm_compiles_survive_the_shell_path(
+    tmp_path: Path,
+) -> None:
+    """The shell's own path keeps identity, timing and provenance to replay."""
+    tools = toolchain(tmp_path)
+    socket = tmp_path / "s.sock"
+    store = store_path({"HOME": str(tmp_path)})
+
+    with _private_server(
+        tools.executable, tools.environment, tmp_path / "server.log"
+    ) as (_server, _scoped):
+        world = _measured_world(tmp_path, tools, socket)
+        shell = typ.cast("OutcomeShell", world.shell)
+        _tick_until(shell, "readings", 1, "take the baseline")
+        for request_id, metadata in ((1, "shell-cold"), (2, "shell-cold")):
+            _compile_invocation(world, tools, request_id, metadata)
+            _tick_until(shell, "outcomes", request_id, "label the invocation")
+
+    records = _measured_store(world, store)
+    measured = [record for record in records if isinstance(record, OutcomeRecord)]
+    _assert_measured_rows(measured)
+
+    decoded = decoded_store(store.read_text(encoding="utf-8"), "shell's")
+    _assert_replayed(snapshot_of(decoded, tmp_path, "measured"))
+
+
+def _measured_world(tmp_path: Path, tools: Toolchain, socket: Path) -> OutcomeWorld:
+    """Build a shell backed by the real sccache ports and a real store writer.
+
+    Returns
+    -------
+    OutcomeWorld
+        The shell, its admission machine and the real writer it builds.
+    """
+    return make_outcome_world(
+        tmp_path,
+        OutcomeWorldOptions(
+            statistics_port=SccacheStatistics(
+                tools.executable, tools.environment, socket
+            ),
+            server_port=PeerServerProcess(socket),
+            supervisor_generation="observer-generation",
+            clock=time.monotonic,
+            wall_clock=lambda: dt.datetime.now(dt.UTC),
+            real_writer=True,
+        ),
     )

@@ -11,6 +11,7 @@ replays and scores. It simply does not claim to be independent evidence, and
 the count names only the labelled, verified rows that justify it.
 """
 
+import collections.abc as cabc
 import dataclasses as dc
 import datetime as dt
 import typing as typ
@@ -24,6 +25,7 @@ from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.sufficiency import (
     STATUS_INSUFFICIENT,
     STATUS_INSUFFICIENT_AVAILABILITY,
+    STATUS_INSUFFICIENT_HELDOUT,
 )
 from buildlimits.predict.timing import audit
 
@@ -65,6 +67,63 @@ def test_repeated_attempts_do_not_satisfy_the_label_gate() -> None:
     )
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _Shape:
+    """The parts of a hand-built row that are not its attempt identity."""
+
+    start: int = 0
+    verified: bool = True
+    label: str = "hit"
+
+
+def _rows(
+    count: int, shape: _Shape, attempts: cabc.Callable[[int], str | None]
+) -> tuple[Event, ...]:
+    """Return ``count`` hand-built rows with the attempt the caller names.
+
+    The rows share one shape because every case in this module differs only in
+    its identity and timing evidence: a correlated row names a distinct
+    attempt, and a legacy row names none.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The rows, in append order.
+    """
+    return tuple(
+        dc.replace(
+            hand_event(
+                shape.start + index,
+                moments=(
+                    EPOCH + dt.timedelta(seconds=shape.start + index),
+                    EPOCH + dt.timedelta(seconds=shape.start + index + 1),
+                ),
+                label=typ.cast("Label", shape.label),
+                verified=shape.verified,
+            ),
+            attempt=attempts(index),
+        )
+        for index in range(count)
+    )
+
+
+def _correlated(
+    count: int, *, verified: bool = True, prefix: str = "c"
+) -> tuple[Event, ...]:
+    """Return ``count`` rows that each name a distinct invocation.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The correlated rows, in append order.
+    """
+    return _rows(
+        count,
+        _Shape(verified=verified),
+        lambda index: f"{prefix}{index}",
+    )
+
+
 def _legacy(count: int, *, start: int = 0, label: str = "hit") -> tuple[Event, ...]:
     """Return ``count`` rows that carry a verified time but no attempt pair.
 
@@ -78,19 +137,12 @@ def _legacy(count: int, *, start: int = 0, label: str = "hit") -> tuple[Event, .
         The legacy rows, in append order.
     """
     return tuple(
-        dc.replace(
-            hand_event(
-                start + index,
-                moments=(
-                    EPOCH + dt.timedelta(seconds=start + index),
-                    EPOCH + dt.timedelta(seconds=start + index + 1),
-                ),
-                label=typ.cast("Label", label),
-            ),
-            attempt=None,
-            supervisor_generation=None,
+        dc.replace(row, supervisor_generation=None)
+        for row in _rows(
+            count,
+            _Shape(start=start, label=label),
+            lambda _index: None,
         )
-        for index in range(count)
     )
 
 
@@ -127,21 +179,7 @@ def test_a_mixed_history_cannot_compose_one_gate_out_of_two_populations() -> Non
     is empty, so the verdict names the availability evidence it is short of
     rather than reporting a comparison the history cannot support.
     """
-    unverified = tuple(
-        dc.replace(
-            hand_event(
-                index,
-                moments=(
-                    EPOCH + dt.timedelta(seconds=index),
-                    EPOCH + dt.timedelta(seconds=index + 1),
-                ),
-                label="hit",
-                verified=False,
-            ),
-            attempt=f"u{index}",
-        )
-        for index in range(20)
-    )
+    unverified = _correlated(20, verified=False, prefix="u")
     legacy = _legacy(12, start=100, label="miss")
     config = dc.replace(predict_config(), minimum_labelled_events=10)
 
@@ -152,6 +190,88 @@ def test_a_mixed_history_cannot_compose_one_gate_out_of_two_populations() -> Non
     assert walk.usable_labelled == 0, "but none of the rows is jointly usable"
     assert evaluate(walk, config).status == STATUS_INSUFFICIENT_AVAILABILITY, (
         "the verdict names the timing evidence the history is short of"
+    )
+
+
+def test_a_row_missing_both_times_counts_as_neither_half() -> None:
+    """One closed reason must not stand as evidence for the other half.
+
+    The audit reports the first failure only, so a row with neither a decision
+    nor a verified label is excluded as ``no_admission_time``. Reading that
+    reason as proof that its availability was fine would count it as
+    availability-usable, and the verdict would name an admission shortage for
+    a history that is short of both. Five fully usable rows plus fifteen that
+    lack both times must not report twenty availability-usable labels.
+    """
+    usable = _correlated(5, prefix="a")
+    missing_both = tuple(
+        dc.replace(
+            hand_event(
+                50 + index,
+                moments=(None, EPOCH + dt.timedelta(seconds=100 + index)),
+                label="hit",
+                verified=False,
+            ),
+            attempt=f"b{index}",
+        )
+        for index in range(15)
+    )
+    config = dc.replace(predict_config(), minimum_labelled_events=10)
+
+    walk = walk_forward(usable + missing_both, config)
+
+    assert walk.independent_labelled == 20, "all twenty name a complete pair"
+    assert walk.usable_labelled == 5, "only five carry both times"
+    assert walk.admission_usable_labelled == 5, "five record a decision"
+    assert walk.availability_usable_labelled == 5, (
+        "a row missing its decision cannot lend availability evidence either"
+    )
+    assert evaluate(walk, config).status == STATUS_INSUFFICIENT, (
+        "the timing halves tie, so neither shortage is named"
+    )
+
+
+def test_legacy_copies_cannot_decide_the_held_out_comparison() -> None:
+    """A repeated legacy row is a copy of one observation, not evidence.
+
+    The tuning period is large enough and independent enough to clear the label
+    gate. The held-out period is a run of copies of one verified legacy row:
+    each copy is scorable, so nothing stops it from filling the held-out span,
+    but none of them names a distinct invocation. A decisive comparison needs
+    independent held-out rows, so the verdict reports that it has too little
+    held-out evidence rather than ranking predictors on one repeated
+    observation.
+    """
+    training = tuple(
+        dc.replace(row, label=typ.cast("Label", "hit" if index % 2 else "miss"))
+        for index, row in enumerate(_correlated(24, prefix="t"))
+    )
+    legacy_copies = tuple(
+        dc.replace(
+            hand_event(
+                100,
+                moments=(
+                    EPOCH + dt.timedelta(seconds=100),
+                    EPOCH + dt.timedelta(seconds=101),
+                ),
+                label="hit",
+            ),
+            attempt=None,
+            supervisor_generation=None,
+        )
+        for _copy in range(60)
+    )
+    config = dc.replace(
+        predict_config(),
+        minimum_labelled_events=10,
+        train_fraction=0.29,
+        block_size=10,
+    )
+
+    walk = walk_forward(training + legacy_copies, config)
+
+    assert evaluate(walk, config).status == STATUS_INSUFFICIENT_HELDOUT, (
+        "one repeated legacy observation cannot decide the comparison"
     )
 
 

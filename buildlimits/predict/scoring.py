@@ -254,7 +254,11 @@ def heldout_rows(
 
 
 def heldout_positions(
-    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
+    walk: Walk,
+    name: str,
+    probabilities: cabc.Sequence[float | None],
+    *,
+    independent: cabc.Sequence[bool] | None = None,
 ) -> tuple[ScoredRow | None, ...]:
     """Return the held-out rows placed at the stream positions they occupy.
 
@@ -263,6 +267,11 @@ def heldout_positions(
     block formed over the result still spans the same moments of the stream;
     compacting those positions away would put rows that were many events apart
     into one block.
+
+    ``independent`` restricts the rows to positions whose label the caller can
+    show to be a distinct invocation. A decisive comparison needs that, since a
+    repeated append of one legacy row can otherwise fill a held-out period with
+    copies of a single observation.
 
     Returns
     -------
@@ -273,7 +282,7 @@ def heldout_positions(
     held = {
         index: row
         for index, row in _scored_rows(walk, name, probabilities)
-        if row.phase == "held-out"
+        if row.phase == "held-out" and (independent is None or independent[index])
     }
     if not held:
         return ()

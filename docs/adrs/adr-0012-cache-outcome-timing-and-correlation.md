@@ -152,7 +152,18 @@ history was simply too small, and the admission-usable and availability-usable
 counts, restricted to the independent labels, name which half of the timing
 evidence is the binding constraint when it was not. A tie between them is not a
 timing shortage, so the verdict says the labels themselves are insufficient
-rather than guessing.
+rather than guessing. Each timing count is derived from the row's own evidence,
+never from the audit's first closed reason: a row that lacks both times is
+excluded as one reason, and reading that reason as proof that the other half
+was fine would count the row twice over.
+
+The same independence requirement reaches the held-out comparison. A decisive
+interval is paired only over held-out rows that name a distinct invocation, so
+a run of copies of one verified legacy row cannot fill the held-out period and
+stand in for evidence. Those copies still score in the diagnostic metrics,
+which report every row a predictor answered; they simply cannot decide the
+verdict. `Walk.independent` publishes the predicate per position, so the gate
+and the comparison ask one question rather than two.
 
 Those rows are not discarded. A legacy row whose time is verified still replays
 and still scores — ADR §D4 keeps that compatibility — and a row withheld for

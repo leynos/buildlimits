@@ -20,7 +20,7 @@ from buildlimits.predict.history import (
     unverified_label_count,
 )
 from buildlimits.predict.phases import Split, phases, split
-from buildlimits.predict.populations import population
+from buildlimits.predict.populations import independence, population
 from buildlimits.predict.predictors import single_predictors, update_all
 from buildlimits.predict.timing import TimingAudit, audit
 
@@ -80,6 +80,10 @@ class Walk:
         verified. This is the label-coverage denominator, kept apart from the
         phase counts so a honeypot of unverified labels cannot hide behind
         ``insufficient data``.
+    independent : tuple[bool, ...]
+        Whether each event is an independent label, in stream order. The
+        held-out comparison asks for this per position, so the same predicate
+        the gate counts decides which held-out rows can support a verdict.
     independent_labelled : int
         Labelled events that carry a complete attempt pair and no correlation
         exclusion. This is the independence count a report states beside the
@@ -119,6 +123,7 @@ class Walk:
     moments: tuple[tuple[int, ...], ...]
     timing: TimingAudit
     labelled: int
+    independent: tuple[bool, ...]
     independent_labelled: int
     usable_labelled: int
     admission_usable_labelled: int
@@ -193,6 +198,7 @@ def walk_forward(
         moments=moments,
         timing=timing,
         labelled=counts.labelled,
+        independent=independence(stream, timing),
         independent_labelled=counts.independent_labelled,
         usable_labelled=counts.usable_labelled,
         admission_usable_labelled=counts.admission_usable_labelled,

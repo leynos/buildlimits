@@ -31,6 +31,38 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import StoreRecord
 
 
+def decoded_store(document: str, what: str) -> DecodedStore:
+    """Decode one store document or fail the check with its closed reason.
+
+    Returns
+    -------
+    DecodedStore
+        The validated header and records in append order.
+    """
+    decoded = decode_lines(document)
+    if not isinstance(decoded, DecodedStore):
+        pytest.fail(f"the {what} rows did not decode: {decoded.reason}")
+    return decoded
+
+
+def snapshot_of(decoded: DecodedStore, tmp_path: Path, name: str) -> Snapshot:
+    """Build a snapshot from decoded rows and save and load it as a file.
+
+    Returns
+    -------
+    Snapshot
+        The history the snapshot loader accepts.
+    """
+    snapshot = build_snapshot(
+        decode_history(decoded),
+        now=decoded.header.written_at,
+        history_loss=HistoryLoss.active_file_only(),
+    )
+    path = tmp_path / f"{name}-history.jsonl"
+    save_snapshot(path, snapshot)
+    return load_snapshot(path)
+
+
 def round_trip(records: list[StoreRecord], tmp_path: Path, salt_id: str) -> Snapshot:
     """Write rows to the store, re-read them, and save and load a snapshot.
 
@@ -47,17 +79,8 @@ def round_trip(records: list[StoreRecord], tmp_path: Path, salt_id: str) -> Snap
     header = StoreHeader(salt_id, dt.datetime.now(dt.UTC))
     store = tmp_path / "cache-outcomes.jsonl"
     outcome_store_io.replace_store(store, header, typ.cast("typ.Any", records))
-    decoded = decode_lines(store.read_text(encoding="utf-8"))
-    if not isinstance(decoded, DecodedStore):
-        pytest.fail(f"the retained rows did not decode: {decoded.reason}")
-    snapshot = build_snapshot(
-        decode_history(decoded),
-        now=header.written_at,
-        history_loss=HistoryLoss.active_file_only(),
-    )
-    path = tmp_path / "history.jsonl"
-    save_snapshot(path, snapshot)
-    return load_snapshot(path)
+    decoded = decoded_store(store.read_text(encoding="utf-8"), "retained")
+    return snapshot_of(decoded, tmp_path, "history")
 
 
 def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) -> None:

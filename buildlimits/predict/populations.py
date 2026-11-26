@@ -21,7 +21,7 @@ from buildlimits.predict.timing import CORRELATION_REASONS, TimingAudit
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Event
 
-__all__ = ["Population", "population"]
+__all__ = ["Population", "independence", "population"]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -44,14 +44,50 @@ class Population:
     unavailable_availability: int
 
 
-_ADMISSION_REASONS = frozenset({"no_admission_time", "admission_after_availability"})
-"""Reasons that withhold a row's decision time rather than its label time."""
+def independence(stream: tuple[Event, ...], timing: TimingAudit) -> tuple[bool, ...]:
+    """Return whether each row is an independent label.
 
-_AVAILABILITY_REASONS = frozenset({
-    "no_availability_time",
-    "completion_after_availability",
-})
-"""Reasons that withhold a row's availability time."""
+    The same predicate the gate counts is published per position, so a
+    consumer that needs independent evidence — the held-out comparison, for
+    one — asks the same question the gate asked rather than re-deriving it.
+
+    Returns
+    -------
+    tuple[bool, ...]
+        One flag per row, in stream order.
+    """
+    return tuple(
+        _is_independent(event, timing.reasons[index])
+        for index, event in enumerate(stream)
+    )
+
+
+def _decision_usable(event: Event, reason: str | None) -> bool:
+    """Return whether the row's decision time survives the audit.
+
+    Each half is asked of the row's own evidence, not of the audit's first
+    closed reason. ``timing_exclusion`` reports one reason, so a row missing
+    both times is excluded as ``no_admission_time``; reading that reason as
+    proof that its availability was fine would count the row twice over.
+
+    Returns
+    -------
+    bool
+        Whether the row records a decision the clock can order.
+    """
+    return event.admitted_at is not None and reason != "admission_after_availability"
+
+
+def _availability_usable(event: Event, reason: str | None) -> bool:
+    """Return whether the row's availability time survives the audit.
+
+    Returns
+    -------
+    bool
+        Whether the row proves its label time and no closed reason withholds
+        the other half of the pair it must be ordered against.
+    """
+    return label_moment(event) is not None and reason not in _UNAVAILABILITY_REASONS
 
 
 def _is_independent(event: Event, reason: str | None) -> bool:
@@ -71,6 +107,45 @@ def _is_independent(event: Event, reason: str | None) -> bool:
     )
 
 
+_UNAVAILABILITY_REASONS = frozenset({
+    "no_availability_time",
+    "completion_after_availability",
+})
+"""Reasons that say the row's own label time is not usable.
+
+The two admission reasons are deliberately absent: a row whose decision is
+missing or late still states when its label became known, and the audit's
+first closed reason must not be read as evidence that the availability is
+missing too. A row missing both times has no ``label_moment`` at all, so it
+counts as unavailable here on its own evidence.
+"""
+
+
+@dc.dataclass(slots=True)
+class _Tally:
+    """Accumulate the populations one row at a time."""
+
+    labelled: int = 0
+    independent: int = 0
+    usable: int = 0
+    admission_usable: int = 0
+    availability_usable: int = 0
+
+    def add(self, event: Event, reason: str | None) -> None:
+        """Fold one row's identity and timing evidence into the counts."""
+        if event.label != "unknown":
+            self.labelled += 1
+        if not _is_independent(event, reason):
+            return
+        self.independent += 1
+        if reason is None:
+            self.usable += 1
+        if _decision_usable(event, reason):
+            self.admission_usable += 1
+        if _availability_usable(event, reason):
+            self.availability_usable += 1
+
+
 def population(stream: tuple[Event, ...], timing: TimingAudit) -> Population:
     """Count the labelled and timed rows the evidence gates read.
 
@@ -81,34 +156,19 @@ def population(stream: tuple[Event, ...], timing: TimingAudit) -> Population:
 
     Returns
     -------
-    _Population
+    Population
         The labelled population, the independent part of it, the jointly
         usable part, and the rows missing an admission or availability time.
     """
-    labelled = 0
-    independent = 0
-    usable = 0
-    admission_usable = 0
-    availability_usable = 0
+    tally = _Tally()
     for index, event in enumerate(stream):
-        reason = timing.reasons[index]
-        if event.label != "unknown":
-            labelled += 1
-        if not _is_independent(event, reason):
-            continue
-        independent += 1
-        if reason is None:
-            usable += 1
-        if reason not in _ADMISSION_REASONS:
-            admission_usable += 1
-        if reason not in _AVAILABILITY_REASONS:
-            availability_usable += 1
+        tally.add(event, timing.reasons[index])
     return Population(
-        labelled=labelled,
-        independent_labelled=independent,
-        usable_labelled=usable,
-        admission_usable_labelled=admission_usable,
-        availability_usable_labelled=availability_usable,
+        labelled=tally.labelled,
+        independent_labelled=tally.independent,
+        usable_labelled=tally.usable,
+        admission_usable_labelled=tally.admission_usable,
+        availability_usable_labelled=tally.availability_usable,
         unavailable_admission=sum(
             1 for event in stream if admission_moment(event) is None
         ),

@@ -24,11 +24,13 @@ interrogate, both Pylint sweeps, Ambrleaks, Skylos, Nose duplication and the
 action linters), `typecheck`, `test`, `markdownlint` and `nixie`. The opt-in
 `test-sccache-host` suite runs the real observer check and the measured shell
 trace against sccache 0.14.0, and it passes. One sibling latency-budget test,
-which this branch does not touch, is load-sensitive: at load average 20 or more
-the fake-`/proc` baseline read alone measured a p99 of 3.02 ms in one run and
-1.98 ms in another against a 2.0 ms absolute threshold, while the whole suite
-passed at load average 13. That is a host-load effect on an unrelated test, not
-a regression in this change, and the test remains unmodified here.
+which this branch does not touch, is load-sensitive. The fake-`/proc` baseline
+read — a loop the test measures to calibrate itself — has alone measured a p99
+of 1.98 ms, 2.02 ms and 3.02 ms against the test's 2.0 ms absolute threshold at
+load averages between 13 and 22, while the whole suite passed at load average
+13. When the baseline alone exceeds the budget no implementation of the code
+under test could pass, so this is a host-load effect on an unrelated test, not
+a regression in this change. The test remains unmodified here.
 
 One lesson worth recording: `make test` collects the package's doctests as well
 as `tests/`, so a focused `pytest tests/...` run during development does not
@@ -124,6 +126,28 @@ supervisor handle that let it do so without duplicating the world builder.
 The lesson is the same one the third round taught in a different place: two
 counts that describe different properties cannot be interchanged just because
 each is individually plausible. A gate has to name the conjunction it needs.
+
+### Resolved: the fifth round carried independence into the comparison
+
+Three gaps remained after the joint gate.
+
+- The held-out comparison still paired every scorable row, so a run of copies
+  of one verified legacy row could occupy the held-out period and decide a
+  verdict. `Walk.independent` now publishes the gate's predicate per position,
+  and the comparison pairs only positions it marks. Diagnostic metrics keep
+  every answered row; only the decisive interval is restricted. Regression:
+  `tests/test_predict_independence.py::test_legacy_copies_cannot_decide_the_held_out_comparison`.
+- The two timing counts were read off the audit's first closed reason, so a row
+  missing both times was excluded as `no_admission_time` and still counted as
+  availability-usable. Each count now comes from the row's own evidence.
+  Regression: `::test_a_row_missing_both_times_counts_as_neither_half` — five
+  usable rows plus fifteen missing both times must not report twenty
+  availability-usable labels.
+- The measured trace wrote through the world's `FakeWriter` and serialized the
+  records afterwards. It now leaves the writer to the shell, so the bytes come
+  from the shell's asynchronous `StoreWriter`, and it snapshots and replays
+  from that file. `tests/sccache_outcome_extraction.py` exposes `decoded_store`
+  and `snapshot_of`, so both real-sccache checks share one extraction path.
 
 ## The problem
 
