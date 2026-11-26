@@ -29,6 +29,21 @@ if typ.TYPE_CHECKING:
     from buildlimits.requesters import Pending
 
 
+def refuse_fork(_spec: object) -> None:
+    """Fail as a fork does when the process limit is reached.
+
+    A placement test needs the spawn path to stop at a known point, so this
+    stands in for ``launch.spawn_held`` and raises exactly what an exhausted
+    process limit raises.
+
+    Raises
+    ------
+    OSError
+        Always, standing in for resource exhaustion at fork.
+    """
+    raise OSError(11, "Resource temporarily unavailable")
+
+
 @dc.dataclass(slots=True)
 class FakeGroups:
     """A groups double that scripts whether placement succeeds.

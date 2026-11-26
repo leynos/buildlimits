@@ -68,6 +68,10 @@ def older_document_row(row: StoreRecord, *, version: int) -> dict[str, object]:
     document = typ.cast("dict[str, object]", json.loads(encode_line(row)))
     # "kind" is the row discriminator, not a versioned field: the encoder adds
     # it after the field filter, so it is never in the table.
+    if document.get("kind") != "outcome":
+        # A summary row's shape does not follow the outcome-row version table;
+        # stripping it to that table would leave a document no decoder accepts.
+        return document
     return {
         name: value
         for name, value in document.items()

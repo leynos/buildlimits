@@ -10,6 +10,7 @@ import datetime as dt
 import typing as typ
 
 import pytest
+from rustc_query_host_checks import require
 from sccache_outcome_observer_support import outcomes
 
 from buildlimits import outcome_store_io
@@ -18,7 +19,7 @@ from buildlimits.outcome_record_format import (
     DecodedStore,
     StoreHeader,
 )
-from buildlimits.predict.accounting import HistoryLoss
+from buildlimits.predict.accounting import Diagnostics, HistoryLoss
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
 from buildlimits.predict.records import decode_history
@@ -28,7 +29,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_key import Salt
-    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord
 
 
 def decoded_store(document: str, what: str) -> DecodedStore:
@@ -87,59 +88,80 @@ def assert_extraction(records: list[StoreRecord], salt: Salt, tmp_path: Path) ->
     """Prove the measured rows survive the store files and the snapshot files."""
     snapshot = round_trip(records, tmp_path, salt.salt_id)
     stats = snapshot.stats()
-    outcome_rows = len(outcomes(tuple(records)))
+    rows = outcomes(tuple(records))
+    unscorable = sum(1 for record in rows if record.outcome not in {"hit", "miss"})
+    diagnostics = snapshot.diagnostics
 
-    assert stats.events == outcome_rows, (
-        "every recorded outcome row reaches the snapshot, declined rows included"
+    require(
+        condition=stats.events == len(rows),
+        message="every outcome row reaches the snapshot, declined rows included",
     )
-    assert stats.labelled == 2, "the controlled miss and hit are the labels"
-    assert stats.admission_recorded == stats.events, (
-        "every retained outcome carries its admission time"
+    require(
+        condition=stats.labelled == 2,
+        message="the controlled miss and hit are the labels",
     )
-    assert stats.admission_usable == stats.events, (
-        "each admission precedes its own label"
+    require(
+        condition=stats.admission_recorded == stats.events,
+        message="every retained outcome carries its admission time",
     )
-    assert stats.unverified_label_time == 0, (
-        "every retained row proves the poll boundary that accepted it"
+    require(
+        condition=stats.admission_usable == stats.events,
+        message="each admission precedes its own label",
     )
-    assert stats.scored == 2, "only the controlled miss and hit are scorable"
-    unscorable = sum(
-        1
-        for record in outcomes(tuple(records))
-        if record.outcome not in {"hit", "miss"}
+    require(
+        condition=stats.unverified_label_time == 0,
+        message="every retained row proves the poll boundary that accepted it",
     )
-    assert stats.excluded == {"unknown_outcome": unscorable}, (
-        "every excluded row names its closed reason, and no other gate rejected "
-        "a row that was verified at the poll boundary"
+    require(
+        condition=stats.scored == 2,
+        message="only the controlled miss and hit are scorable",
     )
-    assert all(
-        record.label_time_provenance == "verified"
-        for record in outcomes(tuple(records))
-    ), "every real row proves the moment its label became known"
-    assert all(
-        record.generation_digest is not None
-        for record in outcomes(tuple(records))
-        if record.outcome in {"hit", "miss"}
-    ), "each labelled row names the sccache generation its reading observed"
-    assert snapshot.diagnostics is not None, "the accounting block is present"
-    assert snapshot.diagnostics.store.by_result["hit"] == 1, "one real hit"
-    assert snapshot.diagnostics.store.by_result["miss"] == 1, "one real miss"
-    assert snapshot.diagnostics.store.by_reason["mixed_window"] == 2, (
-        "both mixed rows name their refusal"
+    require(
+        condition=stats.excluded == {"unknown_outcome": unscorable},
+        message=(
+            "every excluded row names its closed reason, and no other gate "
+            "rejected a row verified at the poll boundary"
+        ),
     )
-    assert snapshot.diagnostics.store.by_reason["timeout"] == 1, "the timeout is named"
-    _assert_replay_trace(snapshot, records)
+    require(
+        condition=all(r.label_time_provenance == "verified" for r in rows),
+        message="every real row proves the moment its label became known",
+    )
+    require(
+        condition=all(
+            r.generation_digest is not None
+            for r in rows
+            if r.outcome in {"hit", "miss"}
+        ),
+        message="each labelled row names the generation its reading observed",
+    )
+    require(
+        condition=diagnostics is not None,
+        message="the accounting block is present",
+    )
+    accounting = typ.cast("Diagnostics", diagnostics)
+    require(condition=accounting.store.by_result["hit"] == 1, message="one real hit")
+    require(condition=accounting.store.by_result["miss"] == 1, message="one real miss")
+    require(
+        condition=accounting.store.by_reason["mixed_window"] == 2,
+        message="both mixed rows name their refusal",
+    )
+    require(
+        condition=accounting.store.by_reason["timeout"] == 1,
+        message="the timeout is named",
+    )
+    _assert_replay_trace(snapshot, rows)
 
 
-def _assert_replay_trace(snapshot: object, records: list[StoreRecord]) -> None:
+def _assert_replay_trace(snapshot: object, rows: tuple[OutcomeRecord, ...]) -> None:
     """Trace each invocation from admission through replay and provenance.
 
     Parameters
     ----------
     snapshot : object
         The snapshot the controlled rows were extracted into.
-    records : list[StoreRecord]
-        The retained rows, in the order the recorder produced them.
+    rows : tuple[OutcomeRecord, ...]
+        The outcome rows, in the order the recorder produced them.
     """
     from buildlimits.predict.events import label_moment
     from buildlimits.predict.harness import walk_forward
@@ -148,22 +170,35 @@ def _assert_replay_trace(snapshot: object, records: list[StoreRecord]) -> None:
     walk = walk_forward(typed.events, load_config())
     verified = [event for event in typed.events if event.label_observed_verified]
 
-    assert len(verified) == len(outcomes(tuple(records))), (
-        "every retained invocation survives extraction with its availability"
+    require(
+        condition=len(verified) == len(rows),
+        message="every retained invocation keeps its availability",
     )
-    assert all(event.attempt is not None for event in verified), (
-        "each extracted event still names its attempt"
+    require(
+        condition=all(event.attempt is not None for event in verified),
+        message="each extracted event still names its attempt",
     )
-    assert all(event.supervisor_generation is not None for event in verified), (
-        "and the generation that stamped it"
+    require(
+        condition=all(event.supervisor_generation is not None for event in verified),
+        message="and the generation that stamped it",
     )
-    assert all(
-        event.admitted_at is not None
-        and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
-        for event in verified
-    ), "each invocation's decision precedes the moment its label was accepted"
-    assert sum(len(group) for group in walk.moments) == len(verified), (
-        "the replay answers every invocation the extraction verified"
+    require(
+        condition=all(
+            event.admitted_at is not None
+            and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
+            for event in verified
+        ),
+        message="each decision precedes the moment its label was accepted",
     )
-    assert typed.source.salt_id, "the snapshot states the store domain it came from"
-    assert typed.source.written_at is not None, "and when the store was written"
+    require(
+        condition=sum(len(group) for group in walk.moments) == len(verified),
+        message="the replay answers every invocation the extraction verified",
+    )
+    require(
+        condition=bool(typed.source.salt_id),
+        message="the snapshot states the store domain it came from",
+    )
+    require(
+        condition=typed.source.written_at is not None,
+        message="and when the store was written",
+    )

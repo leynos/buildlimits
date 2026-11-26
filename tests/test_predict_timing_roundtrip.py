@@ -238,6 +238,30 @@ def test_an_attribution_only_difference_is_a_conflict_through_a_store() -> None:
     )
 
 
+def test_a_sub_microsecond_runtime_difference_stays_a_conflict(
+    tmp_path: Path,
+) -> None:
+    """The runtime a snapshot writes is the runtime the fingerprint compares.
+
+    Two rows of one attempt that differ only below a microsecond are a
+    contradiction. Rounding the value on write would turn them into equal
+    records after a save and load, so the reopened document would score one of
+    a pair the live document excluded.
+    """
+    original = event(0, moments=(1.0, 5.0), attempt="same")
+    near_copy = dc.replace(original, runtime_seconds=original.runtime_seconds + 1e-7)
+
+    assert audit((original, near_copy)).conflicts == 2, "live, the pair conflicts"
+
+    path = tmp_path / "history.jsonl"
+    save_snapshot(path, snapshot((original, near_copy)))
+    reopened = load_snapshot(path)
+
+    assert audit(reopened.events).conflicts == 2, (
+        "and it is still a contradiction after the round trip"
+    )
+
+
 def test_an_older_snapshot_cannot_prove_an_exact_duplicate(
     tmp_path: Path,
 ) -> None:

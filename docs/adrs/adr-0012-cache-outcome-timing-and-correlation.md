@@ -227,19 +227,26 @@ records with a usable decision time, records with recorded and usable
 availability, usable scored records, and exclusions by closed reason
 (`unknown_outcome`, `no_admission_time`, `no_availability_time`,
 `admission_after_availability`, `completion_after_availability`,
-`duplicate_attempt`, `conflicting_attempt`). The dataset command and the
-benchmark's sufficiency block both print those counts.
+`completion_before_admission`, `duplicate_attempt`, `conflicting_attempt`). The
+dataset command and the benchmark's sufficiency block both print those counts.
 
 A usable availability answers one question: could a prediction have released
 this label at the moment the row says it was accepted? It requires a verified
 label moment, a decision the clock can order before it, and — where the row
-records one — a completion no later than it. It is a *timing* count, not a
-scoring count: a duplicate attempt with sound times still contributes, because
-its availability was usable, while the scored population separately excludes it
-as `duplicate_attempt`. The two numbers are published side by side for exactly
-that reason, and the timing predicate is shared with the gate's population
-counts rather than restated, so the report cannot claim an availability that
-the completion or decision ordering contradicts.
+records one — a completion no later than it. Each half is asked of its own
+evidence, so a row the audit excludes for another contradiction — an admission
+after its label, or a completion before the decision that started the work —
+still contributes to whichever half its own moments support, exactly as a
+duplicate with sound times does. The scored and excluded populations are where
+those contradictions are counted.
+
+It is a *timing* count, not a scoring count: a duplicate attempt with sound
+times still contributes, because its availability was usable, while the scored
+population separately excludes it as `duplicate_attempt`. The two numbers are
+published side by side for exactly that reason, and the timing predicate is
+shared with the gate's population counts rather than restated, so the report
+cannot claim an availability that the completion or decision ordering
+contradicts.
 
 The benchmark adds an `insufficient label-availability times` status distinct
 from `insufficient admission times`, and the verdict keeps the existing

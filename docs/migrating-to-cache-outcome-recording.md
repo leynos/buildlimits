@@ -153,10 +153,11 @@ cannot identify those rows. They stay readable, but they are no longer scored:
 the dataset command cannot distinguish a pre-fix row from a fixed one, so it
 marks every version 2 row's label time unverified and the benchmark withholds
 it. The reports count those labels as `unverified_label_time`, and a history
-made only of them reports `insufficient data` rather than scoring an unsound
-release time. Version 3 is the first format that states a row's own label-time
-provenance, so a history recorded by this release is scored; no historical row
-is repaired or re-stamped.
+made only of them reports `insufficient data` below the 2,000-label minimum and
+`insufficient label-availability times` at or above it, rather than scoring an
+unsound release time. Version 3 is the first format that states a row's own
+label-time provenance, so a history recorded by this release is scored; no
+historical row is repaired or re-stamped.
 
 A version 5 row additionally names the one invocation it belongs to, as the
 bounded `attempt` within a `supervisor_generation`, and keeps the launch's own

@@ -238,15 +238,35 @@ def test_a_label_accepted_before_its_decision_is_excluded() -> None:
     assert not prediction_moments((impossible,)), "it supplies no moment"
 
 
+def _completion_reason(contradictory: Event) -> str | None:
+    """Return the closed reason the audit names for one contradictory row.
+
+    Returns
+    -------
+    str | None
+        The single exclusion reason, or None when the row was accepted.
+    """
+    (reason,) = audit((contradictory,)).reasons
+    return reason
+
+
 def test_a_completion_after_its_acceptance_is_excluded() -> None:
     """A completion stamp later than the accepted reading is contradictory."""
     contradictory = dc.replace(event(0, moments=(1.0, 5.0)), completed_at=at(9.0))
 
-    verdict = audit((contradictory,))
-
-    assert verdict.reasons == ("completion_after_availability",), (
+    assert _completion_reason(contradictory) == "completion_after_availability", (
         "the contradictory chronology has its own closed reason"
     )
+
+
+def test_a_completion_before_its_decision_is_excluded() -> None:
+    """A compilation cannot finish before the decision that started it."""
+    contradictory = dc.replace(event(0, moments=(10.0, 15.0)), completed_at=at(5.0))
+
+    assert _completion_reason(contradictory) == "completion_before_admission", (
+        "the contradictory chronology has its own closed reason"
+    )
+    assert not prediction_moments((contradictory,)), "it supplies no moment"
 
 
 def test_a_batch_is_one_accepted_reading_not_one_completion_time() -> None:

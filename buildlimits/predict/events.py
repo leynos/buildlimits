@@ -36,6 +36,7 @@ type TimingExclusion = typ.Literal[
     "no_availability_time",
     "admission_after_availability",
     "completion_after_availability",
+    "completion_before_admission",
     "unknown_outcome",
 ]
 
@@ -242,16 +243,33 @@ def timing_exclusion(event: Event) -> TimingExclusion | None:
     """
     if event.label not in _SCORED_LABELS:
         return "unknown_outcome"
-    available = label_moment(event)
     if event.admitted_at is None:
         return "no_admission_time"
+    available = label_moment(event)
     if available is None:
         return "no_availability_time"
     if event.admitted_at > available:
         return "admission_after_availability"
+    return _completion_exclusion(event, available)
+
+
+def _completion_exclusion(
+    event: Event, available: dt.datetime
+) -> TimingExclusion | None:
+    """Return the completion's own contradiction, if it records one.
+
+    Returns
+    -------
+    TimingExclusion | None
+        The closed reason, or None when the completion is absent or ordered.
+    """
     completed = event.completed_at
-    if completed is not None and completed > available:
+    if completed is None:
+        return None
+    if completed > available:
         return "completion_after_availability"
+    if completed < typ.cast("dt.datetime", event.admitted_at):
+        return "completion_before_admission"
     return None
 
 

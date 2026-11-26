@@ -6,6 +6,7 @@ import typing as typ
 
 import pytest
 from predict_test_helpers import hand_event, predict_config
+from test_predict_independence import correlated_rows
 
 from buildlimits.predict.bootstrap import block_bootstrap
 from buildlimits.predict.ensemble_runs import tuning_indices
@@ -349,3 +350,42 @@ def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
     assert positions[1] is None, "the unpredictable event keeps its position"
     assert positions[0] is not None, "the first event was scored"
     assert positions[2] is not None, "the last event was scored"
+
+
+def test_legacy_copies_cannot_decide_the_held_out_comparison() -> None:
+    """A repeated legacy row is one observation, not independent evidence.
+
+    The tuning rows clear the label gate, but every held-out row is a copy of
+    one legacy observation, so the comparison has too little independent
+    held-out evidence and says so rather than ranking predictors on it.
+    """
+    training = tuple(
+        dc.replace(row, label=typ.cast("typ.Any", "hit" if index % 2 else "miss"))
+        for index, row in enumerate(correlated_rows(24, prefix="t"))
+    )
+    one_copy = dc.replace(
+        hand_event(
+            100,
+            moments=(
+                EPOCH + dt.timedelta(seconds=100),
+                EPOCH + dt.timedelta(seconds=101),
+            ),
+            label="hit",
+        ),
+        attempt=None,
+        supervisor_generation=None,
+    )
+    legacy_copies = (one_copy,) * 60
+    config = dc.replace(
+        predict_config(),
+        minimum_labelled_events=10,
+        train_fraction=0.29,
+        block_size=10,
+    )
+
+    walk = walk_forward(training + legacy_copies, config)
+    result = evaluate(walk, config)
+
+    assert result.status == STATUS_INSUFFICIENT_HELDOUT, (
+        "one repeated legacy observation cannot decide the comparison"
+    )

@@ -113,7 +113,7 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "generation_digest": event.generation_digest,
         "record_evidence": event.record_evidence,
         "label": event.label,
-        "runtime_seconds": round(event.runtime_seconds, 6),
+        "runtime_seconds": event.runtime_seconds,
         "label_observed_verified": event.label_observed_verified,
     }
 

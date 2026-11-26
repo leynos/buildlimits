@@ -282,8 +282,8 @@ def _insufficient_verdict(
     if status == STATUS_INSUFFICIENT_ADMISSION:
         return (
             f"insufficient admission times: {counts.labelled} labelled events, "
-            f"{counts.predictable} with an admission time at or before their "
-            "own label"
+            f"{counts.admission_usable_labelled} independent ones with a usable "
+            "admission time"
         )
     if status == STATUS_INSUFFICIENT_AVAILABILITY:
         return (

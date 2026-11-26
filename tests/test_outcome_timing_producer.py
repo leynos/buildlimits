@@ -17,7 +17,7 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from groups_helpers import FakeGroups
+from groups_helpers import FakeGroups, refuse_fork
 from request_helpers import crate_pending
 from supervisor_helpers import supervisor
 
@@ -26,6 +26,8 @@ from buildlimits.groups import Groups
 from buildlimits.supervisor_outcome_setup import mint_generation
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
@@ -118,60 +120,61 @@ def test_the_decision_moment_is_read_before_any_placement_work(
     )
 
 
-def test_placement_never_restamps_an_already_marked_decision() -> None:
-    """A marked entry keeps its moment even if placement's clock has moved on."""
-    selector = selectors.DefaultSelector()
-    try:
-        groups = Groups(
-            SupervisorConfig(), typ.cast("typ.Any", object()), selector, lambda: 99.0
-        )
-        groups.wall_clock = lambda: LATER_AT
-        entry = crate_pending(1)
-
-        # The slice is unset, so placement refuses before spawning or scoping;
-        # what matters is that it did not overwrite the recorded decision.
-        with pytest.raises(RuntimeError):
-            groups.place(entry, "g1", cached=False)
-
-        assert entry.admitted is None, "no placement fill happened for a refusal"
-        assert entry.admitted_at is None, "and no wall clock was read"
-    finally:
-        selector.close()
-
-
-def test_placement_fills_an_unmarked_entry_before_its_fork(
+def test_placement_stamps_only_an_entry_that_has_no_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A direct caller that marks nothing still records a pre-execution time."""
+    """Placement fills an unmarked entry and leaves a marked one untouched.
+
+    The launch handler marks the decision before placement runs, so a marked
+    entry must keep both of its moments even though placement's clocks have
+    moved on; a direct caller that marked nothing still gets the pre-execution
+    fill. The slice is configured so placement reaches both guards rather than
+    refusing earlier, and execution stops at the fork, so the test observes the
+    guards' decision and nothing the spawn path might have changed.
+    """
     from buildlimits import launch
 
-    def exhausted(_spec: object) -> None:
-        """Fail as a fork does when the process limit is reached.
+    def placing(
+        clock: cabc.Callable[[], float], wall: cabc.Callable[[], dt.datetime]
+    ) -> tuple[Groups, Pending]:
+        """Return groups with the slice set and the moment they are given.
 
-        Raises
-        ------
-        OSError
-            Always, standing in for resource exhaustion at fork.
+        Returns
+        -------
+        tuple[Groups, Pending]
+            The placing groups and a fresh entry.
         """
-        raise OSError(11, "Resource temporarily unavailable")
+        groups = Groups(
+            SupervisorConfig(), typ.cast("typ.Any", object()), selector, clock
+        )
+        groups.wall_clock = wall
+        groups.slice_dir = Path("/sys/fs/cgroup/compilers.slice")
+        return groups, crate_pending(1)
 
-    monkeypatch.setattr(launch, "spawn_held", exhausted)
+    monkeypatch.setattr(launch, "spawn_held", refuse_fork)
     selector = selectors.DefaultSelector()
     try:
-        groups = Groups(
-            SupervisorConfig(), typ.cast("typ.Any", object()), selector, lambda: 7.0
-        )
-        groups.wall_clock = lambda: DECISION_AT
-        groups.slice_dir = Path("/sys/fs/cgroup/compilers.slice")
-        entry = crate_pending(1)
-
-        assert groups.place(entry, "g1", cached=False) is None, (
+        marked_groups, marked = placing(lambda: 99.0, lambda: LATER_AT)
+        marked.admitted = 1.5
+        marked.admitted_at = DECISION_AT
+        assert marked_groups.place(marked, "g1", cached=False) is None, (
             "the child cannot actually spawn in this test"
         )
-        assert entry.admitted == pytest.approx(7.0), (
+        assert marked.admitted == pytest.approx(1.5), (
+            "the recorded monotonic decision survives placement"
+        )
+        assert marked.admitted_at == DECISION_AT, (
+            "and so does the recorded UTC moment, not the later clock"
+        )
+
+        unmarked_groups, unmarked = placing(lambda: 7.0, lambda: DECISION_AT)
+        assert unmarked_groups.place(unmarked, "g2", cached=False) is None, (
+            "the child cannot actually spawn in this test"
+        )
+        assert unmarked.admitted == pytest.approx(7.0), (
             "the monotonic decision time was filled in"
         )
-        assert entry.admitted_at == DECISION_AT, "and so was the UTC moment"
+        assert unmarked.admitted_at == DECISION_AT, "and so was the UTC moment"
     finally:
         selector.close()
 

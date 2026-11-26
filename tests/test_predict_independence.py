@@ -17,17 +17,17 @@ import datetime as dt
 import typing as typ
 
 from predict_test_helpers import hand_event, predict_config
-from predict_timing_helpers import event
+from predict_timing_helpers import at, event
 
 from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.sufficiency import (
     STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_ADMISSION,
     STATUS_INSUFFICIENT_AVAILABILITY,
-    STATUS_INSUFFICIENT_HELDOUT,
 )
-from buildlimits.predict.timing import audit
+from buildlimits.predict.timing import audit, scored
 
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Label
@@ -108,8 +108,8 @@ def _rows(
     )
 
 
-def _correlated(
-    count: int, *, verified: bool = True, prefix: str = "c"
+def correlated_rows(
+    count: int, *, start: int = 0, verified: bool = True, prefix: str = "c"
 ) -> tuple[Event, ...]:
     """Return ``count`` rows that each name a distinct invocation.
 
@@ -120,7 +120,7 @@ def _correlated(
     """
     return _rows(
         count,
-        _Shape(verified=verified),
+        _Shape(start=start, verified=verified),
         lambda index: f"{prefix}{index}",
     )
 
@@ -180,7 +180,7 @@ def test_a_mixed_history_cannot_compose_one_gate_out_of_two_populations() -> Non
     is empty, so the verdict names the availability evidence it is short of
     rather than reporting a comparison the history cannot support.
     """
-    unverified = _correlated(20, verified=False, prefix="u")
+    unverified = correlated_rows(20, verified=False, prefix="u")
     legacy = _legacy(12, start=100, label="miss")
     config = dc.replace(predict_config(), minimum_labelled_events=10)
 
@@ -204,7 +204,7 @@ def test_a_row_missing_both_times_counts_as_neither_half() -> None:
     a history that is short of both. Five fully usable rows plus fifteen that
     lack both times must not report twenty availability-usable labels.
     """
-    usable = _correlated(5, prefix="a")
+    usable = correlated_rows(5, prefix="a")
     missing_both = tuple(
         dc.replace(
             hand_event(
@@ -241,7 +241,7 @@ def _beside_usable(extra: Event) -> Walk:
         The replay of the six rows under the test thresholds.
     """
     config = dc.replace(predict_config(), minimum_labelled_events=10)
-    return walk_forward((*_correlated(5, prefix="a"), extra), config)
+    return walk_forward((*correlated_rows(5, prefix="a"), extra), config)
 
 
 def test_an_unverified_row_cannot_lend_its_unordered_decision() -> None:
@@ -288,48 +288,51 @@ def test_a_late_completion_withholds_availability_despite_another_reason() -> No
     )
 
 
-def test_legacy_copies_cannot_decide_the_held_out_comparison() -> None:
-    """A repeated legacy row is a copy of one observation, not evidence.
+def test_the_admission_verdict_reports_the_usable_admission_population() -> None:
+    """The sentence counts the admissions a prediction could use, not rows.
 
-    The tuning period is large enough and independent enough to clear the label
-    gate. The held-out period is a run of copies of one verified legacy row:
-    each copy is scorable, so nothing stops it from filling the held-out span,
-    but none of them names a distinct invocation. A decisive comparison needs
-    independent held-out rows, so the verdict reports that it has too little
-    held-out evidence rather than ranking predictors on one repeated
-    observation.
+    Four labelled attempts: one verified with a usable admission, one
+    unverified with a usable admission, and two verified without admissions.
+    Two rows record a usable decision, but only one of them could also be
+    predicted, so a sentence built from the predictable count would understate
+    the admission evidence the history actually holds.
     """
-    training = tuple(
-        dc.replace(row, label=typ.cast("Label", "hit" if index % 2 else "miss"))
-        for index, row in enumerate(_correlated(24, prefix="t"))
+    usable = correlated_rows(1, prefix="u")
+    unverified = correlated_rows(1, start=10, verified=False, prefix="v")
+    without_admission = tuple(
+        dc.replace(row, admitted_at=None)
+        for row in correlated_rows(2, start=20, prefix="w")
     )
-    legacy_copies = tuple(
-        dc.replace(
-            hand_event(
-                100,
-                moments=(
-                    EPOCH + dt.timedelta(seconds=100),
-                    EPOCH + dt.timedelta(seconds=101),
-                ),
-                label="hit",
-            ),
-            attempt=None,
-            supervisor_generation=None,
-        )
-        for _copy in range(60)
-    )
-    config = dc.replace(
-        predict_config(),
-        minimum_labelled_events=10,
-        train_fraction=0.29,
-        block_size=10,
+    config = dc.replace(predict_config(), minimum_labelled_events=4)
+
+    walk = walk_forward((*usable, *unverified, *without_admission), config)
+    verdict = evaluate(walk, config)
+
+    assert verdict.status == STATUS_INSUFFICIENT_ADMISSION, "the gate is named"
+    assert walk.admission_usable_labelled == 2, "two decisions are usable"
+    assert "2 independent ones with a usable admission time" in verdict.verdict, (
+        "the sentence reports the admission population, not the predictable one"
     )
 
-    walk = walk_forward(training + legacy_copies, config)
 
-    assert evaluate(walk, config).status == STATUS_INSUFFICIENT_HELDOUT, (
-        "one repeated legacy observation cannot decide the comparison"
+def test_a_completion_before_its_decision_is_excluded_from_scoring() -> None:
+    """A contradictory pair is unscorable, though each half states its own time.
+
+    The row is admitted at ten, completed at five and available at fifteen, so
+    the audit names ``completion_before_admission`` and the row cannot be
+    scored. The two timing counts describe their own evidence — the decision is
+    before the label, and the completion is before the label — exactly as they
+    do for a duplicate whose times are sound; the scored population is what
+    withholds the row.
+    """
+    contradictory = dc.replace(event(0, moments=(10.0, 15.0)), completed_at=at(5.0))
+
+    verdict = audit((contradictory,))
+
+    assert verdict.reasons == ("completion_before_admission",), (
+        "the contradictory pair is excluded from scoring"
     )
+    assert scored(verdict) == 0, "nothing is scored from it"
 
 
 def test_an_uncorrelated_count_states_only_the_labels_it_means() -> None:

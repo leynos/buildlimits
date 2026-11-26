@@ -68,9 +68,9 @@
   records the version 3 store fields, the bounded observer/store/snapshot
   diagnostics, and the quiet-point and overflow repairs behind issue #68.
 - [ADR 012: cache-outcome timing and correlation](adrs/adr-0012-cache-outcome-timing-and-correlation.md)
-  records the version 3 timing fields, the decision and availability
-  boundaries, the attempt correlation identity, and the replay and reporting
-  contract behind issue #69.
+  records the version 5 timing and correlation fields, the decision and
+  availability boundaries, the attempt correlation identity, and the replay and
+  reporting contract behind issue #69.
 
 ## Conventions
 

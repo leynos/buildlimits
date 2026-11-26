@@ -11,6 +11,7 @@ real; nothing here claims that a live host records such rows until an operator
 upgrades and restarts the service.
 """
 
+import contextlib
 import datetime as dt
 import time
 import typing as typ
@@ -113,17 +114,13 @@ def _compile_invocation(
     world.admission.server_activity(active_compiles=0)
 
 
-def _measured_store(world: OutcomeWorld, store: Path) -> list[StoreRecord]:
-    """Close the shell and read the store file its own writer produced.
+def _measured_store(store: Path) -> list[StoreRecord]:
+    """Read the store file the shell's own writer produced.
 
     The shell owns a real ``StoreWriter``, so this reads the bytes its
     asynchronous append path flushed rather than a fake's list of the records
-    it was handed. Closing the shell bounds that flush; the file is then read
-    through the store's own decoder.
+    it was handed. The caller closes the shell first, which bounds that flush.
     """
-    assert isinstance(world.shell, OutcomeShell), "the world built the shell"
-    shell = world.shell
-    shell.close(timeout=0.1)
     return list(decoded_store(store.read_text(encoding="utf-8"), "shell's").records)
 
 
@@ -223,18 +220,24 @@ def test_measured_cold_and_warm_compiles_survive_the_shell_path(
     socket = tmp_path / "s.sock"
     store = Path(store_path({"HOME": str(tmp_path)}))
 
-    with _private_server(
-        tools.executable, tools.environment, tmp_path / "server.log"
-    ) as (_server, _scoped):
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            _private_server(
+                tools.executable, tools.environment, tmp_path / "server.log"
+            )
+        )
         world = _measured_world(tmp_path, tools, socket)
         assert isinstance(world.shell, OutcomeShell), "the world built the shell"
         shell = world.shell
+        # Registered before any compile runs, so a failed assertion, a lost
+        # reading or an exception still closes the shell and flushes its writer.
+        stack.callback(shell.close, 0.1)
         _tick_until(shell, "readings", 1, "take the baseline")
         for request_id, metadata in ((1, "shell-cold"), (2, "shell-cold")):
             _compile_invocation(world, tools, request_id, metadata)
             _tick_until(shell, "outcomes", request_id, "label the invocation")
 
-    records = _measured_store(world, store)
+    records = _measured_store(store)
     measured = [record for record in records if isinstance(record, OutcomeRecord)]
     _assert_measured_rows(measured)
 
