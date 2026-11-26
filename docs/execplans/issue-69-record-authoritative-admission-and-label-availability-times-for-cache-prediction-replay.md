@@ -160,6 +160,15 @@ Three gaps remained after the joint gate.
   `::test_an_unverified_row_cannot_lend_its_unordered_decision` and
   `::test_a_late_completion_withholds_availability_despite_another_reason`.
 
+A seventh round closed the same gap in the reporting counts. `SnapshotStats`
+counted a verified availability as usable whenever the decision preceded it,
+without checking the row's completion, so the dataset command and the
+sufficiency block published one usable availability for a row the audit
+excludes as `completion_after_availability`. The count now shares
+`populations.availability_usable` with the gate, and the regression
+`tests/test_predict_timing_roundtrip.py::test_a_contradictory_completion_withholds_the_reported_availability`
+checks both the dataset statistics and the rendered report.
+
 ## The problem
 
 Two independent gates must hold before the offline benchmark may score a
@@ -217,7 +226,8 @@ attempt, and nothing could tell a retried append from a contradictory one.
   epochs cannot be compared.
 - `SnapshotStats`, the dataset command and the benchmark report separately:
   labelled records, withheld unverified labels, records with recorded and
-  usable availability, records with usable decision timings, the scored
+  usable availability (the usable count honours the completion ordering as well
+  as the decision ordering), records with usable decision timings, the scored
   population and the exclusions by closed reason, plus the duplicate, conflict
   and uncorrelated counts. The minimum-label gate counts independent labelled
   rows, so repeated appends cannot clear it, and the report states how many

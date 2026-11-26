@@ -20,6 +20,7 @@ from buildlimits.predict.events import (
     label_moment,
     unverified_label,
 )
+from buildlimits.predict.populations import availability_usable
 from buildlimits.predict.timing import audit as timing_audit
 from buildlimits.predict.timing import exclusions as timing_exclusions
 from buildlimits.predict.timing import scored as timing_scored
@@ -268,11 +269,14 @@ def _availability_counts(events: cabc.Sequence[Event]) -> _AvailabilityCounts:
         The recorded and usable availability populations.
     """
     proven = [event for event in events if label_moment(event) is not None]
+    # A verified label time is only usable for a prediction when the decision
+    # precedes it and the row's own completion does not follow it. The second
+    # half cannot be read off the audit's reason: ``timing_exclusion`` names
+    # ``admission_after_availability`` first and would hide a later completion.
     usable = sum(
         1
         for event in proven
-        if event.admitted_at is not None
-        and event.admitted_at <= typ.cast("dt.datetime", label_moment(event))
+        if admission_moment(event) is not None and availability_usable(event)
     )
     return _AvailabilityCounts(recorded=len(proven), usable=usable)
 

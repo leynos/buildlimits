@@ -224,7 +224,11 @@ earlier recorded decision by the second.
 
 `SnapshotStats` counts labelled records, records with a recorded decision time,
 records with a usable decision time, records with recorded and usable
-availability, usable scored records, and exclusions by closed reason
+availability, usable scored records, and exclusions by closed reason. A usable
+availability is one whose verified label moment both halves of the timing order
+survive: the decision precedes it and the row's own completion does not follow
+it. The rule is shared with the gate's population counts rather than restated,
+so the report cannot publish an availability the audit would exclude
 (`unknown_outcome`, `no_admission_time`, `no_availability_time`,
 `admission_after_availability`, `completion_after_availability`,
 `duplicate_attempt`, `conflicting_attempt`). The dataset command and the

@@ -17,7 +17,7 @@ from pathlib import Path
 from outcome_test_helpers import attributed_record
 from predict_store_helpers import record_events
 from predict_test_helpers import write_json
-from predict_timing_helpers import event, reviewer_stream, snapshot
+from predict_timing_helpers import at, event, reviewer_stream, snapshot
 from render_helpers import empty_document
 
 from buildlimits.predict.dataset import Snapshot, SnapshotStats
@@ -95,6 +95,44 @@ def test_the_benchmark_reports_each_gate_separately() -> None:
         "no_admission_time": 1,
         "no_availability_time": 1,
     }, "each exclusion names its own gate"
+
+
+def test_a_contradictory_completion_withholds_the_reported_availability() -> None:
+    """The usable count states what a prediction could use, not what exists.
+
+    The row's label time is verified and its admission precedes it, so a count
+    that stops there publishes one usable availability. Its completion is later
+    than the label, which the timing audit reports as
+    ``completion_after_availability``; the dataset and the rendered report must
+    publish the same exclusion the audit and the gate apply.
+    """
+    contradictory = dc.replace(
+        event(0, moments=(10.0, 20.0)),
+        completed_at=at(25.0),
+    )
+
+    stats = snapshot((contradictory,)).stats()
+
+    assert stats.availability_recorded == 1, "the row records a label time"
+    assert stats.availability_usable == 0, "but a later completion contradicts it"
+    assert stats.excluded == {"completion_after_availability": 1}, (
+        "the audit's own reason is what the report counts"
+    )
+
+    document = empty_document()
+    data = typ.cast("dict[str, object]", typ.cast("dict", document["data"])["stats"])
+    data.update({
+        "labelled": 1,
+        "availability_recorded": 1,
+        "availability_usable": 0,
+        "excluded": {"completion_after_availability": 1},
+    })
+
+    markdown = render_markdown(document)
+
+    assert "- Label availability: 1 recorded, 0 usable for a prediction" in markdown, (
+        "the report states no usable availability rather than one"
+    )
 
 
 def test_an_empty_history_reports_no_measured_count() -> None:

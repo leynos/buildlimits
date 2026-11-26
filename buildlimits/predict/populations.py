@@ -21,7 +21,12 @@ from buildlimits.predict.timing import CORRELATION_REASONS, TimingAudit
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Event
 
-__all__ = ["Population", "independence", "population"]
+__all__ = [
+    "Population",
+    "availability_usable",
+    "independence",
+    "population",
+]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -80,7 +85,7 @@ def _decision_usable(event: Event) -> bool:
     return admission_moment(event) is not None
 
 
-def _availability_usable(event: Event) -> bool:
+def availability_usable(event: Event) -> bool:
     """Return whether the row proves a label time its own completion precedes.
 
     The completion comparison is made here rather than taken from the audit's
@@ -138,7 +143,7 @@ class _Tally:
             self.usable += 1
         if _decision_usable(event):
             self.admission_usable += 1
-        if _availability_usable(event):
+        if availability_usable(event):
             self.availability_usable += 1
 
 
