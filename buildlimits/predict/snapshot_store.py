@@ -26,7 +26,7 @@ from buildlimits.predict.snapshot_diagnostics_join import (
     require_diagnostics_match,
     require_event_labels_match,
 )
-from buildlimits.utc_text import utc_moment
+from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -36,6 +36,47 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Event
 
 _SOURCE_COUNT_FIELDS = ("records_total", "outcome_records", "summary_records")
+
+
+def _require_ordered(path: Path, events: cabc.Sequence[Event]) -> None:
+    """Apply the chronology rule and name the file when it refuses.
+
+    The domain rule reports the moments it compared; this adapter is the layer
+    that knows which file was being read or written, so the operator-facing
+    sentence is built here.
+
+    Raises
+    ------
+    ValueError
+        If the history's recorded clock cannot order it.
+    """
+    try:
+        require_ordered_clock(events)
+    except ClockOrderError as error:
+        raise ValueError(_clock_message(path, error)) from error
+
+
+def _clock_message(path: Path, error: ClockOrderError) -> str:
+    """Return the operator-facing sentence for one clock disorder.
+
+    Returns
+    -------
+    str
+        The sentence naming the file and the moments the rule compared.
+    """
+    if error.decision is not None:
+        return (
+            f"{path} records a label available at {utc_text(error.available)} "
+            f"after a decision taken at {utc_text(error.decision)}; "
+            "label-availability times cannot precede a decision the clock "
+            "already recorded"
+        )
+    earlier = typ.cast("dt.datetime", error.earlier)
+    return (
+        f"{path} records {utc_text(error.available)} after {utc_text(earlier)}; "
+        "label-availability times cannot order a history whose clock ran "
+        "backwards"
+    )
 
 
 def save_snapshot(path: Path, snapshot: Snapshot) -> None:
@@ -53,10 +94,7 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     the earlier readable file would already be gone. The rule raises the same
     ``ValueError`` the loader reports.
     """
-    try:
-        require_ordered_clock(snapshot.events)
-    except ClockOrderError as error:
-        raise error.at(path) from error
+    _require_ordered(path, snapshot.events)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
@@ -119,10 +157,7 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
     decoded_events = tuple(event_from_dict(row, version=version) for row in events)
-    try:
-        require_ordered_clock(decoded_events)
-    except ClockOrderError as error:
-        raise error.at(path) from error
+    _require_ordered(path, decoded_events)
     decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),

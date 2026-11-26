@@ -274,6 +274,15 @@ touches no document format beyond the values it is handed. `snapshot_codec` is
 outside the list because it does read and write JSON document fragments, and
 `snapshot_store` owns the file those fragments go to.
 
+The snapshot document is format version 7, and versions 1 to 7 are accepted.
+Version 7 adds `record_evidence` to the correlation evidence a version 5 event
+carries, so a repeated attempt can be checked against the whole reading rather
+than the fields the replay maps. A document states its own version and its rows
+are decoded in that version's shape: a field a version could not write decodes
+as absent rather than guessed, and a version 5 or 6 document loads with no
+`record_evidence`, which makes a repeated attempt ambiguous rather than
+duplicate.
+
 The adapters are `config_loader` (reads and validates the packaged
 configuration), `snapshot_store` (parses and writes a snapshot document),
 `report_writer` (writes a report to a directory), `dataset_report` (prints a
@@ -407,6 +416,8 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.snapshot_clock`                                                           | The chronology rules a snapshot must satisfy: verified label times in append order, and no label before a decision the file already recorded                                                           |
 | `predict.populations`                                                              | The label populations the evidence gates read: recorded, independent, jointly usable, and the two timing halves that name which evidence a failing gate lacks                                          |
 | `predict.observer_accounting`                                                      | Bounded recorder counts from the journal, with appends counted apart from compactions and seals, and omitted outcomes counted by cause                                                                 |
+| `outcome_record_timing`                                                            | Version 5 timing fields, the bounded correlation tokens, and `bounded_token`, `valid_evidence` and `valid_fields`                                                                                      |
+| `outcome_recorder_correlation`                                                     | `TimingEvidence` and `timing_evidence`, the correlation group one launch's row carries                                                                                                                 |
 | `outcome_record_time`                                                              | The canonical UTC text with a trailing `Z`, its strict parser, and the sentinel that separates an absent optional timestamp from a corrupt one                                                         |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                                                                 |
 | `utc_text`                                                                         | The system wall clock as aware UTC, re-exporting the canonical text helpers from `utc_format`                                                                                                          |
@@ -985,8 +996,9 @@ rather than trusting a separate count field. `tracing_export` reserves
 `statistics_read` and the three store operations with the fixed
 `statistics_query`, `store_io` and `salt` failure categories.
 
-The outcome store is version 4. `OutcomeRecord` carries `admitted_at`,
-`outcome_reason` and `outcome_attribution` beside the version 1 fields, plus
+The outcome store is version 5. Versions 1 to 4 remain readable.
+`OutcomeRecord` carries `admitted_at`, `outcome_reason` and
+`outcome_attribution` beside the version 1 fields, plus
 `label_time_provenance`, which the current recorder writes as `verified` for
 every row it dates at the statistics reading. Version 4 adds
 `generation_digest`, the salted server generation the reading observed, and
@@ -999,36 +1011,45 @@ present but malformed admission time, marker, digest or token is corruption
 rather than absence. The accepted row shape is fixed by the document version,
 so a current row that omits a field is corrupt, and the encoder refuses to
 write a row carrying evidence into a document whose version cannot state it:
-the older shape has nowhere to put it. `outcome_key.generation_digest` is the
-one place the digest triple is joined, and
-`outcome_shell_keys.generation_digest` the one place the shell supplies the
+the older shape has nowhere to put it. That refusal reaches the recorder as a
+discarded append: `StoreWriter.append` catches it with the other encode
+failures and publishes `StoreResult("append", "save_failed", discarded=1)`,
+which the shell folds into `store_discarded` and the `outcome_store` metric
+carries with `store_reason="save_failed"`, so a version refusal is visible in
+status and telemetry without a token or a path in either.
+
+`outcome_key.generation_digest` is the one place the digest triple is joined,
+and `outcome_shell_keys.generation_digest` the one place the shell supplies the
 salt, so a recorder without a salt states no generation rather than an unkeyed
 one.
 
-`Groups.place` reads the UTC wall clock at the same point as the monotonic
-`entry.admitted`, `Launched` carries the value, and the recorder copies it onto
-every row emitted for that launch. `observed_at` is the time the label or
-refusal became known, and the recorder takes it from the event that caused the
-emission: the poll result whose query returned, the gate that opened, or the
-stop that closed recording. A group's completion time is carried on `Ended` and
-on the retained launch as evidence, and is never a row's label time, because
-sccache exposes no label until the statistics query that reads it returns.
-Every row one reading emits, its window summary included, shares that reading's
-moment, so two launches finishing out of order cannot produce a store whose
-recorded clock runs backwards. `_row_time` falls back to the launch's
-completion only for a purely synthetic event that carries no wall clock at all.
-`observed_at` is never reduced by `runtime_seconds` to manufacture an admission
-time. The dataset adapter maps the value onto `Event.admitted_at`, and
-`Snapshot.stats()` counts the labelled, decision-timed, availability-timed and
-scored populations separately. The correlation pair
-`(supervisor_generation, attempt)` is what tells one invocation from another,
-and `predict.timing.audit` classifies each event against the decision,
-availability and correlation gates with a closed exclusion vocabulary.
-`predict.snapshot_clock` owns the two chronology rules a history must satisfy
-before it may be scored. It is a domain module, so it raises `ClockOrderError`
-carrying the moments it compared rather than a filesystem path; the
-`snapshot_store` adapter catches it and re-raises `error.at(path)`, which is
-where the file being read is known.
+`supervisor_placement.mark_admission` sets both `entry.admitted` and
+`entry.admitted_at` at launch, before the stray-process guard refresh and
+before placement runs. `Groups.place` fills each value only when it is `None`,
+so a marked decision is never re-stamped by a later clock read; a direct caller
+that marked nothing is still filled in before the fork. `Launched` carries the
+value, and the recorder copies it onto every row emitted for that launch.
+`observed_at` is the time the label or refusal became known, and the recorder
+takes it from the event that caused the emission: the poll result whose query
+returned, the gate that opened, or the stop that closed recording. A group's
+completion time is carried on `Ended` and on the retained launch as evidence,
+and is never a row's label time, because sccache exposes no label until the
+statistics query that reads it returns. Every row one reading emits, its window
+summary included, shares that reading's moment, so two launches finishing out
+of order cannot produce a store whose recorded clock runs backwards.
+`_row_time` falls back to the launch's completion only for a purely synthetic
+event that carries no wall clock at all. `observed_at` is never reduced by
+`runtime_seconds` to manufacture an admission time. The dataset adapter maps
+the value onto `Event.admitted_at`, and `Snapshot.stats()` counts the labelled,
+decision-timed, availability-timed and scored populations separately. The
+correlation pair `(supervisor_generation, attempt)` is what tells one
+invocation from another, and `predict.timing.audit` classifies each event
+against the decision, availability and correlation gates with a closed
+exclusion vocabulary. `predict.snapshot_clock` owns the two chronology rules a
+history must satisfy before it may be scored. It is a domain module, so
+`ClockOrderError` carries the moments it compared and no rendered text or path;
+`snapshot_store` catches it and builds the operator-facing sentence there,
+which is where the file being read is known.
 
 `StoreHeader` carries the `version` its document was read at or will be written
 with, defaulting to `FORMAT_VERSION`, and decoding preserves the file's own
@@ -1681,6 +1702,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                                                                     |
 | `host_check_marks.py`                     | `HostCheck`, `host_check_marks`, `decoded_document` and `end_process`: the collection and teardown rule both host checks share                                          |
 | `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                                                                        |
+| `outcome_shell_group_helpers.py`          | `run_cached_group`: admit, launch, finish and clear one cached group through the shell's own hooks                                                                      |
+| `outcome_version_helpers.py`              | `older_document_row`: an existing row reshaped to an older document's field table, derived from the encoder's own version map                                           |
+| `predict_store_helpers.py`                | `record_events`: write one reading's rows to a store document and load the events back at a stated version                                                              |
+| `predict_timing_helpers.py`               | `at`, `event`, `reviewer_stream`, `snapshot` and `config`: hand-built verified rows for the timing contract                                                             |
 | `kache_host.py`                           | `kache_host_marks`, a private daemon and the event and counter readers for the opt-in real-kache check                                                                  |
 | `sccache_stats.py`                        | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                                                                                         |
 | `systemd_harness.py`                      | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                                                                        |

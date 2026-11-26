@@ -225,7 +225,9 @@ def _write(snapshot: Snapshot, output: Path) -> int:
     """
     try:
         save_snapshot(output, snapshot)
-    except OSError as error:
+    except (OSError, ValueError) as error:
+        # A refused history raises the same way an unwritable path does: both
+        # leave no snapshot to report, and both are the user's to act on.
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
     report_snapshot(snapshot, output)

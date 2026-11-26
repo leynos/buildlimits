@@ -9,12 +9,12 @@ the two sides of a clock step cannot be separated; a history that crosses one
 is refused rather than scored.
 """
 
+import dataclasses as dc
 import itertools
 import typing as typ
 
 from buildlimits.predict.events import label_moment
 from buildlimits.predict.timing import audit as timing_audit
-from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -25,12 +25,14 @@ if typ.TYPE_CHECKING:
 __all__ = ["ClockOrderError", "require_ordered_clock"]
 
 
+@dc.dataclass(frozen=True, slots=True)
 class ClockOrderError(ValueError):
     """A history whose recorded clock cannot order it.
 
-    The decision is stated in the domain's own terms — the moments it compared
-    — so a caller that knows which file it was reading can attach that fact
-    where the file is opened rather than passing a path down here.
+    The error states the moments the rule compared, in the domain's own terms.
+    It carries no rendered message and no file path: the persistence adapter
+    that knows which file it was reading builds the operator-facing sentence
+    from these fields, so the domain keeps no knowledge of either.
 
     Attributes
     ----------
@@ -42,56 +44,9 @@ class ClockOrderError(ValueError):
         The earlier label time it stepped back from, for the ordering rule.
     """
 
-    def __init__(
-        self,
-        *,
-        available: dt.datetime,
-        decision: dt.datetime | None = None,
-        earlier: dt.datetime | None = None,
-    ) -> None:
-        """State the two moments the rule compared."""
-        self.available = available
-        self.decision = decision
-        self.earlier = earlier
-        super().__init__(self._describe())
-
-    def _describe(self) -> str:
-        """Return the sentence the persistence adapter reports verbatim.
-
-        Returns
-        -------
-        str
-            The closed description of the disorder.
-        """
-        if self.decision is not None:
-            return (
-                f"a label available at {utc_text(self.available)} follows a "
-                f"decision taken at {utc_text(self.decision)}; "
-                "label-availability times cannot precede a decision the clock "
-                "already recorded"
-            )
-        earlier = typ.cast("dt.datetime", self.earlier)
-        return (
-            f"{utc_text(self.available)} follows {utc_text(earlier)}; "
-            "label-availability times cannot order a history whose clock ran "
-            "backwards"
-        )
-
-    def at(self, path: object) -> ClockOrderError:
-        """Return an equal disorder whose message names ``path``.
-
-        Returns
-        -------
-        ClockOrderError
-            The same moments, with the reader's location stated.
-        """
-        located = ClockOrderError(
-            available=self.available,
-            decision=self.decision,
-            earlier=self.earlier,
-        )
-        located.args = (f"{path} records {located}",)
-        return located
+    available: dt.datetime
+    decision: dt.datetime | None = None
+    earlier: dt.datetime | None = None
 
 
 def _require_after_decision(

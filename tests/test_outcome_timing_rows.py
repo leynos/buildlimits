@@ -6,7 +6,9 @@ encoder directly, so one accepted window's row shape can be asserted without
 a supervisor.
 """
 
+import dataclasses as dc
 import datetime as dt
+import json
 
 import pytest
 from outcome_recorder_test_helpers import (
@@ -25,6 +27,7 @@ from buildlimits.outcome_record_format import (
     FORMAT_VERSION,
     DecodedStore,
     OutcomeRecord,
+    RecordFailure,
 )
 from buildlimits.outcome_recorder import Ended, Launched
 from buildlimits.outcome_recorder_types import LaunchPayload
@@ -227,6 +230,67 @@ def test_an_invalid_generation_is_refused_at_encode(generation: str) -> None:
     """A malformed generation cannot be persisted as if it were evidence."""
     with pytest.raises(ValueError, match="invalid"):
         encode_line(_stored_record(generation=generation))
+
+
+@pytest.mark.parametrize("attempt", ["", "a" * 33, "bad/token", "bad token"])
+def test_an_invalid_attempt_is_refused_at_encode(attempt: str) -> None:
+    """The attempt half of the pair is bounded by the same contract.
+
+    A generation-only test would pass if the encoder validated one half and
+    copied the other, so each token is exercised on its own.
+    """
+    with pytest.raises(ValueError, match="invalid"):
+        encode_line(dc.replace(_stored_record(), attempt=attempt))
+
+
+@pytest.mark.parametrize(
+    ("attempt", "generation"),
+    [("a" * 32, "b" * 64), ("g1", "gen-1")],
+)
+def test_the_longest_accepted_tokens_round_trip(attempt: str, generation: str) -> None:
+    """Both bounds are inclusive, so the longest accepted pair is expressible."""
+    record = dc.replace(_stored_record(generation=generation), attempt=attempt)
+    header = (
+        f'{{"format":"buildlimits-cache-outcomes","version":{FORMAT_VERSION},'
+        '"salt_id":"s","written_at":"2026-01-01T00:00:00Z"}'
+    )
+
+    decoded = decode_lines(f"{header}\n{encode_line(record)}\n")
+
+    assert isinstance(decoded, DecodedStore), "the document decodes"
+    assert decoded.records == (record,), "both tokens survive the bound"
+
+
+@pytest.mark.parametrize(
+    ("attempt", "generation"),
+    [
+        ("bad/token", "gen-1"),
+        ("g1", ""),
+        ("a" * 33, "gen-1"),
+    ],
+)
+def test_a_version_five_row_with_a_bad_token_is_corrupt(
+    attempt: str, generation: str
+) -> None:
+    """A written row cannot carry a token the decoder would refuse.
+
+    The row is built by hand rather than through the encoder, so this pins the
+    decoder's own `valid_fields` check: a document from a buggy or hostile
+    writer must be reported as corrupt rather than read as a correlation.
+    """
+    row = json.loads(encode_line(_stored_record()))
+    row["attempt"] = attempt
+    row["supervisor_generation"] = generation
+    document = json.dumps(row)
+    header = (
+        f'{{"format":"buildlimits-cache-outcomes","version":{FORMAT_VERSION},'
+        '"salt_id":"s","written_at":"2026-01-01T00:00:00Z"}'
+    )
+
+    decoded = decode_lines(f"{header}\n{document}\n")
+
+    assert isinstance(decoded, RecordFailure), "the row is refused as corrupt"
+    assert decoded.reason == "corrupt", "and names the closed reason"
 
 
 def test_a_complete_timing_group_is_written_and_read_back() -> None:

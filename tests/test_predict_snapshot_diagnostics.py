@@ -311,3 +311,38 @@ def test_a_version_seven_document_with_broken_correlation_is_refused(
 
     with pytest.raises(ValueError, match=reason):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+@pytest.mark.parametrize("attempt", ["a" * 33, "bad/token", ""])
+def test_a_version_seven_document_with_a_bad_attempt_is_refused(
+    tmp_path: Path, attempt: str
+) -> None:
+    """The attempt half of the pair is validated on its own.
+
+    Each document keeps a valid `supervisor_generation`, so a loader that
+    checked only the generation would accept the row and admit a token the
+    recorder can never write.
+    """
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0]["supervisor_generation"] = "a" * 64
+    rows[0]["attempt"] = attempt
+
+    with pytest.raises(ValueError, match="correlation token"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_the_longest_accepted_token_pair_round_trips(tmp_path: Path) -> None:
+    """Both snapshot bounds are inclusive, so the longest pair loads."""
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0]["supervisor_generation"] = "b" * 64
+    rows[0]["attempt"] = "a" * 32
+    path = write_json(tmp_path / "history.jsonl", document)
+
+    loaded = load_snapshot(path)
+
+    assert loaded.events[0].attempt == "a" * 32, "the attempt survives its bound"
+    assert loaded.events[0].supervisor_generation == "b" * 64, (
+        "and so does the generation"
+    )
