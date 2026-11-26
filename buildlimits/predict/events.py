@@ -85,6 +85,11 @@ class Event:
         attempt must agree about it: two rows naming one invocation but
         different generations did not come from one reading, so the pair is a
         contradiction rather than an idempotent duplicate.
+    record_evidence : str | None
+        A digest over the row evidence this event does not otherwise carry: the
+        raw cache result, the parser class, the child sighting and the refusal
+        reason and attribution. Two rows naming one attempt must agree about it
+        too, so a difference no mapped field shows is still a contradiction.
     """
 
     identity: str
@@ -98,6 +103,7 @@ class Event:
     attempt: str | None = None
     supervisor_generation: str | None = None
     generation_digest: str | None = None
+    record_evidence: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)

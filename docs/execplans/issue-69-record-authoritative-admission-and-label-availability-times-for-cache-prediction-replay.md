@@ -103,13 +103,13 @@ attempt, and nothing could tell a retried append from a contradictory one.
   including about the generation, is excluded rather than resolved. The live
   shell records each group's completion moment when it ends, so production rows
   carry `completed_at` and not only the controlled helper.
-- The snapshot format is version 6 and carries every event field, including
-  the generation digest. The replay releases a label only at its verified
-  moment, never at an unproven `observed_at`, and never releases, predicts or
-  scores an unverified row. Equal-time batching groups the verified rows and is
-  not split by a row that has no availability; the same moment places the
-  tuning/held-out boundary. A snapshot that states half a correlation pair is
-  refused.
+- The snapshot format is version 7 and carries every event field, including
+  the generation digest and a digest over the row evidence the event does not
+  map. The replay releases a label only at its verified moment, never at an
+  unproven `observed_at`, and never releases, predicts or scores an unverified
+  row. Equal-time batching groups the verified rows and is not split by a row
+  that has no availability; the same moment places the tuning/held-out
+  boundary. A snapshot that states half a correlation pair is refused.
 - The snapshot loader refuses an admission-bearing history whose verified
   label times decrease in append order, and one whose label time precedes an
   admission recorded earlier in the file, on save as well as load. The checks
@@ -119,9 +119,10 @@ attempt, and nothing could tell a retried append from a contradictory one.
 - `SnapshotStats`, the dataset command and the benchmark report separately:
   labelled records, withheld unverified labels, records with recorded and
   usable availability, records with usable decision timings, the scored
-  population and the exclusions by closed reason, plus the duplicate and
-  conflict counts. The minimum-label gate counts independent labelled rows, so
-  repeated appends cannot clear it. The benchmark adds an
+  population and the exclusions by closed reason, plus the duplicate, conflict
+  and uncorrelated counts. The minimum-label gate counts independent labelled
+  rows, so repeated appends cannot clear it, and the report states how many
+  labels name no complete pair. The benchmark adds an
   `insufficient label-availability times` status beside the existing admission
   and held-out statuses.
 

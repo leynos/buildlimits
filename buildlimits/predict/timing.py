@@ -15,7 +15,7 @@ timestamp, a runtime, or a neighbouring row.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.predict.events import Event, timing_exclusion
+from buildlimits.predict.events import Event, label_moment, timing_exclusion
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -65,12 +65,17 @@ class TimingAudit:
         Additional rows that repeated an attempt with identical evidence.
     conflicts : int
         Rows whose attempt identity also appeared with different evidence.
+    uncorrelated : int
+        Verified rows that name no complete attempt pair. They release and
+        score, but a repeated append among them cannot be detected, so the
+        report states how many labels rest on that weaker evidence.
     """
 
     usable: tuple[bool, ...]
     reasons: tuple[ExclusionReason | None, ...]
     duplicates: int
     conflicts: int
+    uncorrelated: int
 
 
 def exclusions(verdict: TimingAudit) -> dict[str, int]:
@@ -154,7 +159,22 @@ def audit(events: cabc.Sequence[Event]) -> TimingAudit:
         reasons=tuple(reasons),
         duplicates=duplicates,
         conflicts=conflicts,
+        uncorrelated=sum(1 for event in stream if _is_uncorrelated(event)),
     )
+
+
+def _is_uncorrelated(event: Event) -> bool:
+    """Return whether a verified row names no complete attempt pair.
+
+    Returns
+    -------
+    bool
+        Whether the row proves its label time but cannot be joined to one
+        invocation.
+    """
+    if label_moment(event) is None:
+        return False
+    return event.attempt is None or event.supervisor_generation is None
 
 
 __all__ = ["TimingAudit", "audit", "exclusions", "scored"]
@@ -251,6 +271,7 @@ def _fingerprint(event: Event) -> tuple[object, ...]:
         event.observed_at,
         event.runtime_seconds,
         event.generation_digest,
+        event.record_evidence,
     )
 
 

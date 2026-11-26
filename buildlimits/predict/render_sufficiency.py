@@ -119,7 +119,8 @@ def _scored_line(stats: cabc.Mapping[str, object]) -> str:
         f"- Scored rows: {as_count(stats.get('scored'))} "
         f"(exclusions: {as_counts(stats.get('excluded'))}; "
         f"{as_count(stats.get('duplicates'))} duplicate attempts, "
-        f"{as_count(stats.get('conflicts'))} conflicting attempts)"
+        f"{as_count(stats.get('conflicts'))} conflicting attempts; "
+        f"{as_count(stats.get('uncorrelated'))} uncorrelated labels)"
     )
 
 

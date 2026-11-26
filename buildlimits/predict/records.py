@@ -99,7 +99,33 @@ def event_of(record: OutcomeRecord) -> Event:
         attempt=record.attempt,
         supervisor_generation=record.supervisor_generation,
         generation_digest=record.generation_digest,
+        record_evidence=_record_evidence(record),
     )
+
+
+def _record_evidence(record: OutcomeRecord) -> str:
+    """Digest the row evidence the event does not map to a field of its own.
+
+    The label collapses several cache results, and the parser class, child
+    sighting, refusal reason and attribution have no event field. Digesting
+    them together lets a repeated attempt be compared on everything its row
+    recorded without widening the event for values no predictor reads.
+
+    Returns
+    -------
+    str
+        A lowercase SHA-256 digest over those values.
+    """
+    evidence = (
+        record.outcome,
+        record.parser_class,
+        record.child_sighting,
+        record.child_samples,
+        record.outcome_reason,
+        record.outcome_attribution,
+    )
+    text = "|".join("" if value is None else str(value) for value in evidence)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def build_events(records: cabc.Iterable[object]) -> tuple[Event, ...]:

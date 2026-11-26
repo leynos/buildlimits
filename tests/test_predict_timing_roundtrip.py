@@ -57,6 +57,7 @@ def test_an_old_format_snapshot_round_trips_without_fabricated_timing(
         "supervisor_generation",
         "label_observed_verified",
         "generation_digest",
+        "record_evidence",
     ):
         row.pop(absent)
     path.write_text(json.dumps(document), encoding="utf-8")

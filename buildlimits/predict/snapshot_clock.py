@@ -24,6 +24,43 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Event
 
 
+def _require_after_decision(
+    path: Path, available: dt.datetime, decision: dt.datetime | None
+) -> None:
+    """Refuse a label time that precedes a decision the file already holds.
+
+    Raises
+    ------
+    ValueError
+        If a later-appended label time is earlier than an earlier decision.
+    """
+    if decision is None or available >= decision:
+        return
+    msg = (
+        f"{path} records a label available at {utc_text(available)} "
+        f"after a decision taken at {utc_text(decision)}; label-availability "
+        "times cannot precede a decision the clock already recorded"
+    )
+    raise ValueError(msg)
+
+
+def _later(
+    latest: dt.datetime | None, candidate: dt.datetime | None
+) -> dt.datetime | None:
+    """Return the later of two optional moments.
+
+    Returns
+    -------
+    datetime | None
+        The later moment, or whichever is present.
+    """
+    if latest is None:
+        return candidate
+    if candidate is None:
+        return latest
+    return max(latest, candidate)
+
+
 def require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
     """Refuse a history whose recorded clock ran backwards.
 
@@ -87,31 +124,15 @@ def _verified_label_times(
     Returns
     -------
     list[datetime]
-        The verified label times, in append order.
-
-    Raises
-    ------
-    ValueError
-        If a verified label time precedes an admission recorded before it.
+        The verified label times, in append order. A label time that precedes
+        an earlier decision is refused by :func:`_require_after_decision`.
     """
     verified: list[dt.datetime] = []
     latest_admission: dt.datetime | None = None
     for index, event in enumerate(events):
         available = label_moment(event) if usable[index] else None
         if available is not None:
-            if latest_admission is not None and available < latest_admission:
-                msg = (
-                    f"{path} records a label available at {utc_text(available)} "
-                    f"after a decision taken at {utc_text(latest_admission)}; "
-                    "label-availability times cannot precede a decision the "
-                    "clock already recorded"
-                )
-                raise ValueError(msg)
+            _require_after_decision(path, available, latest_admission)
             verified.append(available)
-        if event.admitted_at is not None:
-            latest_admission = (
-                event.admitted_at
-                if latest_admission is None
-                else max(latest_admission, event.admitted_at)
-            )
+        latest_admission = _later(latest_admission, event.admitted_at)
     return verified

@@ -116,7 +116,8 @@ def _print_evidence(stats: SnapshotStats) -> None:
         f"timing evidence: scored={stats.scored} "
         f"excluded={as_counts(stats.excluded)} "
         f"duplicate attempts={stats.duplicates} "
-        f"conflicting attempts={stats.conflicts}"
+        f"conflicting attempts={stats.conflicts} "
+        f"uncorrelated labels={stats.uncorrelated}"
     )
 
 

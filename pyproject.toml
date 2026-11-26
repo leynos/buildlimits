@@ -2835,3 +2835,7 @@ reason = "A shared one-line shape rather than shared logic: each reads a named k
 [[tool.duplication_gate.allow]]
 members = ["tests/test_outcome_recorder_evidence.py", "tests/outcome_reading_test_helpers.py"]
 reason = "Matching recorder-suite preludes: both modules name the same shared fixtures from outcome_recorder_test_helpers and the same recorder values they assert on. A re-export module would hide which fixture each suite relies on, and the two files asserting different contracts is the point."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_shell_admission.py", "tests/test_predict_cold_warm_trace.py"]
+reason = "Matching shell-suite preludes: both drive a cached group through the same port fakes and assert on the rows the shell's writer receives, so they name the same fixtures. A shared re-export would hide which of those each suite actually depends on, and the two suites assert different contracts."
+

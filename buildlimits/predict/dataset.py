@@ -174,6 +174,7 @@ class SnapshotStats:
     excluded: cabc.Mapping[str, int]
     duplicates: int
     conflicts: int
+    uncorrelated: int
     gaps: tuple[Gap, ...]
 
 
@@ -245,6 +246,7 @@ class Snapshot:
             excluded=timing_exclusions(verdict),
             duplicates=verdict.duplicates,
             conflicts=verdict.conflicts,
+            uncorrelated=verdict.uncorrelated,
             gaps=self.gaps,
         )
 

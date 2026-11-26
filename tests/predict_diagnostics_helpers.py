@@ -42,6 +42,9 @@ CORRELATION_VERSION = 5
 DIGEST_VERSION = 6
 """The first snapshot version whose events state the sccache generation."""
 
+EVIDENCE_VERSION = 7
+"""The first snapshot version whose events digest the remaining row evidence."""
+
 _CORRELATION_FIELDS = ("completed_at", "attempt", "supervisor_generation")
 """The event fields the correlation group added, dropped from older shapes."""
 
@@ -126,6 +129,8 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
         _drop_event_fields(document, _CORRELATION_FIELDS)
     if version < DIGEST_VERSION:
         _drop_event_fields(document, ("generation_digest",))
+    if version < EVIDENCE_VERSION:
+        _drop_event_fields(document, ("record_evidence",))
     return document
 
 

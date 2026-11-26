@@ -139,6 +139,7 @@ def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
         "excluded": dict(stats.excluded),
         "duplicates": stats.duplicates,
         "conflicts": stats.conflicts,
+        "uncorrelated": stats.uncorrelated,
         "gaps": [gap_to_dict(gap) for gap in stats.gaps],
     }
 

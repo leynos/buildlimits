@@ -12,6 +12,7 @@ import typing as typ
 
 from buildlimits.predict.events import label_moment, scored_label
 from buildlimits.predict.history import label_batches
+from buildlimits.predict.timing import CORRELATION_REASONS
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -81,7 +82,8 @@ def phases(
     tuple[Phase | None, ...]
         One phase per event, or None where no eligible label arrived.
     """
-    batches = label_batches(events)
+    rejected = [reason in CORRELATION_REASONS for reason in timing.reasons]
+    batches = label_batches(events, excluded=rejected)
     target = int(_scorable_labels(batches, events, timing) * train_fraction)
     assigned: list[Phase | None] = [None] * len(events)
     placement = _Placement(events, timing, assigned)

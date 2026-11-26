@@ -113,33 +113,39 @@ existing redaction contract holds. Neither reveals a path, an argument, a
 process identifier or a host name.
 
 The recorded evidence compared for one attempt includes the row's
-`generation_digest`. Two rows naming one invocation but different sccache
-generations did not come from one reading, so they are a contradiction rather
-than an idempotent retry.
+`generation_digest` and a digest over the evidence the replay event does not
+otherwise carry — the raw cache result, the parser class, the child sighting
+and the refusal reason and attribution. Two rows naming one invocation but
+different recorded evidence did not come from one reading, so they are a
+contradiction rather than an idempotent retry.
 
 A row that proved its time but names no invocation still releases: the marker
 and the pair answer different questions, and requiring both would make every
 version 3 or 4 row unscorable for a fact it never could have carried. Such a
 row takes no part in duplicate or conflict detection, and the audit reports it
-as uncorrelated rather than inventing an identity. A row that states one half
-of the pair is not this case: it claims a correlation it cannot honour, so the
-snapshot loader refuses it rather than letting it evade the correlation gate.
+as uncorrelated rather than inventing an identity. That count is published
+beside the scored population, so a report states how many labels rest on
+evidence whose independence a repeated append cannot be checked against. A row
+that states one half of the pair is not this case: it claims a correlation it
+cannot honour, so the snapshot loader refuses it rather than letting it evade
+the correlation gate.
 
 The minimum-label gate counts independent labelled rows, meaning those no
 correlation exclusion rejects. A history that is mostly retries of a few
 attempts therefore cannot clear a label threshold it does not meet, while a row
 withheld only for its timing still counts as a recorded label.
 
-### D5: the snapshot is version 6 and carries the correlation evidence
+### D5: the snapshot is version 7 and carries the correlation evidence
 
-The snapshot event gains `completed_at`, `attempt`, `supervisor_generation` and
-`generation_digest`, and keeps `label_observed_verified` as the statement about
-its time. Version 1 to 5 documents still load, with the newer fields absent.
-The replay releases a label at its verified time and nowhere else: an unverified
-`observed_at` is never a release time. An event with no verified time is not
-released, not predicted and not scored. The training/held-out split uses that
-verified moment, and equal-time batching groups the verified rows by it without
-letting a row that has none separate two rows that share one.
+The snapshot event gains `completed_at`, `attempt`, `supervisor_generation`,
+`generation_digest` and `record_evidence`, and keeps `label_observed_verified`
+as the statement about its time. Version 1 to 6 documents still load, with the
+newer fields absent. The replay releases a label at its verified time and
+nowhere else: an unverified `observed_at` is never a release time. An event
+with no verified time is not released, not predicted and not scored. The
+training/held-out split uses that verified moment, and equal-time batching
+groups the verified rows by it without letting a row that has none separate two
+rows that share one.
 
 ### D6: chronology is checked on availability, in append order
 

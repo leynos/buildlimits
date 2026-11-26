@@ -6,6 +6,7 @@ the moment the old, completion-derived rows recorded, so a test still checks
 the causality rule rather than the format upgrade.
 """
 
+import dataclasses as dc
 import datetime as dt
 import typing as typ
 
@@ -293,6 +294,28 @@ def test_an_unverified_row_does_not_split_an_equal_time_batch() -> None:
     )
     assert assigned[0] == assigned[2], "one batch cannot straddle the split"
     assert assigned[1] is None, "an unverified row is in no period"
+
+
+def test_a_rejected_duplicate_does_not_split_an_equal_time_batch() -> None:
+    """A retried append is not evidence of a second reading.
+
+    The duplicate carries the same attempt and evidence as the first row, so
+    the audit rejects it. Letting its stamp close a batch would put the two
+    rows accepted at the later reading on opposite sides of the split.
+    """
+    original = _causal(0, "hit", attempt="g-early")
+    later = _causal(20, "miss", attempt="g-later")
+    duplicate = original
+    trailing = dc.replace(later, attempt="g-trailing")
+
+    stream = (original, later, duplicate, trailing)
+    verdict = audit(stream)
+    assert verdict.reasons[2] == "duplicate_attempt", "the retry is rejected"
+
+    batches = label_batches(stream, excluded=[r is not None for r in verdict.reasons])
+    assert batches == ((0,), (1, 3)), "the two rows of the later reading share a batch"
+    assigned = phases(stream, verdict, train_fraction=0.67)
+    assert assigned[1] == assigned[3], "one batch cannot straddle the split"
 
 
 @pytest.mark.parametrize(

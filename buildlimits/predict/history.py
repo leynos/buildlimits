@@ -59,20 +59,26 @@ def _usable(
     return _audit(events).usable if usable is None else usable
 
 
-def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
+def label_batches(
+    events: cabc.Sequence[Event], *, excluded: cabc.Sequence[bool] | None = None
+) -> tuple[tuple[int, ...], ...]:
     """Group the events whose labels became available at one moment.
 
     The tuning/held-out split is placed between batches rather than inside one,
     so every row the observer accepted at one reading lands in the same phase.
     A row without a verified availability takes no part: it was never released,
     so it belongs to no batch and cannot separate two rows that share a moment.
-    A backward clock step still separates batches, because a later row carrying
-    an earlier stamp was accepted in a different reading.
+    A row the caller marks excluded takes no part either, because a rejected
+    duplicate is not evidence of a second reading. A backward clock step still
+    separates batches, because a later row carrying an earlier stamp was
+    accepted in a different reading.
 
     Parameters
     ----------
     events : Sequence[Event]
         The events in store append order.
+    excluded : Sequence[bool] | None
+        One flag per event; a true flag keeps that row out of every batch.
 
     Returns
     -------
@@ -95,6 +101,8 @@ def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
     current: list[int] = []
     moment: dt.datetime | None = None
     for index, event in enumerate(events):
+        if excluded is not None and excluded[index]:
+            continue
         available = label_moment(event)
         if available is None:
             continue

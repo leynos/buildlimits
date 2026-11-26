@@ -32,8 +32,8 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 6
-SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5, SNAPSHOT_VERSION})
+SNAPSHOT_VERSION = 7
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5, 6, SNAPSHOT_VERSION})
 _TIMING_EVENT_FIELDS = frozenset({
     "completed_at",
     "attempt",
@@ -50,7 +50,7 @@ _EVENT_FIELDS = (
         "label_observed_verified",
     })
     | _TIMING_EVENT_FIELDS
-    | {"generation_digest"}
+    | {"generation_digest", "record_evidence"}
 )
 # A version 1 row written before the admission field existed omits it, and a
 # version 1 or 2 row predates the label-time provenance marker. The loader
@@ -59,8 +59,10 @@ _EVENT_FIELDS = (
 # masquerade as current-format evidence. Version 4 changed only the diagnostics
 # block, so its event rows carry the shape version 3 wrote. Version 5 adds the
 # correlation group and the completion moment; version 6 adds the sccache
-# generation digest a repeated attempt must agree about.
-_V5_EVENT_FIELDS = _EVENT_FIELDS - {"generation_digest"}
+# generation digest a repeated attempt must agree about; version 7 adds the
+# digest over the row evidence the event does not map.
+_V6_EVENT_FIELDS = _EVENT_FIELDS - {"record_evidence"}
+_V5_EVENT_FIELDS = _V6_EVENT_FIELDS - {"generation_digest"}
 _V4_EVENT_FIELDS = _V5_EVENT_FIELDS - _TIMING_EVENT_FIELDS
 _V3_EVENT_FIELDS = _V4_EVENT_FIELDS
 _V2_EVENT_FIELDS = _V4_EVENT_FIELDS - {"label_observed_verified"}
@@ -73,6 +75,7 @@ _ACCEPTED_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     3: frozenset({_V3_EVENT_FIELDS}),
     4: frozenset({_V4_EVENT_FIELDS}),
     5: frozenset({_V5_EVENT_FIELDS}),
+    6: frozenset({_V6_EVENT_FIELDS}),
     SNAPSHOT_VERSION: frozenset({_EVENT_FIELDS}),
 }
 _IDENTITY_LENGTH = 64
@@ -108,6 +111,7 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "attempt": event.attempt,
         "supervisor_generation": event.supervisor_generation,
         "generation_digest": event.generation_digest,
+        "record_evidence": event.record_evidence,
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
         "label_observed_verified": event.label_observed_verified,
@@ -218,6 +222,7 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         attempt=attempt,
         supervisor_generation=generation,
         generation_digest=_digest(row.get("generation_digest")),
+        record_evidence=_digest(row.get("record_evidence")),
     )
 
 

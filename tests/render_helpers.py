@@ -55,6 +55,7 @@ def empty_document() -> dict[str, object]:
                 "excluded": {},
                 "duplicates": 0,
                 "conflicts": 0,
+                "uncorrelated": 0,
             },
             "source": {
                 "records_total": 0,
