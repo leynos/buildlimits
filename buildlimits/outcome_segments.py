@@ -18,14 +18,26 @@ SEQUENCE_NAME = "cache-outcomes.seq"
 RETENTION_NAME = "retention.json"
 PENDING_RETENTION_NAME = "retention-pending.json"
 LAST_RUN_NAME = "last-run.json"
+LAST_RETAIN_NAME = "last-retain.json"
+CLOCK_BASELINE_NAME = "clock-baseline.json"
 QUARANTINE_DIR_NAME = "quarantine"
 LOCK_NAME = "archive.lock"
+SEALED_TEMP_PREFIX = "retain"
+"""The prefix a maintenance rewrite gives its temporary files.
+
+The writer creates its own temporaries in the sealed directory while it
+publishes metadata, and a concurrent seal must never lose one to the
+archiver's cleanup. A dedicated prefix lets a maintenance pass remove only
+what it abandoned itself.
+"""
 _SEQUENCE_WIDTH = 12
 MAX_SEQUENCE = 10**_SEQUENCE_WIDTH - 1
 """The largest sequence a twelve-digit segment name can carry."""
 
 __all__ = [
     "ARCHIVE_DIR_NAME",
+    "CLOCK_BASELINE_NAME",
+    "LAST_RETAIN_NAME",
     "LAST_RUN_NAME",
     "LOCK_NAME",
     "MAX_SEQUENCE",
@@ -33,10 +45,12 @@ __all__ = [
     "QUARANTINE_DIR_NAME",
     "RETENTION_NAME",
     "SEALED_DIR_NAME",
+    "SEALED_TEMP_PREFIX",
     "SEQUENCE_NAME",
     "SegmentLayout",
     "archive_name",
     "replacing_name",
+    "sealed_marker_name",
     "sealed_meta_name",
     "segment_name",
     "sidecar_name",
@@ -59,6 +73,17 @@ def segment_name(sequence: int) -> str:
     return f"segment-{sequence:0{_SEQUENCE_WIDTH}d}.jsonl"
 
 
+def _named(sequence: int, suffix: str) -> str:
+    """Compose one segment file name from the sequence and a suffix.
+
+    Returns
+    -------
+    str
+        The zero-padded segment name with ``suffix`` appended.
+    """
+    return f"{segment_name(sequence)}{suffix}"
+
+
 def archive_name(sequence: int) -> str:
     """Return the XZ archive name for one sequence.
 
@@ -67,7 +92,7 @@ def archive_name(sequence: int) -> str:
     str
         A zero-padded ``segment-<sequence>.jsonl.xz`` name.
     """
-    return f"{segment_name(sequence)}.xz"
+    return _named(sequence, ".xz")
 
 
 def sidecar_name(sequence: int) -> str:
@@ -78,7 +103,7 @@ def sidecar_name(sequence: int) -> str:
     str
         A zero-padded ``segment-<sequence>.jsonl.xz.json`` name.
     """
-    return f"{archive_name(sequence)}.json"
+    return _named(sequence, ".xz.json")
 
 
 def replacing_name(sequence: int) -> str:
@@ -94,7 +119,7 @@ def replacing_name(sequence: int) -> str:
     >>> replacing_name(7)
     'segment-000000000007.jsonl.xz.replacing'
     """
-    return f"{archive_name(sequence)}.replacing"
+    return _named(sequence, ".xz.replacing")
 
 
 def sealed_meta_name(sequence: int) -> str:
@@ -105,7 +130,28 @@ def sealed_meta_name(sequence: int) -> str:
     str
         A zero-padded ``segment-<sequence>.jsonl.meta.json`` name.
     """
-    return f"{segment_name(sequence)}.meta.json"
+    return _named(sequence, ".meta.json")
+
+
+def sealed_marker_name(sequence: int) -> str:
+    """Return the marker an in-place sealed rewrite leaves until it is durable.
+
+    A plain sealed source has no sidecar beside it, so the rewrite cannot use
+    the archive marker. While this marker exists the source's metadata may
+    describe bytes that have already been replaced, and the inventory must
+    treat the counts, span and salt as unknown.
+
+    Returns
+    -------
+    str
+        A zero-padded ``segment-<sequence>.jsonl.trimming`` name.
+
+    Examples
+    --------
+    >>> sealed_marker_name(7)
+    'segment-000000000007.jsonl.trimming'
+    """
+    return _named(sequence, ".trimming")
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -128,6 +174,12 @@ class SegmentLayout:
         A floor that could not replace ``retention_file``, read until it can.
     last_run_file : Path
         The archiver's most recent run report.
+    last_retain_file : Path
+        The retention-only operation's most recent report, kept apart from the
+        archive report so a timer can read either without the other's history.
+    clock_baseline_file : Path
+        The last locked firing's boot identity, wall time and boot time, used
+        to withhold age eviction after a clock jump.
     lock_file : Path
         The archiver's non-blocking exclusive lock.
 
@@ -145,6 +197,8 @@ class SegmentLayout:
     retention_file: Path
     pending_retention_file: Path
     last_run_file: Path
+    last_retain_file: Path
+    clock_baseline_file: Path
     lock_file: Path
 
     @property
@@ -183,5 +237,7 @@ class SegmentLayout:
             retention_file=archive / RETENTION_NAME,
             pending_retention_file=archive / PENDING_RETENTION_NAME,
             last_run_file=archive / LAST_RUN_NAME,
+            last_retain_file=archive / LAST_RETAIN_NAME,
+            clock_baseline_file=archive / CLOCK_BASELINE_NAME,
             lock_file=archive / LOCK_NAME,
         )

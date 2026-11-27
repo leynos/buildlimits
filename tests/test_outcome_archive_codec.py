@@ -19,7 +19,9 @@ _NOW = dt.datetime(2026, 11, 19, 12, 0, 0, tzinfo=dt.UTC)
 _LATER = _NOW + dt.timedelta(seconds=3)
 _EXPECTED_KEYS = {
     "schema",
+    "operation",
     "status",
+    "clock_skew",
     "dry_run",
     "started_at",
     "finished_at",
@@ -40,6 +42,7 @@ _EXPECTED_KEYS = {
     "missing_sidecars",
     "corrupt_sidecars",
     "orphan_sidecars",
+    "sealed_replacing",
     "evictions",
     "limits",
     "retained",
@@ -67,6 +70,8 @@ def _report() -> RunReport:
     """Build one report carrying a value in every field."""
     return RunReport(
         status="corrupt",
+        operation="retain",
+        clock_skew=True,
         started_at=_NOW,
         finished_at=_LATER,
         dry_run=True,
@@ -86,6 +91,7 @@ def _report() -> RunReport:
         missing_sidecars=(6,),
         corrupt_sidecars=(7,),
         orphan_sidecars=(8,),
+        sealed_replacing=(9,),
         limits=RetentionLimits.of(RetentionPolicy()),
         retained=_RETAINED,
         maintenance=Maintenance(state_written=False, reason="state_write_failed"),
@@ -103,7 +109,9 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert set(document) == _EXPECTED_KEYS, "the document's key set is fixed"
     assert set(empty) == _EXPECTED_KEYS, "the key set does not depend on values"
     assert document["schema"] == ARCHIVE_SCHEMA, "the schema version is published"
+    assert document["operation"] == "retain", "the operation is published"
     assert document["status"] == "corrupt", "the closed status is published"
+    assert document["clock_skew"] is True, "the clock decision is published"
     assert document["dry_run"] is True, "the dry-run marker is published"
     assert document["started_at"] == "2026-11-19T12:00:00Z", "UTC text, not a value"
     assert document["finished_at"] == "2026-11-19T12:00:03Z", "UTC text, not a value"
@@ -126,6 +134,9 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["missing_sidecars"] == [6], "the missing sidecars are published"
     assert document["corrupt_sidecars"] == [7], "the corrupt sidecars are published"
     assert document["orphan_sidecars"] == [8], "the orphan sidecars are published"
+    assert document["sealed_replacing"] == [9], (
+        "unfinished sealed rewrites are published"
+    )
     assert document["evictions"] == dict.fromkeys(EVICTION_CAUSES, 0), (
         "every eviction cause is counted, even at zero"
     )
@@ -137,6 +148,7 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     )
     assert document["maintenance"] == {
         "state_written": False,
+        "baseline_written": True,
         "reason": "state_write_failed",
     }, "a failed state write is named in the document"
     assert document["reason"] == "unreadable", "the run-level reason is published"
@@ -149,9 +161,13 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert empty["reason"] is None, "an absent reason is null"
     assert empty["limits"] is None, "an underived policy is null"
     assert empty["retained"] is None, "an unmeasured history is null"
-    assert empty["maintenance"] == {"state_written": True, "reason": None}, (
-        "a report built without state still says nothing failed"
-    )
+    assert empty["maintenance"] == {
+        "state_written": True,
+        "baseline_written": True,
+        "reason": None,
+    }, "a report built without state still says nothing failed"
+    assert empty["operation"] == "archive", "the default operation is archival"
+    assert empty["clock_skew"] is False, "a fresh report has no clock decision"
 
 
 def test_the_document_renders_the_plan_and_actions(

@@ -28,10 +28,20 @@ type ActionName = typ.Literal[
     "quarantined",
 ]
 
+type Operation = typ.Literal["archive", "retain"]
+"""The maintenance operation one command performs.
+
+``archive`` compresses sealed sources and then applies retention; ``retain``
+applies the same retention policy to closed history without compressing
+anything. Both share the policy, lock, floor and report vocabulary, so a timer
+can run either without learning a second set of rules.
+"""
+
 __all__ = [
     "ActionName",
     "ActionResult",
     "ArchiveContext",
+    "Operation",
     "ignore_retry",
 ]
 
@@ -62,6 +72,18 @@ class ArchiveContext:
         The XZ preset used for new and rewritten archives.
     now : datetime
         The run's caller-supplied UTC wall time.
+    operation : Operation
+        Which maintenance operation this run performs. A retention-only run
+        never compresses a sealed source.
+    clock_skew : bool
+        Whether this run's clock reading was judged to have jumped. A locked
+        run withholds age eviction for its own plan; an inspection reports the
+        decision without changing its plan.
+    suppress_age : bool
+        Whether the age bound is withheld from this run's plans and their
+        follow-up passes. This is the guard's effect, and it is separate from
+        ``clock_skew`` so an inspection can report the decision without acting
+        on it.
     clock : Callable[[], datetime]
         The UTC clock read for the report's finish time, so a test can pin
         the whole report instead of only its start.
@@ -77,6 +99,9 @@ class ArchiveContext:
     policy: RetentionPolicy
     preset: int
     now: dt.datetime
+    operation: Operation = "archive"
+    clock_skew: bool = False
+    suppress_age: bool = False
     clock: cabc.Callable[[], dt.datetime] = utc_now
     quarantine_token: cabc.Callable[[], str] = _required_token
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry

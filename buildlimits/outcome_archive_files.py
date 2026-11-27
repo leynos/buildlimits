@@ -11,7 +11,6 @@ the quarantine moves in ``outcome_archive_quarantine`` and the temp/verify
 machinery in ``outcome_archive_encode``.
 """
 
-import dataclasses as dc
 import typing as typ
 
 from buildlimits import outcome_segments
@@ -25,19 +24,24 @@ from buildlimits.outcome_archive_encode import (
     write_sidecar,
 )
 from buildlimits.outcome_archive_fs import publish_no_clobber, remove_private_files
-from buildlimits.outcome_archive_quarantine import (
-    quarantine_and_remove_sidecar,
-    quarantine_source,
+from buildlimits.outcome_archive_replace import (
+    begin_replacement,
+    end_replacement,
+    end_sealed_replacement,
 )
-from buildlimits.outcome_archive_replace import begin_replacement, end_replacement
 from buildlimits.outcome_archive_trim import Trim
-from buildlimits.outcome_archive_verify import ArchiveFacts, SegmentFaultError
+from buildlimits.outcome_sealed_trim import (
+    remove_sealed_files,
+    sealed_at_of,
+    write_sealed_metadata,
+)
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_archive_context import ArchiveContext
+    from buildlimits.outcome_archive_verify import ArchiveFacts
     from buildlimits.outcome_segment_inventory import SegmentEntry
     from buildlimits.outcome_segment_sidecar import Sidecar
 
@@ -46,7 +50,7 @@ __all__ = [
     "delete_archive",
     "delete_source",
     "recompress_archive",
-    "reconcile_duplicate",
+    "repair_sealed_metadata",
     "repair_sidecar",
 ]
 
@@ -103,7 +107,17 @@ def recompress_archive(
     -------
     ActionResult
         The rewritten archive's sizes, or a deletion result.
+
+    Raises
+    ------
+    ValueError
+        If the entry is not a published archive. A sealed source is rewritten
+        by ``outcome_sealed_trim.trim_sealed_source``, and compressing it here
+        would turn retention into archival.
     """
+    if entry.state != "archived":
+        msg = "only a published archive can be recompressed"
+        raise ValueError(msg)
     options = EncodeOptions(preset=context.preset, trim=trim, is_compressed=True)
     temporary, facts = build_temp(context, entry.path, entry.sequence, options)
     begin_replacement(context.layout.archive_dir, entry.sequence)
@@ -178,63 +192,39 @@ def repair_sidecar(context: ArchiveContext, entry: SegmentEntry) -> ActionResult
     )
 
 
-def reconcile_duplicate(
-    context: ArchiveContext,
-    sealed: SegmentEntry,
-    archived: SegmentEntry,
+def repair_sealed_metadata(
+    context: ArchiveContext, entry: SegmentEntry
 ) -> ActionResult:
-    """Settle a source whose archive was published before a crash.
+    """Rebuild one sealed source's metadata from the source itself.
 
-    When the archive matches the source, the source is redundant and removed.
-    An unreadable or mismatched archive is quarantined and the source archived
-    again, so a later run cannot trust a half-published pair. A corrupt source
-    is quarantined and the existing archive is kept.
+    A source whose metadata is missing, unusable, or covered by an unfinished
+    rewrite marker cannot be measured, so no age, byte or record decision can
+    be made about it. Reading the plain document re-derives the counts and span
+    the writer's own seal would have recorded, and the original seal time is
+    kept when it is still readable.
 
     Parameters
     ----------
     context : ArchiveContext
         The run's layout, policy and moment.
-    sealed : SegmentEntry
-        The still-present sealed source.
-    archived : SegmentEntry
-        The archive sharing the source's sequence.
+    entry : SegmentEntry
+        The sealed source whose metadata must be rebuilt.
 
     Returns
     -------
     ActionResult
-        Whether the pair was reconciled, re-archived or quarantined.
+        The repaired source's verified sizes.
     """
-    try:
-        source = read_source_facts(sealed.path)
-    except SegmentFaultError as fault:
-        # The archive is intact; only its source is unreadable. Quarantining
-        # the source must leave the archive's sidecar, which describes that
-        # archive, in place.
-        quarantine_source(context, sealed, fault.reason)
-        return ActionResult("quarantined", sealed.sequence, reason=fault.reason)
-    try:
-        existing = read_archive_facts(archived.path)
-    except SegmentFaultError as fault:
-        quarantine_and_remove_sidecar(
-            context, archived.path, archived.sequence, fault.reason
-        )
-        return _rearchive(context, sealed)
-    if not source.matches(existing):
-        quarantine_and_remove_sidecar(
-            context, archived.path, archived.sequence, "mismatch"
-        )
-        return _rearchive(context, sealed)
-    if not archived.has_metadata:
-        # A heal step skips duplicated sequences, so this is the last point at
-        # which the verified archive's facts can be recorded before the source
-        # that could regenerate them is removed. The sidecar is authoritative.
-        write_sidecar(context, archived.sequence, existing)
-    _remove_sealed_source(context, sealed.sequence)
+    facts = read_source_facts(entry.path)
+    write_sealed_metadata(
+        context,
+        entry.sequence,
+        facts,
+        sealed_at=sealed_at_of(context, entry.sequence),
+    )
+    end_sealed_replacement(context.layout.sealed_dir, entry.sequence)
     return ActionResult(
-        "reconciled",
-        sealed.sequence,
-        existing.logical_bytes,
-        archived.physical_bytes,
+        "repaired", entry.sequence, facts.logical_bytes, entry.physical_bytes
     )
 
 
@@ -276,34 +266,14 @@ def delete_source(context: ArchiveContext, entry: SegmentEntry) -> None:
     _remove_sealed_source(context, entry.sequence)
 
 
-def _rearchive(context: ArchiveContext, sealed: SegmentEntry) -> ActionResult:
-    """Discard a stale archive and archive its source again.
-
-    Parameters
-    ----------
-    context : ArchiveContext
-        The run's layout, policy and moment.
-    sealed : SegmentEntry
-        The source to archive.
-
-    Returns
-    -------
-    ActionResult
-        The re-archived result.
-    """
-    remove_private_files(
-        context.layout.archive_dir,
-        [outcome_segments.sidecar_name(sealed.sequence)],
-    )
-    result = archive_source(context, sealed)
-    return dc.replace(result, action="re-archived")
-
-
 def _remove_sealed_source(context: ArchiveContext, sequence: int) -> None:
     """Remove one archived source and the writer metadata that described it.
 
     The sidecar is now the authoritative record of the segment's facts, so the
-    writer's metadata would otherwise accumulate beside an empty directory.
+    writer's metadata would otherwise accumulate beside an empty directory. An
+    unfinished maintenance marker goes with them: the source it protected is
+    gone, and leaving it would make the next inventory report work that no
+    longer exists.
 
     Parameters
     ----------
@@ -312,13 +282,7 @@ def _remove_sealed_source(context: ArchiveContext, sequence: int) -> None:
     sequence : int
         The archived sequence whose source must be released.
     """
-    remove_private_files(
-        context.layout.sealed_dir,
-        [
-            outcome_segments.segment_name(sequence),
-            outcome_segments.sealed_meta_name(sequence),
-        ],
-    )
+    remove_sealed_files(context.layout.sealed_dir, sequence)
 
 
 def _archive_path(context: ArchiveContext, sequence: int) -> Path:

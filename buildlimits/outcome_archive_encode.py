@@ -37,6 +37,7 @@ if typ.TYPE_CHECKING:
 __all__ = [
     "EncodeOptions",
     "build_temp",
+    "composed_trim",
     "discard",
     "read_archive_facts",
     "read_source_facts",
@@ -228,23 +229,29 @@ def discard(path: Path) -> None:
         path.unlink()
 
 
-def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
+def composed_trim(source_path: Path, trim: Trim, *, is_compressed: bool) -> Trim:
     """Return the trim the writing pass needs, measuring policy drops first.
 
     A byte allowance must be compared with the document that survives the
     count and age rules, and only a whole pass over the source can measure
     what those rules drop. That pass is skipped when the allowance cannot
-    compose with either rule, so an ordinary archive still reads its source
+    compose with either rule, so an ordinary rewrite still reads its source
     once before the verification pass. The measurement propagates the
     ``SegmentFaultError`` its reader reports when a row or header in the source
     is invalid.
+
+    The plain and compressed rewrites share this measurement, so a sealed
+    source trimmed in place and an archive recompressed under the same policy
+    drop the same rows.
 
     Parameters
     ----------
     source_path : Path
         The plain or compressed document the writing pass will read.
-    options : EncodeOptions
-        The preset, prefix trim and source encoding.
+    trim : Trim
+        The prefix policy to resolve.
+    is_compressed : bool
+        Whether the source is an XZ archive.
 
     Returns
     -------
@@ -252,7 +259,6 @@ def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
         The trim, with ``policy_bytes`` measured when the byte allowance
         composes with a count or age rule.
     """
-    trim = options.trim
     composes = trim.before is not None or trim.records != 0
     if trim.allowed_bytes is None or not composes:
         return trim
@@ -261,7 +267,7 @@ def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
     )
     with os.fdopen(descriptor, "rb") as source:
         measured = policy_dropped_bytes(
-            LineStream(source, is_compressed=options.is_compressed), trim
+            LineStream(source, is_compressed=is_compressed), trim
         )
     return dc.replace(trim, policy_bytes=measured)
 
@@ -331,7 +337,9 @@ def _write_temp(
     # that are not private regular files, and that rejection must not leak the
     # temporary's descriptor.
     with os.fdopen(descriptor, "wb") as sink:
-        trim = _composed_trim(source_path, options)
+        trim = composed_trim(
+            source_path, options.trim, is_compressed=options.is_compressed
+        )
         source_descriptor, _metadata = open_private_regular(
             source_path, os.O_RDONLY, enforce_mode=False
         )

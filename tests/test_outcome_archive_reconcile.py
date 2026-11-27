@@ -21,12 +21,13 @@ from archive_files_helpers import (
     sealed_entry,
 )
 
-from buildlimits.outcome_archive_files import delete_archive, reconcile_duplicate
+from buildlimits.outcome_archive_files import delete_archive
 from buildlimits.outcome_archive_fs import UnsafePathError
 from buildlimits.outcome_archive_quarantine import (
     quarantine_archive,
     remove_orphan_sidecar,
 )
+from buildlimits.outcome_archive_reconcile import reconcile_duplicate
 from buildlimits.outcome_segments import archive_name, sidecar_name
 
 if typ.TYPE_CHECKING:

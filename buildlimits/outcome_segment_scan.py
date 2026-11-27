@@ -28,6 +28,7 @@ _ARCHIVE_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz$")
 _SIDECAR_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.json$")
 _SEALED_RE = re.compile(r"^segment-(\d{12})\.jsonl$")
 _SEALED_META_RE = re.compile(r"^segment-(\d{12})\.jsonl\.meta\.json$")
+_SEALED_REPLACING_RE = re.compile(r"^segment-(\d{12})\.jsonl\.trimming$")
 _REPLACING_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.replacing$")
 
 __all__ = [
@@ -83,17 +84,30 @@ class SegmentEntry:
 
 def scan_sealed(
     directory: Path,
-) -> tuple[list[SegmentEntry], dict[int, dict[str, object]]]:
-    """List sealed sources and their optional writer metadata.
+) -> tuple[list[SegmentEntry], dict[int, dict[str, object]], tuple[int, ...]]:
+    """List sealed sources, their optional writer metadata and unfinished work.
+
+    A source whose in-place rewrite has not recorded its new metadata is
+    listed, but its metadata is withheld: the marker says the file may already
+    have been replaced, so the counts, span and salt it describes may belong to
+    bytes that no longer exist. The repair step re-derives them from the file.
 
     Returns
     -------
-    tuple[list[SegmentEntry], dict[int, dict[str, object]]]
-        Sealed entries and metadata keyed by sequence.
+    tuple[list[SegmentEntry], dict[int, dict[str, object]], tuple[int, ...]]
+        Sealed entries, metadata keyed by sequence with every marked source
+        omitted, and the sequences a rewrite has not finished, including a
+        marker whose source was already removed.
     """
     entries: list[SegmentEntry] = []
     metadata: dict[int, dict[str, object]] = {}
-    for path, size in regular_files(directory):
+    marked: set[int] = set()
+    files = regular_files(directory)
+    for path, _size in files:
+        match = _SEALED_REPLACING_RE.fullmatch(path.name)
+        if match is not None:
+            marked.add(int(match.group(1)))
+    for path, size in files:
         matched = _SEALED_RE.fullmatch(path.name)
         if matched is not None:
             sequence = int(matched.group(1))
@@ -108,11 +122,11 @@ def scan_sealed(
             )
             continue
         meta_match = _SEALED_META_RE.fullmatch(path.name)
-        if meta_match is not None:
+        if meta_match is not None and int(meta_match.group(1)) not in marked:
             document = read_mapping(path)
             if document is not None:
                 metadata[int(meta_match.group(1))] = document
-    return entries, metadata
+    return entries, metadata, tuple(sorted(marked))
 
 
 def scan_archived(

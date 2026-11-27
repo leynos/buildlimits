@@ -128,9 +128,11 @@ def test_a_run_reports_limits_history_and_maintenance(tmp_path: Path) -> None:
     assert rendered["evictions"] == NO_EVICTIONS, (
         "nothing was evicted under a permissive policy"
     )
-    assert rendered["maintenance"] == {"state_written": True, "reason": None}, (
-        "the state write succeeded"
-    )
+    assert rendered["maintenance"] == {
+        "state_written": True,
+        "baseline_written": True,
+        "reason": None,
+    }, "the state and clock baseline were written"
 
 
 def _reported(report: RunReport, subject: str) -> tuple[dict, dict]:

@@ -36,6 +36,7 @@ EVENTS = frozenset({
     "outcome_reading",
     "outcome_store",
     "archive_run",
+    "retention_run",
 })
 OUTCOMES = frozenset({
     "completed",
@@ -204,6 +205,10 @@ VOCABULARIES = {
         "no_headroom",
         "unreadable",
         "state_write_failed",
+        # A completed pass whose clock baseline could not be recorded. The
+        # store is intact; the next firing may withhold age eviction once more
+        # than it needed to.
+        "clock_baseline_failed",
     }),
 }
 DURATIONS = frozenset({

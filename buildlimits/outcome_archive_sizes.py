@@ -69,8 +69,8 @@ def retained_estimate(
     for entry in inventory.effective:
         if entry.sequence in deleted:
             continue
-        if entry.state == "sealed":
-            retained += entry.logical_bytes
-        else:
-            retained += planned_size(entry, trim_map.get(entry.sequence))
+        # A retention-only plan may trim a sealed source in place, so the same
+        # allowance applies to either state. An archive-only plan never plans
+        # such a trim, which leaves this equal to the source's own size.
+        retained += planned_size(entry, trim_map.get(entry.sequence))
     return retained

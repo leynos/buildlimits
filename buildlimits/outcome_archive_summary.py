@@ -28,10 +28,14 @@ class PlanSummary:
         Sources that will be compressed.
     heal : int
         Sidecars that will be rebuilt.
+    sealed_repair : int
+        Sealed sources whose metadata will be re-derived.
+    stale_marker : int
+        Sealed rewrite markers whose source is already gone.
     orphan : int
         Sidecars that will be quarantined.
     trim : int
-        Archives that will be rewritten.
+        Entries that will be rewritten, sealed in place or archived under XZ.
     delete : int
         Archives and sealed sources that will be removed.
     retained_bytes : int
@@ -46,6 +50,8 @@ class PlanSummary:
     reconcile: int = 0
     archive: int = 0
     heal: int = 0
+    sealed_repair: int = 0
+    stale_marker: int = 0
     orphan: int = 0
     trim: int = 0
     delete: int = 0
@@ -71,6 +77,8 @@ class PlanSummary:
             reconcile=len(plan.reconcile),
             archive=len(plan.archive),
             heal=len(plan.heal),
+            sealed_repair=len(plan.sealed_repairs),
+            stale_marker=len(plan.stale_sealed_markers),
             orphan=len(plan.orphans),
             trim=len(plan.trims),
             delete=len(plan.deletes),
@@ -91,6 +99,8 @@ class PlanSummary:
             "reconcile": self.reconcile,
             "archive": self.archive,
             "heal": self.heal,
+            "sealed_repair": self.sealed_repair,
+            "stale_marker": self.stale_marker,
             "orphan": self.orphan,
             "trim": self.trim,
             "delete": self.delete,

@@ -11,6 +11,7 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_context import ignore_retry
+from buildlimits.outcome_store_clock import system_boot_id, system_boottime
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -18,7 +19,7 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.metrics import MetricsPort
-    from buildlimits.outcome_archive_context import ActionResult
+    from buildlimits.outcome_archive_context import ActionResult, Operation
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_retention_report import RetainedHistory, RetentionLimits
 
@@ -46,22 +47,33 @@ class RunOptions:
     ----------
     preset : int
         The XZ preset used for new and rewritten archives.
+    operation : Operation
+        Which maintenance operation to perform. ``retain`` applies the same
+        retention policy without compressing sealed history.
     now : datetime | None
         The UTC wall time to use, or None to read the clock once.
     dry_run : bool
         Whether to plan without changing any file.
     clock : Callable[[], datetime]
         The clock for the run's start when ``now`` is None, and each finish.
+    boot_id : Callable[[], str | None]
+        The boot identifier this firing's clock reading belongs to.
+    boottime : Callable[[], float | None]
+        The ``CLOCK_BOOTTIME`` reading that follows suspended time.
     on_retry : Callable[[str, int, str], None]
         Receives each retried reading's operation, attempt and closed category.
     metrics : MetricsPort | None
-        The transport an ``archive_run`` record publishes through, or None.
+        The transport an ``archive_run`` or ``retention_run`` record publishes
+        through, or None.
     """
 
     preset: int = 6
+    operation: Operation = "archive"
     now: dt.datetime | None = None
     dry_run: bool = False
     clock: cabc.Callable[[], dt.datetime] = utc_now
+    boot_id: cabc.Callable[[], str | None] = system_boot_id
+    boottime: cabc.Callable[[], float | None] = system_boottime
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
     metrics: MetricsPort | None = None
 
@@ -94,12 +106,16 @@ class Maintenance:
     Attributes
     ----------
     state_written : bool
-        Whether ``retention.json`` and ``last-run.json`` were installed.
+        Whether ``retention.json`` and the operation's report were installed.
+    baseline_written : bool
+        Whether this firing's clock baseline was recorded. A failure keeps the
+        store intact but may withhold age eviction once more than necessary.
     reason : str | None
-        A closed reason when state persistence failed.
+        A closed reason when a document could not be persisted.
     """
 
     state_written: bool = True
+    baseline_written: bool = True
     reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -108,9 +124,13 @@ class Maintenance:
         Returns
         -------
         dict[str, object]
-            Whether state was persisted and why it was not.
+            Whether each document was persisted and why one was not.
         """
-        return {"state_written": self.state_written, "reason": self.reason}
+        return {
+            "state_written": self.state_written,
+            "baseline_written": self.baseline_written,
+            "reason": self.reason,
+        }
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -121,6 +141,12 @@ class RunReport:
     ----------
     status : RunStatus
         The closed run classification.
+    operation : Operation
+        Which maintenance operation produced this report.
+    clock_skew : bool
+        Whether this firing's clock reading was judged to have jumped. A
+        locked run withheld age eviction for it; an inspection only reports the
+        decision.
     started_at : datetime
         When the run began.
     finished_at : datetime
@@ -165,6 +191,8 @@ class RunReport:
         Archives whose sidecar cannot be trusted.
     orphan_sidecars : tuple[int, ...]
         Sidecars with no archive.
+    sealed_replacing : tuple[int, ...]
+        Sealed sources whose in-place rewrite has not recorded its metadata.
     limits : RetentionLimits | None
         The effective retention bounds, or None when none was derived.
     retained : RetainedHistory | None
@@ -178,6 +206,8 @@ class RunReport:
     status: RunStatus
     started_at: dt.datetime
     finished_at: dt.datetime
+    operation: Operation = "archive"
+    clock_skew: bool = False
     dry_run: bool = False
     active_bytes: int = 0
     retained_bytes: int = 0
@@ -196,6 +226,7 @@ class RunReport:
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
+    sealed_replacing: tuple[int, ...] = ()
     limits: RetentionLimits | None = None
     retained: RetainedHistory | None = None
     maintenance: Maintenance = dc.field(default_factory=Maintenance)

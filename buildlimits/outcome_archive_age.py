@@ -48,12 +48,16 @@ def age_trims(
     candidates: tuple[SegmentEntry, ...],
     cutoff: dt.datetime | None,
     deletes: dict[int, SegmentEntry],
+    *,
+    include_sealed: bool = False,
 ) -> dict[int, Trim]:
-    """Record the prefix trim a straddling archive needs.
+    """Record the prefix trim a straddling entry needs.
 
-    A sealed source that straddles the cutoff is left untrimmed here. This run
-    archives it, and the follow-up plan applies the trim to the archive it
-    becomes, which is the first point at which it can be rewritten.
+    In an archive run a sealed source that straddles the cutoff is left
+    untrimmed: the run archives it, and the follow-up plan applies the trim to
+    the archive it becomes, which is the first point at which it can be
+    rewritten. A retention-only run rewrites the source in place, so the trim
+    is planned against the sealed file itself.
 
     Parameters
     ----------
@@ -64,11 +68,13 @@ def age_trims(
         eviction is disabled.
     deletes : dict[int, SegmentEntry]
         Entries already planned for whole deletion, which are never trimmed.
+    include_sealed : bool
+        Whether a sealed straddler may be planned for an in-place rewrite.
 
     Returns
     -------
     dict[int, Trim]
-        A trim keyed by sequence for every archive that straddles the cutoff.
+        A trim keyed by sequence for every entry that straddles the cutoff.
     """
     if cutoff is None:
         return {}
@@ -76,7 +82,7 @@ def age_trims(
     for entry in candidates:
         if entry.sequence in deletes or not entry.has_metadata:
             continue
-        if entry.state != "archived":
+        if entry.state != "archived" and not include_sealed:
             continue
         first = entry.first_observed_at
         if first is not None and first < cutoff:

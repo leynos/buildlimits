@@ -1,9 +1,10 @@
-"""Executing one archive plan, one closed operation at a time.
+"""Executing one maintenance plan, one closed operation at a time.
 
 Every per-segment operation is wrapped here so one unreadable file becomes a
 recorded failure instead of ending the run. The order is fixed: reconcile first
 so a half-published pair is settled before anything is archived again, then
-archive, heal, quarantine orphans, trim and finally delete.
+clear stale rewrite markers and re-derive unmeasurable sealed metadata, archive,
+heal, quarantine orphans, trim and finally delete.
 """
 
 import dataclasses as dc
@@ -13,14 +14,17 @@ from buildlimits import (
     outcome_archive_evict,
     outcome_archive_files,
     outcome_archive_quarantine,
+    outcome_archive_reconcile,
 )
+from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_replace import end_sealed_replacement
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
-    from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_archive_plan import Plan, PlanSummary
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
@@ -104,10 +108,19 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
     source out of the retained history, so the totals the plan's budget was
     computed from no longer describe the store, and evicting against them
     could discard history a fresh plan would keep.
+
+    Repairs run before archival and eviction because neither can measure a
+    source whose metadata is untrusted. A retention-only plan has no archival
+    step at all, so its repairs are what make the follow-up plan able to
+    decide the age, byte and record bounds for sealed history.
     """
     first_action = len(outcome.actions)
     for sealed, archived in run.plan.reconcile:
         _reconcile_one(run, sealed, archived, outcome)
+    for sequence in run.plan.stale_sealed_markers:
+        _clear_stale_marker(run, sequence, outcome)
+    for entry in run.plan.sealed_repairs:
+        _repair_one(run, entry, outcome)
     for entry in run.plan.archive:
         _archive_one(run, entry, outcome)
     for entry in run.plan.heal:
@@ -161,7 +174,7 @@ def _reconcile_one(
     """Settle one already-published pair, quarantining a bad source."""
     try:
         outcome.actions.append(
-            outcome_archive_files.reconcile_duplicate(run.context, sealed, archived)
+            outcome_archive_reconcile.reconcile_duplicate(run.context, sealed, archived)
         )
     except (OutputFaultError, SegmentFaultError) as fault:
         # Re-archiving a quarantined duplicate can meet the same closed faults
@@ -187,6 +200,28 @@ def _quarantine_orphan(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> N
         )
     except OSError as error:
         outcome.failures.append((sequence, outcome_archive_evict.failure_reason(error)))
+
+
+def _clear_stale_marker(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> None:
+    """Remove one rewrite marker whose sealed source is already gone."""
+    try:
+        end_sealed_replacement(run.context.layout.sealed_dir, sequence)
+    except OSError as error:
+        outcome.failures.append((sequence, outcome_archive_evict.failure_reason(error)))
+        return
+    outcome.actions.append(ActionResult("repaired", sequence, reason="stale_marker"))
+
+
+def _repair_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
+    """Re-derive one sealed source's metadata, quarantining an invalid one."""
+    outcome_archive_evict.quarantining(
+        outcome,
+        entry.sequence,
+        lambda: outcome_archive_files.repair_sealed_metadata(run.context, entry),
+        lambda reason: outcome_archive_quarantine.quarantine_source(
+            run.context, entry, reason
+        ),
+    )
 
 
 def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:

@@ -16,7 +16,6 @@ import os
 import secrets
 import stat
 import typing as typ
-from pathlib import Path
 
 from buildlimits.outcome_archive_dirs import (
     UnsafePathError,
@@ -29,6 +28,7 @@ from buildlimits.outcome_store_io import fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
 _FILE_MODE = 0o600
 _TEMP_SUFFIX = ".tmp"
@@ -40,6 +40,7 @@ __all__ = [
     "open_private_regular",
     "open_private_temp",
     "publish_no_clobber",
+    "remove_maintenance_files",
     "remove_private_files",
     "remove_stale_temps",
     "require_private_chain",
@@ -239,29 +240,121 @@ def remove_stale_temps(directory: Path) -> tuple[str, ...]:
     tuple[str, ...]
         Names that were removed.
     """
-    removed: list[str] = []
-    try:
-        iterator = os.scandir(directory)
-    except OSError:
+    return _remove_matching(
+        directory,
+        lambda name: name.endswith(_TEMP_SUFFIX),
+        tolerate_failures=True,
+    )
+
+
+def _remove_matching(
+    directory: Path,
+    matches: cabc.Callable[[str], bool],
+    *,
+    tolerate_failures: bool = False,
+) -> tuple[str, ...]:
+    """Remove the regular files one predicate names, through one descriptor.
+
+    Parameters
+    ----------
+    directory : Path
+        The directory to clean.
+    matches : Callable[[str], bool]
+        Whether one file name is abandoned work.
+    tolerate_failures : bool
+        Whether one file that cannot be removed is skipped. A cleanup that only
+        tidies abandoned work sets this; one whose result a caller relies on
+        lets the failure propagate.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Names that were removed; a listing, removal or sync failure propagates.
+    """
+    descriptor = open_private_chain_when_present(directory)
+    if descriptor is None:
         return ()
     try:
-        for entry in iterator:
-            if not entry.name.endswith(_TEMP_SUFFIX):
-                continue
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                continue
-            try:
-                Path(entry.path).unlink()
-            except OSError:
-                continue
-            removed.append(entry.name)
+        with os.scandir(descriptor) as iterator:
+            removed = [
+                entry.name
+                for entry in iterator
+                if matches(entry.name)
+                and _remove_entry(
+                    descriptor, entry, tolerate_failures=tolerate_failures
+                )
+            ]
+        os.fsync(descriptor)
     finally:
-        iterator.close()
+        os.close(descriptor)
     return tuple(removed)
+
+
+def _remove_entry(
+    descriptor: int,
+    entry: os.DirEntry[str],
+    *,
+    tolerate_failures: bool,
+) -> bool:
+    """Remove one listed entry, reporting whether it is now gone.
+
+    Returns
+    -------
+    bool
+        True when this call removed the entry.
+
+    Raises
+    ------
+    OSError
+        If the entry cannot be removed and ``tolerate_failures`` is false.
+    """
+    try:
+        metadata = entry.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode):
+        return False
+    try:
+        os.unlink(entry.name, dir_fd=descriptor)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        if not tolerate_failures:
+            raise
+        return False
+    return True
+
+
+def remove_maintenance_files(directory: Path, prefix: str) -> tuple[str, ...]:
+    """Remove abandoned maintenance temporaries under the archive lock.
+
+    The sealed directory is shared with the writer, which publishes metadata
+    through its own temporary files while a seal is in progress. Only names
+    carrying the maintenance prefix are removed, so a concurrent seal can never
+    lose the file it is about to install.
+
+    Parameters
+    ----------
+    directory : Path
+        The directory whose abandoned maintenance files are removed.
+    prefix : str
+        The maintenance prefix, matched as ``.<prefix>-``.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Names that were removed.
+
+    Notes
+    -----
+    A missing directory holds nothing. A refused chain or a failed removal or
+    sync propagates as `OSError`.
+    """
+    marker = f".{prefix}-"
+    return _remove_matching(
+        directory,
+        lambda name: name.startswith(marker) and name.endswith(_TEMP_SUFFIX),
+    )
 
 
 def require_private_regular(metadata: os.stat_result) -> None:

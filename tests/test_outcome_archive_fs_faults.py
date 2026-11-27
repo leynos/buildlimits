@@ -12,6 +12,7 @@ import collections.abc as cabc
 import contextlib
 import errno
 import os
+import typing as typ
 from pathlib import Path
 
 import pytest
@@ -87,24 +88,18 @@ def test_a_state_sync_that_fails_keeps_no_temporary(
     assert path.exists(), "the replaced document is still readable"
 
 
-class _RefusingUnlink(Path):
-    """A path whose removal always fails, as a held file's would."""
-
-    def unlink(
-        self,
-        missing_ok: bool = False,  # ruff: ignore[boolean-default-value-positional-argument] - must keep Path.unlink's positional signature to override it.
-    ) -> None:
-        """Refuse the removal and report a filesystem failure."""
-        raise OSError(errno.EBUSY, "the entry is held")
-
-
 def test_a_stale_temporary_that_cannot_be_removed_is_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An entry the run cannot remove is left for the next holding of the lock."""
     stale = tmp_path / ".state.abcdef.tmp"
     stale.write_text("{}")
-    monkeypatch.setattr(outcome_archive_fs, "Path", _RefusingUnlink)
+
+    def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Refuse the removal as a held entry would."""
+        raise OSError(errno.EBUSY, "the entry is held")
+
+    monkeypatch.setattr(outcome_archive_fs.os, "unlink", refuse)
 
     removed = remove_stale_temps(tmp_path)
 

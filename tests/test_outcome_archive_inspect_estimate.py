@@ -11,8 +11,9 @@ from outcome_archive_helpers import layout, policy, records, refuse, run, write
 from outcome_test_helpers import records_at
 
 from buildlimits import outcome_archive_files
-from buildlimits.outcome_archive_cli import _write_report, main
+from buildlimits.outcome_archive_cli import main
 from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_archive_render import write_report
 from buildlimits.outcome_segments import archive_name, sidecar_name
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
@@ -97,7 +98,7 @@ def test_a_missing_sidecar_discloses_the_physical_size_fallback(
         "the JSON names the fallback component"
     )
 
-    _write_report(report, as_json=False)
+    write_report(report, as_json=False)
     output = capsys.readouterr().out
     assert (
         f"retained fallback: {report.fallback_bytes} bytes from physical size; "

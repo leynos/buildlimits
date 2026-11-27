@@ -1,14 +1,15 @@
-"""The marker one archive rewrite leaves until its sidecar is durable.
+"""The markers a rewrite leaves until its metadata is durable.
 
-A rewrite publishes its replacement archive by an atomic rename and only then
-replaces the sidecar. A process that stops between those two steps leaves a
-sidecar describing the bytes that used to be there, and compressed size cannot
-tell the pair apart: two XZ streams of different content can occupy exactly the
-same number of bytes. The rewrite therefore records its intent beside the
-archive before the rename. A scan that finds the marker refuses the sidecar and
-routes the archive to the repair path, which re-derives the facts from the file
-itself. The marker is removed only once a sidecar describes the archive that is
-actually published.
+A rewrite publishes its replacement by an atomic rename and only then replaces
+the metadata. A process that stops between those two steps leaves metadata
+describing the bytes that used to be there. For an archive, compressed size
+cannot tell the pair apart: two XZ streams of different content can occupy
+exactly the same number of bytes. A sealed source has the same window but no
+sidecar, so its marker covers the writer's metadata file instead. Either way
+the rewrite records its intent before the rename. A scan that finds the marker
+refuses the metadata and routes the artefact to the repair path, which
+re-derives the facts from the file itself. The marker is removed only once
+metadata describes the bytes that are actually published.
 """
 
 import contextlib
@@ -21,7 +22,33 @@ from buildlimits.outcome_store_io import fsync_directory
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["begin_replacement", "end_replacement"]
+
+def _begin(directory: Path, name: str, sequence: int) -> Path:
+    """Record that one file is about to be replaced by a durable marker.
+
+    Returns
+    -------
+    Path
+        The marker naming that sequence.
+    """
+    marker = directory / name
+    atomic_write_json(marker, {"schema": 1, "sequence": sequence})
+    return marker
+
+
+def _end(directory: Path, name: str) -> None:
+    """Remove one rewrite marker and make the removal durable."""
+    with contextlib.suppress(FileNotFoundError):
+        (directory / name).unlink()
+    fsync_directory(directory)
+
+
+__all__ = [
+    "begin_replacement",
+    "begin_sealed_replacement",
+    "end_replacement",
+    "end_sealed_replacement",
+]
 
 
 def begin_replacement(archive_dir: Path, sequence: int) -> Path:
@@ -39,9 +66,7 @@ def begin_replacement(archive_dir: Path, sequence: int) -> Path:
     Path
         The durable marker naming that sequence.
     """
-    marker = archive_dir / outcome_segments.replacing_name(sequence)
-    atomic_write_json(marker, {"schema": 1, "sequence": sequence})
-    return marker
+    return _begin(archive_dir, outcome_segments.replacing_name(sequence), sequence)
 
 
 def end_replacement(archive_dir: Path, sequence: int) -> None:
@@ -54,6 +79,35 @@ def end_replacement(archive_dir: Path, sequence: int) -> None:
     sequence : int
         The sequence that is no longer being replaced.
     """
-    with contextlib.suppress(FileNotFoundError):
-        (archive_dir / outcome_segments.replacing_name(sequence)).unlink()
-    fsync_directory(archive_dir)
+    _end(archive_dir, outcome_segments.replacing_name(sequence))
+
+
+def begin_sealed_replacement(sealed_dir: Path, sequence: int) -> Path:
+    """Record that one plain sealed source is about to be rewritten.
+
+    Parameters
+    ----------
+    sealed_dir : Path
+        The private directory the rewrite works in.
+    sequence : int
+        The sequence being rewritten.
+
+    Returns
+    -------
+    Path
+        The durable marker naming that sequence.
+    """
+    return _begin(sealed_dir, outcome_segments.sealed_marker_name(sequence), sequence)
+
+
+def end_sealed_replacement(sealed_dir: Path, sequence: int) -> None:
+    """Remove one sealed rewrite marker once its metadata describes the file.
+
+    Parameters
+    ----------
+    sealed_dir : Path
+        The private directory the rewrite worked in.
+    sequence : int
+        The sequence that is no longer being rewritten.
+    """
+    _end(sealed_dir, outcome_segments.sealed_marker_name(sequence))

@@ -29,6 +29,8 @@
     'reconcile': 0,
     'retained_logical_bytes': 55,
     'retention_deferred': False,
+    'sealed_repair': 0,
+    'stale_marker': 0,
     'trim': 2,
   })
 # ---

@@ -120,6 +120,11 @@ def _floor_baseline(
 def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
     """Persist the retention floor and the run report durably.
 
+    The floor is shared by both operations, because either may delete history.
+    The report is not: an archive firing and a retention-only firing write
+    separate documents, so a timer that runs one cannot make the other's most
+    recent result disappear.
+
     Parameters
     ----------
     layout : SegmentLayout
@@ -131,8 +136,13 @@ def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
         ``OSError`` so the caller can report that no state was installed.
     """
     write_floor(layout, floor, report)
+    destination = (
+        layout.last_retain_file
+        if report.operation == "retain"
+        else layout.last_run_file
+    )
     outcome_archive_fs.atomic_write_json(
-        layout.last_run_file, outcome_archive_codec.report_dict(report)
+        destination, outcome_archive_codec.report_dict(report)
     )
 
 

@@ -67,7 +67,9 @@ def test_a_failed_reconcile_is_recorded_and_the_run_continues(
     store_layout = layout(tmp_path)
     for sequence in (1, 2):
         restore_source(store_layout, sequence)
-    real = outcome_archive_files.reconcile_duplicate
+    from buildlimits import outcome_archive_reconcile
+
+    real = outcome_archive_reconcile.reconcile_duplicate
 
     def refuse_first(
         context: ArchiveContext, sealed: SegmentEntry, archived: SegmentEntry
@@ -77,7 +79,7 @@ def test_a_failed_reconcile_is_recorded_and_the_run_continues(
             raise OutputFaultError("truncated_xz")
         return real(context, sealed, archived)
 
-    monkeypatch.setattr(outcome_archive_files, "reconcile_duplicate", refuse_first)
+    monkeypatch.setattr(outcome_archive_reconcile, "reconcile_duplicate", refuse_first)
 
     report = run(tmp_path, policy())
 
@@ -292,13 +294,13 @@ def test_an_unreadable_lookup_is_not_a_completed_deletion(
 
 def _deflate_after_the_work(monkeypatch: pytest.MonkeyPatch, errno_value: int) -> None:
     """Make the post-work measurement fail with the supplied filesystem error."""
-    from buildlimits import outcome_archive
+    from buildlimits import outcome_archive_execute
 
     def refuse_report(*_args: object, **_kwargs: object) -> typ.NoReturn:
         """Fail the report measurement after the archives were published."""
         raise OSError(errno_value, "injected failure")
 
-    monkeypatch.setattr(outcome_archive, "_report", refuse_report)
+    monkeypatch.setattr(outcome_archive_execute, "_report", refuse_report)
 
 
 def test_a_full_filesystem_after_the_work_stays_retryable(

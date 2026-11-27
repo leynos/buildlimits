@@ -7,6 +7,7 @@ is written before the rename so a crash leaves an empty gap rather than two
 segments sharing a name.
 """
 
+import dataclasses as dc
 import typing as typ
 
 from buildlimits import outcome_records, outcome_segments
@@ -30,9 +31,23 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_store_state import StoreFiles
 
 ARCHIVE_BACKLOG_SEGMENTS = 8
-_METADATA_SCHEMA = 1
+METADATA_SCHEMA = 1
+"""The sealed-metadata schema the writer publishes.
 
-__all__ = ["ARCHIVE_BACKLOG_SEGMENTS", "seal"]
+The archiver rewrites a source's counts and span after an in-place retention
+trim, and it must write the document the writer's inventory reads. The schema
+number is named here so both processes share one definition rather than
+carrying a copy each.
+"""
+
+__all__ = [
+    "ARCHIVE_BACKLOG_SEGMENTS",
+    "METADATA_SCHEMA",
+    "SealedRows",
+    "seal",
+    "sealed_metadata",
+    "sealed_metadata_document",
+]
 
 
 def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
@@ -172,6 +187,25 @@ def highest_segment_name(directory: Path) -> int:
     return highest
 
 
+@dc.dataclass(frozen=True, slots=True)
+class SealedRows:
+    """What one sealed document holds, as its metadata records it.
+
+    Attributes
+    ----------
+    record_count : int
+        Non-header rows the document held when it was described.
+    first_observed_at : datetime | None
+        Earliest row observation, or None when the document held no rows.
+    last_observed_at : datetime | None
+        Latest row observation, or None when the document held no rows.
+    """
+
+    record_count: int
+    first_observed_at: dt.datetime | None
+    last_observed_at: dt.datetime | None
+
+
 def sealed_metadata(
     records: list[StoreRecord], sequence: int, salt_id: str, now: dt.datetime
 ) -> dict[str, object]:
@@ -183,14 +217,57 @@ def sealed_metadata(
         Counts, salt identity and observed range, with no private values.
     """
     observed = [record.observed_at for record in records]
+    return sealed_metadata_document(
+        sequence=sequence,
+        salt_id=salt_id,
+        rows=SealedRows(
+            record_count=len(observed),
+            first_observed_at=min(observed, default=None),
+            last_observed_at=max(observed, default=None),
+        ),
+        sealed_at=now,
+    )
+
+
+def sealed_metadata_document(
+    *,
+    sequence: int,
+    salt_id: str,
+    rows: SealedRows,
+    sealed_at: dt.datetime,
+) -> dict[str, object]:
+    """Build the metadata document one sealed source is described by.
+
+    The writer and the archiver both publish this document, so its field names,
+    schema number and timestamp encoding live in one place. An in-place trim
+    keeps the original ``sealed_at`` so a source's age is not reset by
+    maintenance that only dropped expired rows.
+
+    Returns
+    -------
+    dict[str, object]
+        Counts, salt identity and observed range, with no private values.
+
+    Examples
+    --------
+    >>> import datetime as dt
+    >>> document = sealed_metadata_document(
+    ...     sequence=3,
+    ...     salt_id="salt",
+    ...     rows=SealedRows(0, None, None),
+    ...     sealed_at=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+    ... )
+    >>> document["schema"], document["record_count"]
+    (1, 0)
+    """
     return {
-        "schema": _METADATA_SCHEMA,
+        "schema": METADATA_SCHEMA,
         "sequence": sequence,
         "salt_id": salt_id,
-        "record_count": len(observed),
-        "first_observed_at": optional_utc_text(min(observed, default=None)),
-        "last_observed_at": optional_utc_text(max(observed, default=None)),
-        "sealed_at": utc_text(now),
+        "record_count": rows.record_count,
+        "first_observed_at": optional_utc_text(rows.first_observed_at),
+        "last_observed_at": optional_utc_text(rows.last_observed_at),
+        "sealed_at": utc_text(sealed_at),
     }
 
 

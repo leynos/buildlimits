@@ -55,6 +55,10 @@ class Inventory:
         Archives whose sidecar cannot be trusted.
     orphan_sidecars : tuple[int, ...]
         Sidecars with no archive.
+    sealed_replacing : tuple[int, ...]
+        Sequences whose in-place sealed rewrite has not recorded its metadata.
+        A marked source's metadata is withheld from this inventory, so these
+        sequences are the ones a repair step has to settle.
     retention_floor : int | None
         Lowest sequence intentionally retained, when recorded.
     """
@@ -67,6 +71,7 @@ class Inventory:
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
+    sealed_replacing: tuple[int, ...] = ()
     retention_floor: int | None = None
 
     @property
@@ -149,7 +154,7 @@ def read_inventory(
     ``OSError`` rather than reporting an empty one: a count that was never
     measured must not read as a measured zero.
     """
-    sealed, sealed_meta = scan_sealed(layout.sealed_dir)
+    sealed, sealed_meta, replacing = scan_sealed(layout.sealed_dir)
     archived, missing, corrupt, orphans = scan_archived(layout.archive_dir)
     with_meta = _with_sealed_metadata(sealed, sealed_meta)
     gaps, gaps_truncated = retained_gaps(with_meta, archived, retention_floor)
@@ -162,6 +167,7 @@ def read_inventory(
         missing_sidecars=missing,
         corrupt_sidecars=corrupt,
         orphan_sidecars=orphans,
+        sealed_replacing=replacing,
         retention_floor=retention_floor,
     )
 

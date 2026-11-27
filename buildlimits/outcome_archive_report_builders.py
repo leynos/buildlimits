@@ -61,6 +61,8 @@ def dry_report(
                 else "corrupt"
             )
         ),
+        operation=run.context.operation,
+        clock_skew=run.context.clock_skew,
         started_at=run.started_at,
         finished_at=clock(),
         dry_run=True,
@@ -96,6 +98,8 @@ def unsettled_report(
     limits = RetentionLimits.of(context.policy)
     return RunReport(
         status="unsettled",
+        operation=context.operation,
+        clock_skew=context.clock_skew,
         started_at=started_at,
         finished_at=context.clock(),
         dry_run=dry_run,
@@ -127,6 +131,8 @@ def unfinished_report(
     limits = RetentionLimits.of(context.policy)
     return RunReport(
         status=fault.status,
+        operation=context.operation,
+        clock_skew=context.clock_skew,
         started_at=started_at,
         finished_at=context.clock(),
         dry_run=dry_run,
@@ -166,6 +172,8 @@ def after_work_failure(
     """
     return RunReport(
         status="no_headroom" if reason == "no_headroom" else "failed",
+        operation=run.context.operation,
+        clock_skew=run.context.clock_skew,
         started_at=run.started_at,
         finished_at=run.context.clock(),
         budget_bytes=run.context.policy.max_bytes,

@@ -1,0 +1,16 @@
+# serializer version: 1
+# name: test_a_skewed_report_labels_the_withheld_age_bound
+  '''
+  operation: retain
+  status: ok
+  retain: sealed history is rewritten in place, never compressed
+  started: 2026-11-19T00:00:00Z
+  elapsed: 0.000s
+  retained: 0 of 0 logical bytes
+  history: 0 records, observed unknown
+  active: 0 logical bytes
+  cutoff: withheld by clock skew
+  clock skew: age eviction withheld
+  
+  '''
+# ---
