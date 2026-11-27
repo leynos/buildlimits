@@ -146,6 +146,14 @@
   no compiler groups
   '''
 # ---
+# name: test_the_summary_describes_each_state[outcomes-with-omissions]
+  '''
+  capacity 2, held 0, healthy, caching through sccache
+  cache outcomes recording: 3 attributed, 4 readings, 2 omitted (1 without a key, 1 without a label time)
+  no requests waiting
+  no compiler groups
+  '''
+# ---
 # name: test_the_summary_describes_each_state[queued]
   '''
   capacity 1, held 1, healthy, caching through sccache

@@ -124,6 +124,13 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
         f"{section.get('attributed', 0)} attributed, "
         f"{section.get('readings', 0)} readings"
     )
+    omitted = section.get("record_omitted", 0)
+    if isinstance(omitted, int) and omitted:
+        line += (
+            f", {omitted} omitted "
+            f"({section.get('record_omitted_key', 0)} without a key, "
+            f"{section.get('record_omitted_label_time', 0)} without a label time)"
+        )
     reason = section.get("last_reason")
     return [line if not isinstance(reason, str) else f"{line}; last reason {reason}"]
 

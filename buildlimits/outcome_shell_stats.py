@@ -17,6 +17,8 @@ class OutcomeCounters:
     attributed: int = 0
     outcomes: int = 0
     record_omitted: int = 0
+    record_omitted_key: int = 0
+    record_omitted_label_time: int = 0
     readings: int = 0
     readings_skipped: int = 0
     readings_failed: int = 0
@@ -35,6 +37,12 @@ class OutcomeCounters:
             self.outcomes += 1
             self.attributed += int(event.outcome_attribution in _ATTRIBUTED_KINDS)
             self.record_omitted += int(event.record_omitted != "none")
+            # Split by the closed omission vocabulary, so the status says
+            # whether an outcome lacked its identity or its label time.
+            self.record_omitted_key += int(event.record_omitted == "key_unavailable")
+            self.record_omitted_label_time += int(
+                event.record_omitted == "label_time_unavailable"
+            )
             self.last_reason = event.outcome_reason
         for reason in outputs.reading_reasons:
             self.readings += 1
@@ -62,6 +70,8 @@ class OutcomeCounters:
             "attributed": self.attributed,
             "outcomes": self.outcomes,
             "record_omitted": self.record_omitted,
+            "record_omitted_key": self.record_omitted_key,
+            "record_omitted_label_time": self.record_omitted_label_time,
             "readings": self.readings,
             "readings_skipped": self.readings_skipped,
             "readings_failed": self.readings_failed,

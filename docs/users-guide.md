@@ -188,11 +188,17 @@ are not stored.
 The status command adds a `cache outcomes recording` line while recording is
 enabled; once a reading or outcome has closed, that line also names the last
 reason, which is the first thing to check when nothing is being attributed. If
-recording stops after an internal failure, the line reports that and keeps the
-last reason when one was recorded. If a single status read cannot build the
-outcome snapshot, the line reads `cache outcomes status unavailable`; recording
-continues and a later read may recover, so this is not a recorder failure. For
-history and reading or store failures, query:
+an outcome was produced but could not become a store row, the line names how
+many were omitted and splits them by the recorded cause: `without a key` when
+the launch had no salted identity, and `without a label time` when no
+wall-clock moment could date it. Those are the production signals for timing
+evidence: nothing is dropped silently, and no attempt token, generation or path
+appears in the line. If recording stops after an internal failure, the line
+reports that and keeps the last reason when one was recorded. If a single
+status read cannot build the outcome snapshot, the line reads
+`cache outcomes status unavailable`; recording continues and a later read may
+recover, so this is not a recorder failure. For history and reading or store
+failures, query:
 
 ```bash
 build-limits-metrics --since 1d --max-records 100000
