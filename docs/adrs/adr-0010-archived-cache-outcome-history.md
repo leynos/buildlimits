@@ -552,10 +552,55 @@ reorganizes files the supervisor produces, and never participates in admission.
 The same boundary is why the archive decision could be taken without changing
 ADR 005's recording rules.
 
+## Addendum: retention independent of XZ archiving
+
+The decision above is unchanged.
+[Issue #72](https://github.com/leynos/buildlimits/issues/72) records a gap the
+original outcome left: retention could only be enforced by a run that first
+compressed every sealed source, so a host that wanted the bounds enforced had
+to pay for XZ, and a sealed straddler could not be trimmed until it had become
+an archive. The entries below record how the same decision is now applied to
+that case.
+
+- **D44, 2026-11-28.** The command gains a second operation, `retain`, rather
+  than a second executable. It shares the validated policy, the archive lock,
+  the settled inventory-and-active reading, the retention floor, oldest-first
+  eviction and the exit codes, so the two operations cannot disagree about what
+  the bounds mean. It never schedules archival.
+- **D45, 2026-11-28.** A sealed source that straddles a bound is rewritten in
+  place as verified plain JSON Lines. The rewrite streams one row at a time
+  into a `retain-` temporary beside the source and publishes in a fixed order:
+  a durable `segment-NNNNNNNNNNNN.jsonl.trimming` marker, the atomic rename,
+  the re-derived metadata, and the marker's removal. While the marker exists
+  the inventory treats the source's counts, span and salt as unknown, so an
+  interrupted rewrite is repaired from the file rather than trusted metadata.
+  The metadata keeps the original seal time, and the marker's narrow prefix
+  keeps the writer's own temporaries safe from maintenance cleanup.
+- **D46, 2026-11-28.** An existing archive stays an archive. A retention-only
+  run recompresses one that straddles a bound or removes one whole; it never
+  converts an archive back to plain, because the compressed form is the
+  published artefact and its sidecar is what measures it.
+- **D47, 2026-11-28.** Age eviction needs a clock that has not jumped, and the
+  archiver keeps no process between firings. A locked firing therefore records
+  `clock-baseline.json` with the boot identifier, the wall time and
+  `CLOCK_BOOTTIME`; the next firing compares its own reading with it and
+  withholds the age bound for one firing when the two clocks disagree by more
+  than a day, applying the byte and record bounds as usual. A reboot, a missing
+  baseline or a damaged one applies no guard. `inspect` and `--dry-run` report
+  the decision without acting on it and never replace the baseline.
+- **D48, 2026-11-28.** The report gains an `operation` key, `clock_skew`, a
+  `sealed_repair` and `stale_marker` count in the plan, and a
+  `sealed_replacing` integrity list. A retention firing writes
+  `last-retain.json` and publishes a `retention_run` metric record with the
+  archive event's fields, so a dashboard can compare the two operations without
+  learning a second vocabulary.
+
 ## References
 
 - [Issue #63](https://github.com/leynos/buildlimits/issues/63): "Archive
   cache outcomes as XZ through a timer-friendly CLI".
+- [Issue #72](https://github.com/leynos/buildlimits/issues/72): "Enforce closed
+  cache-outcome retention independently of XZ archiving".
 - [Issue #64](https://github.com/leynos/buildlimits/issues/64), the
   retention-policy contract this decision implements.
 - [dev-env-rocky issue #424](https://github.com/leynos/dev-env-rocky/issues/424),

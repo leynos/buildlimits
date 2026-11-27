@@ -96,6 +96,10 @@
   records the issue #63 implementation phases, the writer and archiver split,
   and the verification plan.
 
+- [Retain closed cache-outcome history ExecPlan](execplans/issue-72-enforce-closed-cache-outcome-retention-independently-of-xz-archiving.md)
+  records the issue #72 retention-only operation, the in-place sealed rewrite
+  and marker protocol, the cross-firing clock guard and the verification plan.
+
 - [Restore trustworthy cache hit/miss label coverage ExecPlan](execplans/issue-68-restore-trustworthy-cache-hit-miss-label-coverage-and-admission-time-evidence-for-the-prediction-benchmark.md)
   records the issue #68 measured label loss, the admission-time and diagnostics
   implementation, the controlled real-sccache evidence and the host

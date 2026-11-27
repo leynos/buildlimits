@@ -44,10 +44,11 @@ maintenance pass is repaired rather than trusted.
 - [x] EP-1: sealed marker, inventory distrust, in-place trim and repair.
 - [x] EP-2: retain mode in the planner, executor, aggregation and settlement.
 - [x] EP-3: clock guard, operation-aware state, report and metrics.
-- [x] EP-4 (code): `retain` subcommand and operation-aware rendering.
-- [ ] EP-4 (docs): users' guide procedure, ADR addendum, repository layout.
-- [x] EP-5 (code tests): no-XZ enforcement, accounting, restart, clock, faults
-      and memory tests; documentation examples still to add.
+- [x] EP-4: `retain` subcommand, operation-aware rendering, users' guide
+      procedure with tested service/timer examples, ADR 010 addendum and the
+      repository-layout entry.
+- [x] EP-5: no-XZ enforcement, accounting, restart, clock, fault, memory and
+      documentation-example tests.
 - [ ] EP-6: full gates, review and merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,

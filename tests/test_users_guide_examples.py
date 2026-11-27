@@ -19,6 +19,10 @@ ARCHIVE_SERVICE = "buildlimits-outcome-archive-service"
 ARCHIVE_TIMER = "buildlimits-outcome-archive-timer"
 ARCHIVE_ENABLE = "buildlimits-outcome-archive-enable"
 ARCHIVE_COMMANDS = "buildlimits-outcome-archive-commands"
+RETAIN_SERVICE = "buildlimits-outcome-retain-service"
+RETAIN_TIMER = "buildlimits-outcome-retain-timer"
+RETAIN_ENABLE = "buildlimits-outcome-retain-enable"
+RETAIN_COMMANDS = "buildlimits-outcome-retain-commands"
 RETENTION_EXAMPLE = "buildlimits-cache-outcomes-retention"
 
 
@@ -205,4 +209,63 @@ def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> No
         parser.parse_args(list(arguments))
     assert invocations == [("inspect",), ("run", "--dry-run"), ("run",)], (
         "the guide shows the plan, a dry run and the real run"
+    )
+
+
+def test_the_retain_service_runs_the_operation_the_command_accepts() -> None:
+    """The unit's ExecStart is the retention subcommand, not archival."""
+    values = _ini_values(_marked_example(RETAIN_SERVICE, "ini"))
+    (exec_start,) = values["ExecStart"]
+    program, *arguments = exec_start.split()
+
+    assert program.endswith("/build-limits-outcome-archive"), (
+        "the unit runs the archiver this guide documents"
+    )
+    outcome_archive_cli._build_parser().parse_args(arguments)
+    assert arguments[-1] == "retain", "the unit performs the retention operation"
+    assert values["Type"] == ("oneshot",), "a oneshot unit exits with the run"
+    assert values["MemoryMax"] == ("256M",), "the unit bounds the peak it was sized for"
+    assert values["TimeoutStartSec"] == ("1h",), "the unit allows for a backlog run"
+
+
+def test_the_retain_timer_is_daily_and_persistent() -> None:
+    """A missed daily retention firing is caught up at the next start."""
+    values = _ini_values(_marked_example(RETAIN_TIMER, "ini"))
+
+    assert values["OnCalendar"] == ("daily",), "the guide schedules a daily run"
+    assert values["Persistent"] == ("true",), "a missed firing still runs"
+    assert values["WantedBy"] == ("timers.target",), "enabling the timer starts it"
+
+
+def test_the_retain_enable_example_names_the_timer_it_defines() -> None:
+    """The enable command is the retention timer the guide installs."""
+    commands = _example_commands(_marked_example(RETAIN_ENABLE, "bash"))
+    timer = _ini_values(_marked_example(RETAIN_TIMER, "ini"))
+
+    assert timer["WantedBy"] == ("timers.target",), "the timer is installable"
+    assert commands["systemctl"] == (
+        "--user",
+        "enable",
+        "--now",
+        "buildlimits-outcome-retain.timer",
+    ), "the unit enabled is the one the previous example writes"
+
+
+def test_the_retain_command_example_uses_subcommands_the_parser_accepts() -> None:
+    """Every documented retention invocation is one the command accepts."""
+    lines = [
+        line.split()
+        for line in _marked_example(RETAIN_COMMANDS, "bash").splitlines()
+        if line.strip()
+    ]
+    parser = outcome_archive_cli._build_parser()
+    invocations = [tuple(line[1:]) for line in lines]
+
+    assert {line[0] for line in lines} == {"build-limits-outcome-archive"}, (
+        "every line runs the documented command"
+    )
+    for arguments in invocations:
+        parser.parse_args(list(arguments))
+    assert invocations == [("retain", "--dry-run"), ("retain",)], (
+        "the guide shows the retention preview and the real run"
     )
