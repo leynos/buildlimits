@@ -257,30 +257,57 @@ def composed_trim(source_path: Path, trim: Trim, *, is_compressed: bool) -> Trim
     -------
     Trim
         The trim, with ``policy_bytes`` measured when the byte allowance
-        composes with a count or age rule.
+        composes with a count or age rule, and with the source size reduced by
+        a final fragment the reader would drop.
     """
-    composes = trim.before is not None or trim.records != 0
-    if trim.allowed_bytes is None or not composes:
+    if trim.allowed_bytes is None:
         return trim
     descriptor, _metadata = open_private_regular(
         source_path, os.O_RDONLY, enforce_mode=False
     )
     with os.fdopen(descriptor, "rb") as source:
-        measured = policy_dropped_bytes(
+        drops = measure_policy_drops(
             LineStream(source, is_compressed=is_compressed), trim
         )
-    return dc.replace(trim, policy_bytes=measured)
+    if not is_compressed and drops.tail_bytes:
+        # The reader drops an undecodable fragment, so the writing pass can
+        # never keep those bytes. Comparing the allowance with a source size
+        # that includes them would drop complete rows the allowance could hold.
+        trim = dc.replace(
+            trim, source_bytes=max(trim.source_bytes - drops.tail_bytes, 0)
+        )
+    composes = trim.before is not None or trim.records != 0
+    return dc.replace(trim, policy_bytes=drops.dropped_bytes if composes else 0)
 
 
-def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
-    """Measure the bytes a trim's count and age rules drop over a whole source.
+@dc.dataclass(frozen=True, slots=True)
+class PolicyDrops:
+    """What one measurement pass over a source found.
+
+    Attributes
+    ----------
+    dropped_bytes : int
+        Bytes, including newlines, of the record rows the count and age rules
+        drop.
+    tail_bytes : int
+        Bytes of an undecodable unterminated fragment the reader dropped. Those
+        bytes are never written, whatever allowance the trim carries.
+    """
+
+    dropped_bytes: int
+    tail_bytes: int
+
+
+def measure_policy_drops(stream: LineStream, trim: Trim) -> PolicyDrops:
+    """Measure one source for the bytes a trim drops.
 
     A byte allowance is compared with the document that results after every
     other rule has been applied, and a row the count or age rule drops after
     the byte suffix has started is absent from that document too. Deciding the
     suffix before seeing those rows would discard a row that fits, so this
-    pass measures them first. Rows are still read one at a time, so the memory
-    bound is unchanged.
+    pass measures them first. The same pass reports a final fragment the reader
+    drops, because no allowance can keep bytes the writing pass never emits.
+    Rows are still read one at a time, so the memory bound is unchanged.
 
     Parameters
     ----------
@@ -291,8 +318,8 @@ def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
 
     Returns
     -------
-    int
-        Bytes, including newlines, of the record rows those rules drop.
+    PolicyDrops
+        The policy-dropped bytes and the dropped fragment's bytes.
 
     Examples
     --------
@@ -301,14 +328,27 @@ def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
     >>> from buildlimits.outcome_record_format import StoreHeader
     >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
     >>> text = encode_line(header) + chr(10)
-    >>> policy_dropped_bytes(LineStream(io.BytesIO(text.encode())), Trim())
-    0
+    >>> measure_policy_drops(LineStream(io.BytesIO(text.encode())), Trim())
+    PolicyDrops(dropped_bytes=0, tail_bytes=0)
     """
+    reader = DocumentReader(stream)
     dropped = 0
-    for seen, row in enumerate(iter_records(DocumentReader(stream))):
+    for seen, row in enumerate(iter_records(reader)):
         if policy_drops(row.record.observed_at, trim, seen=seen):
             dropped += len(row.raw) + 1
-    return dropped
+    return PolicyDrops(dropped_bytes=dropped, tail_bytes=reader.dropped_tail_bytes)
+
+
+def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
+    """Return only the policy-dropped bytes of one measurement pass.
+
+    Returns
+    -------
+    int
+        Bytes, including newlines, of the record rows the count and age rules
+        drop.
+    """
+    return measure_policy_drops(stream, trim).dropped_bytes
 
 
 def _write_temp(

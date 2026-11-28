@@ -868,20 +868,22 @@ and `sealed_replacing` identify history that could not be processed.
 installed, with `state_write_failed` when they were not: archives and evictions
 already published stay in place, and the next firing rewrites the state from
 what is on disk. A clock baseline that could not be recorded is reported beside
-it as `baseline_written: false` with `clock_baseline_failed`; the store is
-intact, and the worst effect is that one more firing withholds age eviction. A
-failed write still gives the retention floor its own attempt, so a deletion the
-run completed is not later reported as a missing sequence when the fault was
-transient. A retry that still cannot replace `retention.json` falls back to
-`retention-pending.json`, which every later read merges with the primary
-record; only when both records refuse the write is the completed deletion later
-reported as a gap. A dry run, a deferred run and a run that could not start
-install no state and report `state_written` as false. A run that published
-archives and then could not measure the result reports `retained` as `null` and
-`reason` as `unreadable`, and still lists the actions it performed, so the
-evictions it did are not hidden by the missing total. Its completed deletions
-are recorded in the floor as well, so a failed measurement does not leave
-permanent gaps unless no state record can be written.
+it as `baseline_written: false` with `clock_baseline_failed`. The store is
+intact, and the effect depends on whether an earlier baseline exists: a failed
+update leaves the earlier reading in place, so the next firing still compares
+against it, while a failed first write leaves no baseline at all, and a missing
+baseline applies no guard. A failed state write still gives the retention floor
+its own attempt, so a deletion the run completed is not later reported as a
+missing sequence when the fault was transient. A retry that still cannot replace
+`retention.json` falls back to `retention-pending.json`, which every later
+read merges with the primary record; only when both records refuse the write is
+the completed deletion later reported as a gap. A dry run, a deferred run and a
+run that could not start install no state and report `state_written` as false.
+A run that published archives and then could not measure the result reports
+`retained` as `null` and `reason` as `unreadable`, and still lists the actions
+it performed, so the evictions it did are not hidden by the missing total. Its
+completed deletions are recorded in the floor as well, so a failed measurement
+does not leave permanent gaps unless no state record can be written.
 
 ### Compare offline hit predictors
 

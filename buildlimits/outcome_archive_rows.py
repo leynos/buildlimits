@@ -91,6 +91,10 @@ class DocumentReader:
         Whether the last record row yielded ended with a newline. A dropped
         undecodable fragment leaves this true: the row before it was committed,
         and only the fragment was torn.
+    dropped_tail_bytes : int
+        Bytes of an undecodable unterminated fragment this reader dropped. A
+        decodable unterminated row is yielded, not dropped, so it is not
+        counted: a writer that terminates it keeps those bytes.
     """
 
     def __init__(self, stream: LineStream) -> None:
@@ -99,6 +103,7 @@ class DocumentReader:
         self.header: StoreHeader | None = None
         self.had_torn_tail = False
         self.last_record_terminated = True
+        self.dropped_tail_bytes = 0
 
     def __iter__(self) -> cabc.Iterator[DocumentRow]:
         """Iterate the header then typed rows in document order.
@@ -171,6 +176,7 @@ class DocumentReader:
             if self._stream.is_terminated:
                 raise SegmentFaultError("corrupt")
             self.had_torn_tail = True
+            self.dropped_tail_bytes = len(pending)
             return
         yield RecordRow(pending, decoded)
         if not self._stream.is_terminated:

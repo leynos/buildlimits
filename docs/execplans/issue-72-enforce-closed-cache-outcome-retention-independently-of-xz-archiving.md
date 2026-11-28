@@ -65,7 +65,11 @@ maintenance pass is repaired rather than trusted.
       bound is withheld; the pending test leaves its path absent so a faulty
       `Path.exists` check would fail it; the single-file duplication exception
       keeps the shape the installed gate emits and accepts.
-- [ ] EP-6 (remaining): third review, ready for review, merge.
+- [x] EP-6 (review round 3): the byte allowance now excludes a final
+      undecodable fragment the reader drops, with a regression test that fails
+      without the adjustment; the guide distinguishes a failed first baseline
+      write from a failed update.
+- [ ] EP-6 (remaining): fourth review, ready for review, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

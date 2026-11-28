@@ -321,3 +321,27 @@ def test_a_reduced_bound_reaches_closed_history_at_the_next_retain_run(
     assert sealed_bytes(tmp_path, 1) == document(rows[3:]), (
         "the budget keeps the newest row, because a prefix trim drops oldest first"
     )
+
+
+def test_a_torn_tail_does_not_cost_a_complete_row_to_the_byte_allowance(
+    tmp_path: Path,
+) -> None:
+    """The allowance is compared with the bytes the rewrite can actually keep.
+
+    A sealed source can end with an unterminated fragment the reader drops. Its
+    bytes are on disk but can never be written, so counting them against the
+    allowance would drop complete rows that fit.
+    """
+    rows = records_at(NOW - dt.timedelta(hours=2), 2)
+    path = sealed_source(tmp_path, 1, rows)
+    path.write_bytes(path.read_bytes() + b"{torn")
+
+    report = retain(
+        tmp_path,
+        policy(1_000_000, max_age_days=0, max_bytes=len(document(rows))),
+    )
+
+    assert report.status == "ok", "the allowance is met"
+    assert sealed_bytes(tmp_path, 1) == document(rows), (
+        "the fragment costs no complete row"
+    )
