@@ -139,8 +139,8 @@ def test_the_summary_reports_correlation_outcomes_and_omissions() -> None:
             "record_omitted": 2,
             "record_omitted_key": 1,
             "record_omitted_label_time": 1,
-            "uncorrelated_rows": 5,
-            "repeated_attempts": 7,
+            "offered_uncorrelated_rows": 5,
+            "offered_repeated_attempts": 7,
         },
     }
 
@@ -148,6 +148,6 @@ def test_the_summary_reports_correlation_outcomes_and_omissions() -> None:
 
     assert (
         "cache outcomes recording: 3 attributed, 4 readings, 2 omitted "
-        "(1 without a key, 1 without a label time), 5 without a correlation "
-        "pair, 7 repeated attempt rows"
+        "(1 without a key, 1 without a label time), 5 offered without a "
+        "correlation pair, 7 offered repeating an attempt identity"
     ) in rendered, rendered

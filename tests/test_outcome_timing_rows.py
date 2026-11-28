@@ -19,6 +19,7 @@ from outcome_recorder_test_helpers import (
     clear_gate_event,
     complete_query,
     stats_text,
+    stored_record,
 )
 
 from buildlimits.outcome_record_codec import decode_lines
@@ -193,43 +194,11 @@ def test_availability_is_never_taken_from_another_launch_in_the_window() -> None
     )
 
 
-def _stored_record(
-    *,
-    generation: str = "generation-a",
-    completed: dt.datetime | None = None,
-) -> OutcomeRecord:
-    """Return one complete version 3 record for an encode or decode case.
-
-    Returns
-    -------
-    OutcomeRecord
-        A record whose timing group is complete unless the caller overrides a
-        field that makes it invalid.
-    """
-    return OutcomeRecord(
-        key=cache_key(),
-        outcome="hit",
-        origin="registry",
-        runtime_seconds=1.0,
-        observed_at=OBSERVED_AT,
-        parser_class="cacheable",
-        child_sighting="unavailable",
-        child_samples=0,
-        admitted_at=OBSERVED_AT - dt.timedelta(seconds=9),
-        completed_at=(
-            OBSERVED_AT - dt.timedelta(seconds=3) if completed is None else completed
-        ),
-        label_time_provenance="verified",
-        attempt="g1",
-        supervisor_generation=generation,
-    )
-
-
 @pytest.mark.parametrize("generation", ["", "a" * 65, "bad/token", "bad token"])
 def test_an_invalid_generation_is_refused_at_encode(generation: str) -> None:
     """A malformed generation cannot be persisted as if it were evidence."""
     with pytest.raises(ValueError, match="invalid"):
-        encode_line(_stored_record(generation=generation))
+        encode_line(stored_record(generation=generation))
 
 
 @pytest.mark.parametrize("attempt", ["", "a" * 33, "bad/token", "bad token"])
@@ -240,7 +209,7 @@ def test_an_invalid_attempt_is_refused_at_encode(attempt: str) -> None:
     copied the other, so each token is exercised on its own.
     """
     with pytest.raises(ValueError, match="invalid"):
-        encode_line(dc.replace(_stored_record(), attempt=attempt))
+        encode_line(dc.replace(stored_record(), attempt=attempt))
 
 
 @pytest.mark.parametrize(
@@ -249,7 +218,7 @@ def test_an_invalid_attempt_is_refused_at_encode(attempt: str) -> None:
 )
 def test_the_longest_accepted_tokens_round_trip(attempt: str, generation: str) -> None:
     """Both bounds are inclusive, so the longest accepted pair is expressible."""
-    record = dc.replace(_stored_record(generation=generation), attempt=attempt)
+    record = dc.replace(stored_record(generation=generation), attempt=attempt)
     header = (
         f'{{"format":"buildlimits-cache-outcomes","version":{FORMAT_VERSION},'
         '"salt_id":"s","written_at":"2026-01-01T00:00:00Z"}'
@@ -278,7 +247,7 @@ def test_a_version_five_row_with_a_bad_token_is_corrupt(
     decoder's own `valid_fields` check: a document from a buggy or hostile
     writer must be reported as corrupt rather than read as a correlation.
     """
-    row = json.loads(encode_line(_stored_record()))
+    row = json.loads(encode_line(stored_record()))
     row["attempt"] = attempt
     row["supervisor_generation"] = generation
     document = json.dumps(row)
@@ -295,7 +264,7 @@ def test_a_version_five_row_with_a_bad_token_is_corrupt(
 
 def test_a_complete_timing_group_is_written_and_read_back() -> None:
     """The encoder writes the full group and the decoder restores it exactly."""
-    record = _stored_record()
+    record = stored_record()
     header = (
         f'{{"format":"buildlimits-cache-outcomes","version":{FORMAT_VERSION},'
         '"salt_id":"s","written_at":"2026-01-01T00:00:00Z"}'

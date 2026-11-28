@@ -57,8 +57,8 @@ def _counted_clauses(section: cabc.Mapping[str, object]) -> str:
     """
     clauses = _omission_clause(section)
     counts = (
-        ("uncorrelated_rows", "without a correlation pair"),
-        ("repeated_attempts", "repeated attempt rows"),
+        ("offered_uncorrelated_rows", "offered without a correlation pair"),
+        ("offered_repeated_attempts", "offered repeating an attempt identity"),
     )
     for name, description in counts:
         value = section.get(name, 0)

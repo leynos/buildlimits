@@ -215,12 +215,12 @@ What each signal asks an operator to do:
 - `without a label time` — no wall-clock moment could date the reading. Check
   the system clock and the statistics query; a sustained count means labels are
   being observed but cannot be placed in time.
-- `without a correlation pair` — expected only while a host still has rows from
-  an older recorder. It should stop growing once the upgraded supervisor has
-  written a full store window.
-- `repeated attempt rows` — expected in small numbers after a crash or a
-  restart. Read the replay report's duplicate and conflict counts before
-  treating it as a fault.
+- `offered without a correlation pair` — expected only while a host still has
+  rows from an older recorder. It should stop growing once the upgraded
+  supervisor has written a full store window.
+- `offered repeating an attempt identity` — expected in small numbers after a
+  crash or a restart. Read the replay report's duplicate and conflict counts
+  before treating it as a fault.
 - `cache outcome recorder disabled during initialization` — construction
   failed, so recording is off until the supervisor restarts. The last reason is
   kept for the next status read. If recording stops after an internal failure,

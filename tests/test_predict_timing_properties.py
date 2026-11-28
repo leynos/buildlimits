@@ -92,10 +92,10 @@ def test_a_token_is_accepted_exactly_when_its_contract_holds(value: str) -> None
         ),
     ),
 )
-def test_an_accepted_pair_round_trips_through_the_decoder(
+def test_the_field_validator_accepts_exactly_the_complete_pairs(
     attempt: str | None, generation: str | None
 ) -> None:
-    """Every pair the contract accepts survives encode and decode unchanged."""
+    """The decoder's field validator accepts exactly the complete pairs."""
     document = {
         "kind": "outcome",
         "attempt": attempt,
