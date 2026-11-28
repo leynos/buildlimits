@@ -13,14 +13,16 @@ stream, because the walk already holds one answer per event.
 
 import typing as typ
 
-from buildlimits.predict.events import scored_label
+from buildlimits.predict.events import label_moment, scored_label
 from buildlimits.predict.metrics import Metrics, ScoredRow, per_origin, summarize
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.ensemble_runs import EnsembleRun
+    from buildlimits.predict.events import Event
     from buildlimits.predict.harness import Walk
     from buildlimits.predict.metrics import Phase
 
@@ -169,13 +171,38 @@ def _scored_rows(
                 predictor=name,
                 identity=event.identity,
                 origin=event.origin,
-                observed_at=event.observed_at,
+                available_at=_verified_moment(event),
                 probability=probability,
                 outcome=1 if label == "hit" else 0,
                 phase=phase,
             ),
         ))
     return tuple(scored)
+
+
+def _verified_moment(event: Event) -> dt.datetime:
+    """Return an event's verified label-availability moment.
+
+    Only predictable events reach this helper: :func:`rows_for` skips every
+    event the walk gave no row, and a row exists only for an event with a
+    verified availability.
+
+    Returns
+    -------
+    datetime
+        The verified availability moment.
+
+    Raises
+    ------
+    AssertionError
+        If a predictable event has no verified availability, which would mean
+        the walk and this scoring pass disagreed about the same stream.
+    """
+    moment = label_moment(event)
+    if moment is None:
+        msg = "a predictable event must carry a verified availability time"
+        raise AssertionError(msg)
+    return moment
 
 
 def rows_for(
@@ -227,7 +254,11 @@ def heldout_rows(
 
 
 def heldout_positions(
-    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
+    walk: Walk,
+    name: str,
+    probabilities: cabc.Sequence[float | None],
+    *,
+    independent: cabc.Sequence[bool] | None = None,
 ) -> tuple[ScoredRow | None, ...]:
     """Return the held-out rows placed at the stream positions they occupy.
 
@@ -236,6 +267,11 @@ def heldout_positions(
     block formed over the result still spans the same moments of the stream;
     compacting those positions away would put rows that were many events apart
     into one block.
+
+    ``independent`` restricts the rows to positions whose label the caller can
+    show to be a distinct invocation. A decisive comparison needs that, since a
+    repeated append of one legacy row can otherwise fill a held-out period with
+    copies of a single observation.
 
     Returns
     -------
@@ -246,7 +282,7 @@ def heldout_positions(
     held = {
         index: row
         for index, row in _scored_rows(walk, name, probabilities)
-        if row.phase == "held-out"
+        if row.phase == "held-out" and (independent is None or independent[index])
     }
     if not held:
         return ()

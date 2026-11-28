@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 from sccache_host import _private_server, sccache_host_marks
+from sccache_outcome_extraction import assert_extraction
 from sccache_outcome_observer_support import (
+    SALT,
     assert_cold_miss,
-    assert_extraction,
     assert_mixed,
     assert_warm_hit,
     outcomes,
@@ -28,6 +29,7 @@ from sccache_outcome_observer_support import (
     toolchain,
 )
 
+from buildlimits import outcome_shell_keys
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 
@@ -63,6 +65,12 @@ def _recorder(tools: Toolchain, socket_path: Path) -> OutcomeRecorder:
         statistics,
         PeerServerProcess(socket_path),
         wall_clock=lambda: dt.datetime.now(dt.UTC),
+        # The shell supplies this seam from the store salt; the controlled run
+        # uses the same salt it decodes the rows with, so the digest a real
+        # reading produces is the one the extraction checks.
+        generation_digest=lambda generation: outcome_shell_keys.generation_digest(
+            generation, SALT
+        ),
     )
 
 
@@ -83,7 +91,12 @@ def _switchable_recorder(
     server, slot = switchable_server(socket_path)
     statistics = SccacheStatistics(tools.executable, tools.environment, socket_path)
     return OutcomeRecorder(
-        statistics, server, wall_clock=lambda: dt.datetime.now(dt.UTC)
+        statistics,
+        server,
+        wall_clock=lambda: dt.datetime.now(dt.UTC),
+        generation_digest=lambda generation: outcome_shell_keys.generation_digest(
+            generation, SALT
+        ),
     ), slot
 
 
@@ -138,7 +151,7 @@ def test_the_real_sccache_observer_labels_controlled_windows(tmp_path: Path) -> 
         recovered = read(driver)
         assert recovered.reason == "none", "the timeout leaves a fresh baseline"
 
-    assert_extraction(records)
+    assert_extraction(records, SALT, tmp_path)
 
 
 def test_the_real_sccache_observer_refuses_a_restart_window(tmp_path: Path) -> None:

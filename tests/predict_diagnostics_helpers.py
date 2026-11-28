@@ -20,6 +20,7 @@ from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import snapshot_to_dict
 
 __all__ = [
+    "CORRELATION_VERSION",
     "NOW",
     "PROVENANCE_VERSION",
     "diagnostics_document",
@@ -34,6 +35,18 @@ NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 
 PROVENANCE_VERSION = 3
 """The first snapshot version whose events state a label-time provenance."""
+
+CORRELATION_VERSION = 5
+"""The first snapshot version whose events state the per-attempt correlation."""
+
+DIGEST_VERSION = 6
+"""The first snapshot version whose events state the sccache generation."""
+
+EVIDENCE_VERSION = 7
+"""The first snapshot version whose events digest the remaining row evidence."""
+
+_CORRELATION_FIELDS = ("completed_at", "attempt", "supervisor_generation")
+"""The event fields the correlation group added, dropped from older shapes."""
 
 
 def history_from_records(*records: object) -> StoreHistory:
@@ -97,7 +110,10 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
     wrote, not a current row with a downgraded header. Version 1 or 2 predates
     the label-time provenance marker, so the marker is dropped with the header;
     version 3 states the marker but predates the per-generation pair, so both
-    maps are dropped; the current version states all three, so it keeps them.
+    maps are dropped; version 4 states those but predates the correlation
+    group, so its fields are dropped; version 5 states that but predates the
+    generation digest, so it is dropped too; the current version keeps
+    everything.
 
     Returns
     -------
@@ -106,10 +122,29 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
     """
     document["snapshot_version"] = version
     if version < PROVENANCE_VERSION:
-        for event in events_of(document):
-            event.pop("label_observed_verified", None)
+        _drop_event_fields(document, ("label_observed_verified",))
     if version < GENERATION_VERSION:
-        store = store_block(document)
-        store.pop("by_generation", None)
-        store.pop("labels_by_generation", None)
+        _drop_generation_maps(document)
+    if version < CORRELATION_VERSION:
+        _drop_event_fields(document, _CORRELATION_FIELDS)
+    if version < DIGEST_VERSION:
+        _drop_event_fields(document, ("generation_digest",))
+    if version < EVIDENCE_VERSION:
+        _drop_event_fields(document, ("record_evidence",))
     return document
+
+
+def _drop_event_fields(
+    document: dict[str, object], field_names: tuple[str, ...]
+) -> None:
+    """Remove the named fields from every event in a snapshot document."""
+    for event in events_of(document):
+        for field_name in field_names:
+            event.pop(field_name, None)
+
+
+def _drop_generation_maps(document: dict[str, object]) -> None:
+    """Remove the per-generation maps a version 3 document lacked."""
+    store = store_block(document)
+    store.pop("by_generation", None)
+    store.pop("labels_by_generation", None)

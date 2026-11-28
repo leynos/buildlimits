@@ -12,7 +12,7 @@ from predict_test_helpers import predict_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.ensembles import Ensemble
 from buildlimits.predict.evaluation import evaluate
-from buildlimits.predict.events import EPOCH, Event, Features
+from buildlimits.predict.events import Event, Features
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.predictors import (
     BaseRate,
@@ -35,7 +35,6 @@ def _row(index: int, *, origin: str = "registry") -> Features:
     return Features(
         identity=identity(index),
         origin=typ.cast("Origin", origin),
-        observed_at=EPOCH,
         age_seconds=None,
         load=0,
     )

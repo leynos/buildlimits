@@ -18,13 +18,30 @@ from pathlib import Path
 from buildlimits import kache_guard
 from buildlimits.config import SupervisorConfig
 from buildlimits.sccache import ManagedSccache
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.cache_backend import CacheBackend
     from buildlimits.groups import Running
     from buildlimits.requesters import Pending
+
+
+def refuse_fork(_spec: object) -> None:
+    """Fail as a fork does when the process limit is reached.
+
+    A placement test needs the spawn path to stop at a known point, so this
+    stands in for ``launch.spawn_held`` and raises exactly what an exhausted
+    process limit raises.
+
+    Raises
+    ------
+    OSError
+        Always, standing in for resource exhaustion at fork.
+    """
+    raise OSError(11, "Resource temporarily unavailable")
 
 
 @dc.dataclass(slots=True)
@@ -70,6 +87,7 @@ class FakeGroups:
     slice_dir: Path | None = None
     guard: kache_guard.Strays = dc.field(default_factory=kache_guard.Strays)
     running: dict[str, object] = dc.field(default_factory=dict)
+    wall_clock: cabc.Callable[[], dt.datetime] = utc_now
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
         """Report the scripted placement outcome, admitting ``entry`` on success.

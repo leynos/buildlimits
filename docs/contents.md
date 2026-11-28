@@ -67,6 +67,10 @@
 - [ADR 011: cache-outcome admission time and label-loss accounting](adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
   records the version 3 store fields, the bounded observer/store/snapshot
   diagnostics, and the quiet-point and overflow repairs behind issue #68.
+- [ADR 012: cache-outcome timing and correlation](adrs/adr-0012-cache-outcome-timing-and-correlation.md)
+  records the version 5 timing and correlation fields, the decision and
+  availability boundaries, the attempt correlation identity, and the replay and
+  reporting contract behind issue #69.
 
 ## Conventions
 
@@ -100,6 +104,11 @@
   records the issue #68 measured label loss, the admission-time and diagnostics
   implementation, the controlled real-sccache evidence and the host
   before/after limits.
+
+- [Record authoritative admission and label-availability times ExecPlan](execplans/issue-69-record-authoritative-admission-and-label-availability-times-for-cache-prediction-replay.md)
+  records the issue #69 timing and correlation contract, its replay and
+  reporting integration, the controlled real-sccache evidence and the limits
+  that remain with issue #68.
 
 - [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
   steps and tasks with dependencies and success criteria.

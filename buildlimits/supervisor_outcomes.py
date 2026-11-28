@@ -7,7 +7,6 @@ import typing as typ
 
 from buildlimits import (
     outcome_key,
-    outcome_parser,
     outcome_resources,
     outcome_shell_keys,
     outcome_shell_stats,
@@ -29,7 +28,6 @@ from buildlimits.outcome_recorder_types import (
     Ended,
     GateOpen,
     Launched,
-    LaunchPayload,
     Querying,
     Sampled,
     SampleFailed,
@@ -40,7 +38,6 @@ from buildlimits.outcome_sampling import ChildSampler
 from buildlimits.outcome_shell_dependencies import (
     OutcomeDependencies as OutcomeDependencies,
 )
-from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
 from buildlimits.supervisor_outcome_setup import (
     OUTCOME_CLOSE_SECONDS,
@@ -88,6 +85,14 @@ class OutcomeShell:
             self._wall_clock = lambda: dt.datetime.now(dt.UTC)
         else:
             self._wall_clock = dependencies.wall_clock
+        # One generation per supervisor process. A restart mints a new one, so
+        # a group identifier reused by the new process can never join a row
+        # written by the old one.
+        self._generation = (
+            supervisor_outcome_setup.mint_generation()
+            if dependencies.supervisor_generation is None
+            else dependencies.supervisor_generation
+        )
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
         writer = dependencies.writer
@@ -207,19 +212,8 @@ class OutcomeShell:
         """Build the bounded key payload and enter the recorder window."""
         if entry.cache_path != "cached":
             return
-        argv = entry.request.argv
-        env = entry.request.env
-        metadata = request_metadata(argv)
-        key = outcome_shell_keys.cache_key(argv, env, self._salt)
-        payload = LaunchPayload(
-            key=key,
-            origin=supervisor_outcome_setup.origin_kind(
-                outcome_key.crate_origin(env, self._salt)
-                if self._salt is not None
-                else None
-            ),
-            parser_class=outcome_parser.parser_class(argv),
-            metadata=metadata,
+        payload = supervisor_outcome_setup.launch_payload(
+            entry, self._salt, self._generation
         )
         self._publish(
             self._recorder.advance(
@@ -237,15 +231,21 @@ class OutcomeShell:
     def _emptied(self, ending: GroupEnding) -> None:
         """Fold an admitted group's completion into the recorder.
 
-        No label time is supplied here. A group finishing is not a label: the
-        reading that produces one stamps every row it emits with its own
-        completion moment.
+        The group's own completion moment is read from the wall clock here and
+        recorded as completion evidence. It is not a label time: only the
+        reading that produces a label dates that, so this moment never becomes
+        a row's availability.
         """
         if not ending.is_cached:
             return
         self._publish(
             self._recorder.advance(
-                Ended(ending.group_id, ending.is_clean, self._supervisor.clock())
+                Ended(
+                    ending.group_id,
+                    ending.is_clean,
+                    self._supervisor.clock(),
+                    observed_at=self._wall_clock(),
+                )
             )
         )
 
@@ -340,6 +340,7 @@ class OutcomeShell:
         self._telemetry.publish(outputs)
         self._counters.record(outputs)
         for record in outputs.records:
+            self._counters.note_record(record)
             self._resources.writer.append(record)
 
     def _describe(self) -> dict[str, object]:

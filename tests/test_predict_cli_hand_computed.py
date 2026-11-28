@@ -11,11 +11,12 @@ from pathlib import Path
 
 import pytest
 from predict_test_helpers import benchmark_argv, read_results, write_json
+from predict_timing_helpers import at
 
 from buildlimits.predict import benchmark_cli
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
-from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.events import EPOCH, Event, Label
 from buildlimits.predict.journal_provenance import JournalUnavailable
 from buildlimits.predict.report_codec import config_to_dict
 from buildlimits.predict.snapshot_store import save_snapshot
@@ -38,26 +39,29 @@ def _hand_events() -> tuple[Event, ...]:
         The four events, in admission order.
     """
 
-    def stamp(seconds: int) -> dt.datetime:
-        """Return the epoch plus ``seconds``."""
-        return EPOCH + dt.timedelta(seconds=seconds)
-
-    return tuple(
-        Event(
+    def event(
+        identity: str, moments: tuple[int, int], label: str, attempt: str
+    ) -> Event:
+        """Return one verified event at its admission and label moments."""
+        admitted, observed = moments
+        return Event(
             identity,
             "git",
-            stamp(admitted),
-            stamp(observed),
-            label,
+            at(admitted),
+            at(observed),
+            typ.cast("Label", label),
             1.0,
             label_observed_verified=True,
+            completed_at=at(observed),
+            attempt=attempt,
+            supervisor_generation="hand-generation",
         )
-        for identity, admitted, observed, label in (
-            (IDENTITY_A, 0, 10, "hit"),
-            (IDENTITY_A, 20, 30, "miss"),
-            (IDENTITY_B, 40, 50, "hit"),
-            (IDENTITY_A, 60, 70, "miss"),
-        )
+
+    return (
+        event(IDENTITY_A, (0, 10), "hit", "g1"),
+        event(IDENTITY_A, (20, 30), "miss", "g2"),
+        event(IDENTITY_B, (40, 50), "hit", "g3"),
+        event(IDENTITY_A, (60, 70), "miss", "g4"),
     )
 
 

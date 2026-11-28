@@ -6,7 +6,6 @@ with the field that is wrong rather than surfacing as a confusing report.
 """
 
 import dataclasses as dc
-import itertools
 import json
 import math
 import os
@@ -17,6 +16,7 @@ from pathlib import Path
 from buildlimits.predict.dataset import Gap, Snapshot, Source
 from buildlimits.predict.diagnostics_codec import diagnostics_from_dict
 from buildlimits.predict.journal_codec import journal_from_dict
+from buildlimits.predict.snapshot_clock import ClockOrderError, require_ordered_clock
 from buildlimits.predict.snapshot_codec import (
     SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
@@ -38,6 +38,47 @@ if typ.TYPE_CHECKING:
 _SOURCE_COUNT_FIELDS = ("records_total", "outcome_records", "summary_records")
 
 
+def _require_ordered(path: Path, events: cabc.Sequence[Event]) -> None:
+    """Apply the chronology rule and name the file when it refuses.
+
+    The domain rule reports the moments it compared; this adapter is the layer
+    that knows which file was being read or written, so the operator-facing
+    sentence is built here.
+
+    Raises
+    ------
+    ValueError
+        If the history's recorded clock cannot order it.
+    """
+    try:
+        require_ordered_clock(events)
+    except ClockOrderError as error:
+        raise ValueError(_clock_message(path, error)) from error
+
+
+def _clock_message(path: Path, error: ClockOrderError) -> str:
+    """Return the operator-facing sentence for one clock disorder.
+
+    Returns
+    -------
+    str
+        The sentence naming the file and the moments the rule compared.
+    """
+    if error.decision is not None:
+        return (
+            f"{path} records a label available at {utc_text(error.available)} "
+            f"after a decision taken at {utc_text(error.decision)}; "
+            "label-availability times cannot precede a decision the clock "
+            "already recorded"
+        )
+    earlier = typ.cast("dt.datetime", error.earlier)
+    return (
+        f"{path} records {utc_text(error.available)} after {utc_text(earlier)}; "
+        "label-availability times cannot order a history whose clock ran "
+        "backwards"
+    )
+
+
 def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     """Write the snapshot as UTF-8 JSON, replacing any earlier file.
 
@@ -53,7 +94,7 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     the earlier readable file would already be gone. The rule raises the same
     ``ValueError`` the loader reports.
     """
-    _require_ordered_clock(path, snapshot.events)
+    _require_ordered(path, snapshot.events)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
@@ -116,7 +157,7 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
     decoded_events = tuple(event_from_dict(row, version=version) for row in events)
-    _require_ordered_clock(path, decoded_events)
+    _require_ordered(path, decoded_events)
     decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),
@@ -173,37 +214,6 @@ def _diagnostics_from(
     require_diagnostics_match(path, parts.source, diagnostics)
     require_event_labels_match(path, parts.events, diagnostics)
     return diagnostics
-
-
-def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
-    """Refuse a history whose recorded clock ran backwards under admissions.
-
-    The recorder stamps every row of one reading with that reading's own
-    completion moment, so rows a store appended together share a time and a
-    later position carrying an earlier stamp means the wall clock stepped
-    backwards. No monotonic sequence is stored beside the times, so the two
-    sides of a step cannot be separated: an event admitted later could sort
-    before a label observed earlier, and the schedule would predict with a
-    label not yet observed. A history carrying admission times that crosses a
-    step is refused rather than scored; one with no admission times is
-    unaffected, because it is already reported as unpredicted.
-
-    Raises
-    ------
-    ValueError
-        If an admission-bearing history records an earlier observation after a
-        later one.
-    """
-    if not any(event.admitted_at is not None for event in events):
-        return
-    for earlier, later in itertools.pairwise(events):
-        if later.observed_at < earlier.observed_at:
-            msg = (
-                f"{path} records {utc_text(later.observed_at)} after "
-                f"{utc_text(earlier.observed_at)}; admission times cannot order "
-                "a history whose clock ran backwards"
-            )
-            raise ValueError(msg)
 
 
 def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:

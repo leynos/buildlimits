@@ -32,54 +32,88 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 4
-SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, SNAPSHOT_VERSION})
-_EVENT_FIELDS = frozenset({
-    "identity",
-    "origin",
-    "admitted_at",
-    "observed_at",
-    "label",
-    "runtime_seconds",
-    "label_observed_verified",
+SNAPSHOT_VERSION = 7
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, 3, 4, 5, 6, SNAPSHOT_VERSION})
+_TIMING_EVENT_FIELDS = frozenset({
+    "completed_at",
+    "attempt",
+    "supervisor_generation",
 })
+_EVENT_FIELDS = (
+    frozenset({
+        "identity",
+        "origin",
+        "admitted_at",
+        "observed_at",
+        "label",
+        "runtime_seconds",
+        "label_observed_verified",
+    })
+    | _TIMING_EVENT_FIELDS
+    | {"generation_digest", "record_evidence"}
+)
 # A version 1 row written before the admission field existed omits it, and a
 # version 1 or 2 row predates the label-time provenance marker. The loader
 # accepts those shapes only for the versions that wrote them: version 3 and
 # later keep the event shape exact, so a row that omits the marker cannot
 # masquerade as current-format evidence. Version 4 changed only the diagnostics
-# block, so its event rows carry the same shape version 3 wrote.
-_V2_EVENT_FIELDS = _EVENT_FIELDS - {"label_observed_verified"}
+# block, so its event rows carry the shape version 3 wrote. Version 5 adds the
+# correlation group and the completion moment; version 6 adds the sccache
+# generation digest a repeated attempt must agree about; version 7 adds the
+# digest over the row evidence the event does not map.
+_V6_EVENT_FIELDS = _EVENT_FIELDS - {"record_evidence"}
+_V5_EVENT_FIELDS = _V6_EVENT_FIELDS - {"generation_digest"}
+_V4_EVENT_FIELDS = _V5_EVENT_FIELDS - _TIMING_EVENT_FIELDS
+_V3_EVENT_FIELDS = _V4_EVENT_FIELDS
+_V2_EVENT_FIELDS = _V4_EVENT_FIELDS - {"label_observed_verified"}
 _V1_EVENT_FIELDS = _V2_EVENT_FIELDS - {"admitted_at"}
 # Each version's accepted event shapes. A lookup keeps the loader from chaining
 # version comparisons, so adding a version means adding one row.
 _ACCEPTED_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     1: frozenset({_V1_EVENT_FIELDS, _V2_EVENT_FIELDS}),
     2: frozenset({_V2_EVENT_FIELDS}),
-    3: frozenset({_EVENT_FIELDS}),
+    3: frozenset({_V3_EVENT_FIELDS}),
+    4: frozenset({_V4_EVENT_FIELDS}),
+    5: frozenset({_V5_EVENT_FIELDS}),
+    6: frozenset({_V6_EVENT_FIELDS}),
     SNAPSHOT_VERSION: frozenset({_EVENT_FIELDS}),
 }
 _IDENTITY_LENGTH = 64
+_DIGEST_LENGTH = 64
+_LOWER_HEX = frozenset("0123456789abcdef")
+_ATTEMPT_MAX = 32
+_GENERATION_MAX = 64
+_TOKEN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
+)
 
 
 def event_to_dict(event: Event) -> dict[str, object]:
     """Return the stable snapshot shape for one event.
 
     The label-time provenance marker is written for every row, so a document
-    the current writer produces always says whether its times are proof.
+        the current writer produces always says whether its times are proof. Every
+        version 5 field is written, including an explicit null where the source
+        recorded no correlation. A reader therefore never mistakes an absent field
+        for a version it does not understand.
 
     Returns
     -------
-    dict[str, object]
-        Every field, with timestamps in canonical UTC text.
+        dict[str, object]
+            Every field, with timestamps in canonical UTC text.
     """
     return {
         "identity": event.identity,
         "origin": event.origin,
         "admitted_at": optional_utc_text(event.admitted_at),
         "observed_at": optional_utc_text(event.observed_at),
+        "completed_at": optional_utc_text(event.completed_at),
+        "attempt": event.attempt,
+        "supervisor_generation": event.supervisor_generation,
+        "generation_digest": event.generation_digest,
+        "record_evidence": event.record_evidence,
         "label": event.label,
-        "runtime_seconds": round(event.runtime_seconds, 6),
+        "runtime_seconds": event.runtime_seconds,
         "label_observed_verified": event.label_observed_verified,
     }
 
@@ -136,7 +170,8 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         ``admitted_at`` because that field was not always written; a version 2
         row must name it. Neither may name the label-time provenance marker,
         because neither format defined it: their events decode as unverified,
-        never as proof the row does not carry.
+        never as proof the row does not carry. A version 3 or 4 row predates
+        the correlation group, and a version 5 row must name every field.
 
     Returns
     -------
@@ -154,9 +189,7 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         msg = "an event line must be a JSON object"
         raise TypeError(msg)
     row = typ.cast("dict[str, object]", value)
-    if frozenset(row) not in _ACCEPTED_SHAPES[version]:
-        msg = "an event line must name exactly the snapshot fields"
-        raise ValueError(msg)
+    _require_fields(set(row), version)
     identity = row["identity"]
     origin = row["origin"]
     label = row["label"]
@@ -172,6 +205,11 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
     if observed is None:
         msg = "observed_at must be a UTC timestamp"
         raise ValueError(msg)
+    attempt = _token(row.get("attempt"), maximum=_ATTEMPT_MAX)
+    generation = _token(row.get("supervisor_generation"), maximum=_GENERATION_MAX)
+    if (attempt is None) != (generation is None):
+        msg = "attempt and supervisor_generation must be stated together"
+        raise ValueError(msg)
     return Event(
         identity=identity,
         origin=typ.cast("Origin", origin),
@@ -180,7 +218,60 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         label=typ.cast("Label", label),
         runtime_seconds=runtime_seconds,
         label_observed_verified=_verified(row.get("label_observed_verified", False)),
+        completed_at=_parse_stamp(row.get("completed_at")),
+        attempt=attempt,
+        supervisor_generation=generation,
+        generation_digest=_digest(row.get("generation_digest"), "generation_digest"),
+        record_evidence=_digest(row.get("record_evidence"), "record_evidence"),
     )
+
+
+def _digest(value: object, name: str) -> str | None:
+    """Validate one optional digest field.
+
+    A malformed value is refused by :func:`_optional_text`, which names the
+    field the caller supplied, so a bad ``record_evidence`` is never reported
+    as a bad ``generation_digest``.
+
+    Returns
+    -------
+    str | None
+        The digest, or None for an explicit null.
+    """
+    return _optional_text(
+        value,
+        name=name,
+        allowed=_LOWER_HEX,
+        length=_DIGEST_LENGTH,
+    )
+
+
+def _optional_text(
+    value: object, *, name: str, allowed: frozenset[str], length: int
+) -> str | None:
+    """Validate one optional fixed-length text field against a character set.
+
+    Returns
+    -------
+    str | None
+        The text, or None for an explicit null.
+
+    Raises
+    ------
+    TypeError
+        If the value is neither text nor null.
+    ValueError
+        If the text is the wrong length or holds a character outside ``allowed``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"{name} must be text or null"
+        raise TypeError(msg)
+    if len(value) != length or any(character not in allowed for character in value):
+        msg = f"{name} is outside its bounded shape"
+        raise ValueError(msg)
+    return value
 
 
 def _verified(value: object) -> bool:
@@ -202,6 +293,48 @@ def _verified(value: object) -> bool:
     if not isinstance(value, bool):
         msg = "label_observed_verified must be a boolean"
         raise TypeError(msg)
+    return value
+
+
+def _require_fields(fields: set[str], version: int) -> None:
+    """Require one of the document shapes its version permits.
+
+    Raises
+    ------
+    ValueError
+        If the row names fields outside its version's exact shape.
+    """
+    accepted = _ACCEPTED_SHAPES.get(version)
+    if accepted is None or frozenset(fields) not in accepted:
+        msg = "an event line must name exactly the snapshot fields"
+        raise ValueError(msg)
+
+
+def _token(value: object, *, maximum: int) -> str | None:
+    """Validate one optional bounded correlation token.
+
+    Returns
+    -------
+    str | None
+        The token, or None for an explicit null.
+
+    Raises
+    ------
+    TypeError
+        If the value is neither text nor null.
+    ValueError
+        If the token is empty, too long, or outside the accepted characters.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = "a correlation token must be text or null"
+        raise TypeError(msg)
+    if not 0 < len(value) <= maximum or any(
+        character not in _TOKEN_CHARS for character in value
+    ):
+        msg = "a correlation token is outside its bounded shape"
+        raise ValueError(msg)
     return value
 
 

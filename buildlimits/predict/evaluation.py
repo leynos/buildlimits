@@ -10,7 +10,11 @@ could not see is reported, and the document states that limitation.
 
 A source that records no admission time supports no prediction at all. The
 evaluation then reports insufficient admission times rather than treating a
-missing timestamp as evidence that the label arrived early.
+missing timestamp as evidence that the label arrived early. A source that
+records admission times but never records when a label became available is
+reported separately: the decision time is trusted, but the label's own
+availability is not, and more labels alone do not prove chronological
+validity.
 """
 
 import dataclasses as dc
@@ -19,6 +23,15 @@ import typing as typ
 from buildlimits.predict.comparison import compare
 from buildlimits.predict.ensemble_runs import EnsembleRun, run_ablations, run_ensembles
 from buildlimits.predict.scoring import ablation_metrics, all_metrics
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_ADMISSION,
+    STATUS_INSUFFICIENT_AVAILABILITY,
+    STATUS_OK,
+    EvidenceCounts,
+    evidence_status,
+    has_evidence,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -27,13 +40,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
     from buildlimits.predict.harness import Walk
     from buildlimits.predict.metrics import Metrics
-
-STATUS_OK = "ok"
-STATUS_INSUFFICIENT = "insufficient data"
-STATUS_INSUFFICIENT_ADMISSION = "insufficient admission times"
-STATUS_INSUFFICIENT_HELDOUT = "insufficient held-out evidence"
-# One block resamples to itself, so its interval has no width to judge.
-MINIMUM_BLOCKS = 2
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -167,14 +173,20 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     metrics = all_metrics(walk, ensembles, config)
     ablated = ablation_metrics(walk, ablations, config)
     compared = compare(walk, ensembles, config)
-    labelled = sum(1 for phase in walk.phases if phase is not None)
-    predictable = sum(
-        1
-        for phase, row in zip(walk.phases, walk.rows, strict=True)
-        if phase is not None and row is not None
+    counts = EvidenceCounts(
+        labelled=walk.labelled,
+        independent_labelled=walk.independent_labelled,
+        usable_labelled=walk.usable_labelled,
+        admission_recorded=sum(
+            1 for event in walk.events if event.admitted_at is not None
+        ),
+        admission_usable_labelled=walk.admission_usable_labelled,
+        availability_usable_labelled=walk.availability_usable_labelled,
+        unverified_label_time=walk.unverified_label_time,
+        predictable=_predictable_count(walk),
+        unavailable_availability=walk.unavailable_availability,
     )
-    status = _status(labelled, predictable, compared.against_base_rate, config)
-    withheld = walk.unverified_label_time
+    status = evidence_status(counts, compared.against_base_rate, config)
     return Evaluation(
         status=status,
         walk=walk,
@@ -187,65 +199,35 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         best_single=compared.best_single,
         against_best_single=compared.against_best_single,
         verdict=_verdict(
-            labelled,
-            predictable,
+            counts,
             compared.against_base_rate,
             config,
-            withheld=withheld,
+            withheld=walk.unverified_label_time,
         ),
         minimum_scored_events=config.minimum_scored_events,
     )
 
 
-def _status(
-    labelled: int,
-    predictable: int,
-    against_base: cabc.Mapping[str, Interval | None],
-    config: Config,
-) -> str:
-    """Return the status the evidence supports.
+def _predictable_count(walk: Walk) -> int:
+    """Count the events that carry both a phase and a feature row.
 
-    A run with too much history for ``insufficient data`` can still hold no
-    event with a usable admission time, and then nothing could be predicted at
-    all: the source simply did not record when each compilation was admitted.
-    That is reported as itself, not as a negative result or as a shortage of
-    held-out evidence. When predictions do exist, too few paired rows, or rows
-    forming a single block, are likewise reported separately.
+    An event is only predictable when the replay both placed it in a period and
+    measured it at its admission, so the two columns are read together.
 
     Returns
     -------
-    str
-        ``ok``, ``insufficient data``, ``insufficient admission times`` or
-        ``insufficient held-out evidence``.
+    int
+        The number of predictable events.
     """
-    if labelled < config.minimum_labelled_events:
-        return STATUS_INSUFFICIENT
-    if predictable == 0:
-        return STATUS_INSUFFICIENT_ADMISSION
-    if not any(_is_evidence(interval, config) for interval in against_base.values()):
-        return STATUS_INSUFFICIENT_HELDOUT
-    return STATUS_OK
-
-
-def _is_evidence(interval: Interval | None, config: Config) -> bool:
-    """Return whether an interval carries enough held-out evidence to judge.
-
-    Returns
-    -------
-    bool
-        Whether the interval was paired over enough rows, in at least two
-        blocks, for its width to mean anything.
-    """
-    return (
-        interval is not None
-        and interval.rows >= config.minimum_scored_events
-        and interval.blocks >= MINIMUM_BLOCKS
+    return sum(
+        1
+        for phase, row in zip(walk.phases, walk.rows, strict=True)
+        if phase is not None and row is not None
     )
 
 
-def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate; pylint: disable=too-many-arguments
-    labelled: int,
-    predictable: int,
+def _verdict(
+    counts: EvidenceCounts,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
     *,
@@ -255,45 +237,82 @@ def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate
 
     A predictor may only be said to beat the base rate when its interval lies
     wholly below zero *and* it was paired over enough held-out rows, spread
-    over at least two blocks, for that interval to mean anything. That
-    interval has already been widened for the family of comparisons, so the
-    claim as a whole holds at the configured level.
+    over at least two blocks, for that interval to mean anything; the interval
+    is already widened for the family of comparisons.
 
     A history whose labels were withheld because their recorded time is
-    unverified must not read as one that simply carried few labels. The
+    unverified must not read as one that simply carried few labels: the
     insufficient-data sentence names the withheld count beside the verified
-    one, so the reader can tell which shortage the run met.
+    one.
 
     Returns
     -------
     str
         The verdict.
     """
-    status = _status(labelled, predictable, against_base, config)
-    if status == STATUS_INSUFFICIENT:
-        return (
-            f"insufficient data: {labelled} labelled events, "
-            f"{config.minimum_labelled_events} required" + _withheld_note(withheld)
-        )
-    if status == STATUS_INSUFFICIENT_ADMISSION:
-        return (
-            f"insufficient admission times: {labelled} labelled events, "
-            f"{predictable} with an admission time at or before their own label"
-        )
-    if status == STATUS_INSUFFICIENT_HELDOUT:
-        return (
-            "insufficient held-out evidence: no predictor was paired over "
-            f"{config.minimum_scored_events} rows in two or more blocks of "
-            f"{config.block_size}"
-        )
-    improving = [
-        name
-        for name, interval in against_base.items()
-        if interval is not None and _is_evidence(interval, config) and interval.high < 0
-    ]
+    status = evidence_status(counts, against_base, config)
+    if status != STATUS_OK:
+        return _insufficient_verdict(status, counts, config, withheld=withheld)
+    improving = _improving_predictors(against_base, config)
     if not improving:
         return "nothing beats the base rate on the held-out period"
     return "beats the base rate on the held-out period: " + ", ".join(sorted(improving))
+
+
+def _insufficient_verdict(
+    status: str,
+    counts: EvidenceCounts,
+    config: Config,
+    *,
+    withheld: int,
+) -> str:
+    """Name the gate an insufficient run met, in its own sentence.
+
+    Returns
+    -------
+    str
+        The sentence for the supplied insufficient-evidence status.
+    """
+    if status == STATUS_INSUFFICIENT:
+        return (
+            f"insufficient data: {counts.usable_labelled} labelled events with "
+            f"independent, verified times, {config.minimum_labelled_events} "
+            "required" + _withheld_note(withheld)
+        )
+    if status == STATUS_INSUFFICIENT_ADMISSION:
+        return (
+            f"insufficient admission times: {counts.labelled} labelled events, "
+            f"{counts.admission_usable_labelled} independent ones with a usable "
+            "admission time"
+        )
+    if status == STATUS_INSUFFICIENT_AVAILABILITY:
+        return (
+            f"insufficient label-availability times: {counts.labelled} labelled "
+            f"events, {counts.unavailable_availability} with an admission time "
+            "but no verified label-availability time"
+        )
+    return (
+        "insufficient held-out evidence: no predictor was paired over "
+        f"{config.minimum_scored_events} rows in two or more blocks of "
+        f"{config.block_size}"
+    )
+
+
+def _improving_predictors(
+    against_base: cabc.Mapping[str, Interval | None], config: Config
+) -> list[str]:
+    """Return the predictors whose interval lies wholly below zero.
+
+    Returns
+    -------
+    list[str]
+        The predictor names, unsorted.
+    """
+    return [
+        name
+        for name, interval in against_base.items()
+        if interval is not None and has_evidence(interval, config) and interval.high < 0
+    ]
 
 
 def _withheld_note(withheld: int) -> str:

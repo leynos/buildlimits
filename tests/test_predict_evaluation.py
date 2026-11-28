@@ -6,19 +6,20 @@ import typing as typ
 
 import pytest
 from predict_test_helpers import hand_event, predict_config
+from test_predict_independence import correlated_rows
 
 from buildlimits.predict.bootstrap import block_bootstrap
 from buildlimits.predict.ensemble_runs import tuning_indices
-from buildlimits.predict.evaluation import (
-    STATUS_INSUFFICIENT_HELDOUT,
-    STATUS_OK,
-    _is_evidence,
-    evaluate,
-)
+from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import Series, walk_forward
 from buildlimits.predict.metrics import summarize
 from buildlimits.predict.scoring import heldout_positions, rows_for
+from buildlimits.predict.sufficiency import (
+    STATUS_INSUFFICIENT_HELDOUT,
+    STATUS_OK,
+)
+from buildlimits.predict.sufficiency import has_evidence as _is_evidence
 from buildlimits.predict.synthetic import STEP, identity, persistent
 
 if typ.TYPE_CHECKING:
@@ -47,6 +48,9 @@ def _all_first_sightings(count: int) -> tuple[Event, ...]:
             "hit" if index % 2 else "miss",
             1.0,
             label_observed_verified=True,
+            completed_at=EPOCH + index * STEP,
+            attempt=f"g{index}",
+            supervisor_generation="test-generation",
         )
         for index in range(count)
     )
@@ -319,20 +323,20 @@ def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
     events = (
         hand_event(
             0,
-            admitted_at=EPOCH,
-            observed_at=EPOCH + dt.timedelta(seconds=5),
+            moments=(EPOCH, EPOCH + dt.timedelta(seconds=5)),
             label="hit",
         ),
         hand_event(
             1,
-            admitted_at=None,
-            observed_at=EPOCH + dt.timedelta(seconds=10),
+            moments=(None, EPOCH + dt.timedelta(seconds=10)),
             label="miss",
         ),
         hand_event(
             2,
-            admitted_at=EPOCH + dt.timedelta(seconds=15),
-            observed_at=EPOCH + dt.timedelta(seconds=20),
+            moments=(
+                EPOCH + dt.timedelta(seconds=15),
+                EPOCH + dt.timedelta(seconds=20),
+            ),
             label="hit",
         ),
     )
@@ -346,3 +350,42 @@ def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
     assert positions[1] is None, "the unpredictable event keeps its position"
     assert positions[0] is not None, "the first event was scored"
     assert positions[2] is not None, "the last event was scored"
+
+
+def test_legacy_copies_cannot_decide_the_held_out_comparison() -> None:
+    """A repeated legacy row is one observation, not independent evidence.
+
+    The tuning rows clear the label gate, but every held-out row is a copy of
+    one legacy observation, so the comparison has too little independent
+    held-out evidence and says so rather than ranking predictors on it.
+    """
+    training = tuple(
+        dc.replace(row, label=typ.cast("typ.Any", "hit" if index % 2 else "miss"))
+        for index, row in enumerate(correlated_rows(24, prefix="t"))
+    )
+    one_copy = dc.replace(
+        hand_event(
+            100,
+            moments=(
+                EPOCH + dt.timedelta(seconds=100),
+                EPOCH + dt.timedelta(seconds=101),
+            ),
+            label="hit",
+        ),
+        attempt=None,
+        supervisor_generation=None,
+    )
+    legacy_copies = (one_copy,) * 60
+    config = dc.replace(
+        predict_config(),
+        minimum_labelled_events=10,
+        train_fraction=0.29,
+        block_size=10,
+    )
+
+    walk = walk_forward(training + legacy_copies, config)
+    result = evaluate(walk, config)
+
+    assert result.status == STATUS_INSUFFICIENT_HELDOUT, (
+        "one repeated legacy observation cannot decide the comparison"
+    )

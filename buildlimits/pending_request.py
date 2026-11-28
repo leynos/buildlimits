@@ -46,8 +46,6 @@ class Pending:
         The bounded first cancellation cause, or ``none``.
     cache_path : str
         The composition selected at successful admission.
-    admitted_at : datetime | None
-        The UTC wall-clock admission moment, or None until admission decides.
     """
 
     request_id: int

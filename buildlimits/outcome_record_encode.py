@@ -25,6 +25,7 @@ from buildlimits.outcome_record_format import (
     _validate_key,
 )
 from buildlimits.outcome_record_time import timestamp_text
+from buildlimits.outcome_record_timing import TIMING_FIELDS
 
 __all__ = ["encode_line", "header_floor_bytes"]
 
@@ -51,11 +52,14 @@ _V1_ROW_FIELDS = _V2_ROW_FIELDS - {
     "admitted_at",
 }
 _V3_ROW_FIELDS = _V2_ROW_FIELDS | {"label_time_provenance"}
+_V4_ROW_FIELDS = _V3_ROW_FIELDS | {"generation_digest"}
+_V5_ROW_FIELDS = _V4_ROW_FIELDS | TIMING_FIELDS
 _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
     1: _V1_ROW_FIELDS,
     2: _V2_ROW_FIELDS,
     3: _V3_ROW_FIELDS,
-    FORMAT_VERSION: _V3_ROW_FIELDS | {"generation_digest"},
+    4: _V4_ROW_FIELDS,
+    FORMAT_VERSION: _V5_ROW_FIELDS,
 }
 # The first document version that can state each optional proof. A row that
 # carries one cannot be written beneath an older header, because that shape has
@@ -63,6 +67,9 @@ _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
 _FIELD_INTRODUCED: dict[str, int] = {
     "label_time_provenance": 3,
     "generation_digest": 4,
+    "completed_at": FORMAT_VERSION,
+    "attempt": FORMAT_VERSION,
+    "supervisor_generation": FORMAT_VERSION,
 }
 
 
@@ -96,7 +103,7 @@ def encode_line(
     --------
     >>> import datetime as dt
     >>> encode_line(StoreHeader("salt-1", dt.datetime(2026, 1, 1, tzinfo=dt.UTC)))
-    '{"format":"buildlimits-cache-outcomes","version":4,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
+    '{"format":"buildlimits-cache-outcomes","version":5,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
     """
     document = _document(value, version)
     line = json.dumps(
@@ -159,39 +166,71 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
 
     An absent optional timestamp is written as an explicit JSON null, so a row
     states that no admission moment is known rather than omitting the field. A
-    document predating the label-time provenance marker drops that field, and an
-    outcome row that has already claimed provenance cannot be written into such
-    a document: the older shape has nowhere to state it, and dropping it would
-    turn proof into silence. The generation digest is dropped the same way, and
-    a row that names a generation cannot be written into a document that cannot
-    carry one.
+    document predating a field drops it, and an outcome row that has already
+    claimed that evidence cannot be written into such a document: the older
+    shape has nowhere to state it, and dropping it would turn proof into
+    silence. That covers the label-time provenance marker, the generation
+    digest, and the version 5 correlation pair with its completion moment.
 
     Returns
     -------
     dict[str, object]
-        JSON-compatible fields prefixed with the record kind.
-
-    Raises
-    ------
-    ValueError
-        If the row states evidence its document version cannot carry.
+        JSON-compatible fields prefixed with the record kind. An outcome row
+        whose evidence its version cannot state is refused by
+        :func:`_outcome_fields`.
     """
     fields = dc.asdict(record)
     fields["observed_at"] = timestamp_text(record.observed_at)
     if isinstance(record, OutcomeRecord):
-        fields["admitted_at"] = (
-            None if record.admitted_at is None else timestamp_text(record.admitted_at)
-        )
-        for name, introduced in _FIELD_INTRODUCED.items():
-            if version < introduced and getattr(record, name) is not None:
-                msg = f"an older document cannot state {name.replace('_', ' ')}"
-                raise ValueError(msg)
-        allowed = _ROW_FIELDS_BY_VERSION.get(version)
-        if allowed is None:
-            msg = "store record version is not supported"
-            raise ValueError(msg)
-        fields = {name: value for name, value in fields.items() if name in allowed}
+        fields = _outcome_fields(fields, record, version)
     return {"kind": kind, **fields}
+
+
+def _outcome_fields(
+    fields: dict[str, object], record: OutcomeRecord, version: int
+) -> dict[str, object]:
+    """Restrict one outcome row to the shape its document version can state.
+
+    The version decides which fields the document holds, so a row is reduced to
+    that shape here rather than written with evidence its own reader would
+    refuse.
+
+    Returns
+    -------
+    dict[str, object]
+        The canonicalized fields the version accepts.
+
+    Raises
+    ------
+    ValueError
+        If the row claims evidence the version cannot carry, or the version is
+        not supported.
+    """
+    fields["admitted_at"] = (
+        None if record.admitted_at is None else timestamp_text(record.admitted_at)
+    )
+    if record.completed_at is not None:
+        fields["completed_at"] = timestamp_text(record.completed_at)
+    _require_expressible(record, version)
+    allowed = _ROW_FIELDS_BY_VERSION.get(version)
+    if allowed is None:
+        msg = "store record version is not supported"
+        raise ValueError(msg)
+    return {name: value for name, value in fields.items() if name in allowed}
+
+
+def _require_expressible(record: OutcomeRecord, version: int) -> None:
+    """Refuse a row that claims evidence its document version cannot state.
+
+    Raises
+    ------
+    ValueError
+        If a field the row carries was introduced after the document version.
+    """
+    for name, introduced in _FIELD_INTRODUCED.items():
+        if version < introduced and getattr(record, name) is not None:
+            msg = f"an older document cannot state {name.replace('_', ' ')}"
+            raise ValueError(msg)
 
 
 def _summary_counts(summary: WindowSummary) -> tuple[int, ...]:

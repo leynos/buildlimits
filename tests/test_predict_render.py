@@ -194,6 +194,7 @@ def test_the_replay_accounting_is_rendered() -> None:
     document["replay"] = {
         "moments": 4,
         "unavailable_admission": 3,
+        "unavailable_availability": 1,
         "applied_labels": 5,
         "unapplied_labels": 2,
     }
@@ -202,6 +203,7 @@ def test_the_replay_accounting_is_rendered() -> None:
 
     assert (
         "- Replay: 4 admission moments, 3 events without a usable admission time, "
+        "1 events without a verified label-availability time, "
         "5 labels delivered before a prediction, 2 labels too late to inform one"
     ) in markdown, "the admission accounting is visible"
 

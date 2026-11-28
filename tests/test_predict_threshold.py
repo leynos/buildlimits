@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_version_helpers import VERSION_ONE, VERSION_TWO, older_document_row
 from predict_test_helpers import (
     benchmark_argv,
     hand_event,
@@ -43,10 +44,6 @@ LABELS = 2000
 
 STEP = dt.timedelta(seconds=30)
 LABEL_DELAY = dt.timedelta(seconds=2)
-
-# A version 1 row predates admission and classification evidence, so writing
-# one means omitting exactly those fields rather than writing nulls.
-_V1_OMITTED_FIELDS = ("outcome_reason", "outcome_attribution", "admitted_at")
 
 
 def _labelled_record(index: int, *, with_admission: bool) -> OutcomeRecord:
@@ -99,8 +96,7 @@ def _labelled_events(count: int, *, usable: int) -> tuple[Event, ...]:
         events.append(
             hand_event(
                 index,
-                admitted_at=admitted,
-                observed_at=observed,
+                moments=(admitted, observed),
                 label="hit" if index % 2 else "miss",
             )
         )
@@ -135,14 +131,13 @@ def _verified_snapshot(tmp_path: Path, *, usable: int) -> Path:
 
 
 def _write_labelled_store(path: Path, count: int, *, with_admission: bool) -> None:
-    """Write one labelled store whose rows claim no label-time provenance.
+    """Write one labelled store whose rows cannot prove their label times.
 
-    Without ``with_admission`` the store alternates the version 1 and version 2
-    shapes and states no admission time at all. With it, every row carries an
-    admission moment two seconds before its own label. Either way no row claims
-    provenance, so the dataset command emits every label time as unverified: a
-    row that says nothing is unproven, whichever document version it is written
-    into.
+    Every row is an older shape, so it states no provenance marker and no
+    correlation: the report withholds the labels rather than treating their
+    recorded times as proof. ``with_admission`` controls only whether each row
+    also carries an admission moment, so a test can show that admission
+    evidence alone does not make a label scorable.
 
     Parameters
     ----------
@@ -151,17 +146,15 @@ def _write_labelled_store(path: Path, count: int, *, with_admission: bool) -> No
     count : int
         How many labelled rows to write.
     with_admission : bool
-        Whether every row carries a usable admission time.
+        Whether every row carries an admission time.
     """
-    lines = [encode_line(StoreHeader("fixed-salt", OBSERVED_AT))]
+    lines = [encode_line(StoreHeader("fixed-salt", OBSERVED_AT, version=VERSION_TWO))]
     for index in range(count):
-        line = encode_line(_labelled_record(index, with_admission=with_admission))
-        if not with_admission and index % 2:
-            document = json.loads(line)
-            for field in _V1_OMITTED_FIELDS:
-                document.pop(field)
-            line = json.dumps(document, separators=(",", ":"), sort_keys=True)
-        lines.append(line)
+        record = _labelled_record(index, with_admission=with_admission)
+        document = older_document_row(
+            record, version=VERSION_ONE if index % 2 else VERSION_TWO
+        )
+        lines.append(json.dumps(document, separators=(",", ":"), sort_keys=True))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o600)
 
@@ -240,10 +233,12 @@ def test_a_store_history_is_withheld_because_its_label_times_are_unverified(
     assert stats["unverified_label_time"] == LABELS, (
         "every store-derived label is unverified"
     )
-    assert document["status"] == "insufficient data", (
-        "an unverified label is not scored evidence"
+    assert document["status"] == "insufficient label-availability times", (
+        "the run names the gate the history failed, not a shortage of labels"
     )
-    assert "unverified" in document["verdict"], "the verdict names what it withheld"
+    assert "label-availability" in document["verdict"], (
+        "the verdict names the missing evidence"
+    )
     assert "unverified label time" in markdown, "the report states the withholding"
 
 
@@ -251,12 +246,12 @@ def test_a_store_history_is_withheld_because_its_label_times_are_unverified(
 def test_two_thousand_verified_labels_without_admission_report_the_missing_gate(
     tmp_path: Path,
 ) -> None:
-    """The default label gate is cleared, and the admission gate is what stops.
+    """A labelled history with no usable decision still names that shortage.
 
-    ``minimum_labelled_events`` is compared against labelled rows alone, so this
-    history passes it. Every row then lacks a usable admission time, so no
-    event could have been predicted and the run reports that rather than
-    scoring a label that arrived before its own decision could be taken.
+    The label gate counts jointly usable labels, so this history does not clear
+    it: every row is labelled and independent, and none carries a usable
+    admission time. The verdict names the admission evidence the gate is short
+    of rather than reporting a shortage of labels the history plainly has.
     """
     document, markdown = _run(_verified_snapshot(tmp_path, usable=0), tmp_path / "out")
 
@@ -290,17 +285,16 @@ def test_the_same_labels_with_admission_times_are_scored(tmp_path: Path) -> None
 
 
 @pytest.mark.timeout(120)
-def test_a_few_usable_admission_times_do_not_stand_for_the_whole_history(
+def test_five_usable_admission_times_name_the_admission_shortage(
     tmp_path: Path,
 ) -> None:
-    """A partly usable history reports what its evidence supports, not a verdict.
+    """A handful of usable decisions is an admission shortage, not a verdict.
 
-    Two thousand labels clear the label gate, and five usable admission times
-    keep the run clear of ``insufficient admission times``. Five paired rows are
-    still far below ``minimum_scored_events``, so no predictor was judged and
-    the honest status is ``insufficient held-out evidence``. One usable row is
-    not treated as enough, and a wholly unusable history is not the only
-    shortage the report can name.
+    Two thousand labels are recorded, and five of them have a decision time
+    their own label follows. The label gate counts jointly usable labels, so it
+    is not cleared, and five is nowhere near the minimum. Comparing the
+    admission-usable and availability-usable populations names the decision
+    evidence as the shortage; no predictor is judged on five paired rows.
     """
     document, markdown = _run(_verified_snapshot(tmp_path, usable=5), tmp_path / "out")
 
@@ -309,11 +303,11 @@ def test_a_few_usable_admission_times_do_not_stand_for_the_whole_history(
     assert stats["admission_unusable"] == LABELS - 5, (
         "the rest carry an admission after their own label"
     )
-    assert document["status"] == "insufficient held-out evidence", (
-        "the label and admission gates are met, but the held-out one is not"
+    assert document["status"] == "insufficient admission times", (
+        "the shorter timing population names the missing evidence"
     )
     assert document["status"] != "ok", "five paired rows never become a verdict"
-    assert "insufficient held-out evidence" in document["verdict"], (
+    assert "insufficient admission times" in document["verdict"], (
         "the verdict names the missing evidence"
     )
-    assert "**insufficient held-out evidence**" in markdown, "the report says so"
+    assert "**insufficient admission times**" in markdown, "the report says so"

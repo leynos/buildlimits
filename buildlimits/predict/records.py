@@ -65,14 +65,12 @@ def label_of(outcome: CacheResult) -> Label:
 def event_of(record: OutcomeRecord) -> Event:
     """Convert one attributed store record into a benchmark event.
 
-    The admission time is copied only when the row carries one. A version 1
-    row, or a launch that never reached admission, has none, and
-    ``observed_at - runtime_seconds`` is not a substitute: ``observed_at`` is
-    when the label became known, which can be later than the compilation
-    finished, so the subtraction only bounds the admission from above. Using
-    that bound as the decision time would count labels that arrived after the
-    real admission, which is the leak the walk-forward order exists to stop.
-    The absence is reported, not repaired.
+    Every optional field is copied only when the row states it. A version 1 or
+    2 row carries no admission, provenance or correlation evidence, and no
+    field is reconstructed: ``observed_at - runtime_seconds`` is not an
+    admission time, a completion stamp is not a label-availability time, and a
+    row without a correlation identifier cannot be joined. The absence is
+    reported by the timing accounting, not repaired here.
 
     The label time is emitted as verified only when the row says so. A
     version 1 or 2 store row cannot say whether its ``observed_at`` was stamped
@@ -87,8 +85,7 @@ def event_of(record: OutcomeRecord) -> Event:
     Returns
     -------
     Event
-        The redacted event, with its recorded admission time when present and
-        its label-time provenance copied from the row.
+        The redacted event, with its recorded timing evidence when present.
     """
     return Event(
         identity=identity_of(record.key),
@@ -98,7 +95,37 @@ def event_of(record: OutcomeRecord) -> Event:
         label=label_of(record.outcome),
         runtime_seconds=record.runtime_seconds,
         label_observed_verified=record.label_time_provenance == "verified",
+        completed_at=record.completed_at,
+        attempt=record.attempt,
+        supervisor_generation=record.supervisor_generation,
+        generation_digest=record.generation_digest,
+        record_evidence=_record_evidence(record),
     )
+
+
+def _record_evidence(record: OutcomeRecord) -> str:
+    """Digest the row evidence the event does not map to a field of its own.
+
+    The label collapses several cache results, and the parser class, child
+    sighting, refusal reason and attribution have no event field. Digesting
+    them together lets a repeated attempt be compared on everything its row
+    recorded without widening the event for values no predictor reads.
+
+    Returns
+    -------
+    str
+        A lowercase SHA-256 digest over those values.
+    """
+    evidence = (
+        record.outcome,
+        record.parser_class,
+        record.child_sighting,
+        record.child_samples,
+        record.outcome_reason,
+        record.outcome_attribution,
+    )
+    text = "|".join("" if value is None else str(value) for value in evidence)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def build_events(records: cabc.Iterable[object]) -> tuple[Event, ...]:

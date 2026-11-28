@@ -137,8 +137,7 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "admission unhealthy: supervisor is unhealthy",
     ),
     "legacy-missing-admission": (
-        # Written before the backend was selectable: no ``cache_mode`` at all,
-        # which must still read as sccache rather than as no cache.
+        # Pre-selectable backend: no ``cache_mode``, which still means sccache.
         {"capacity": 4, "held": 0, "healthy": True, "caching": True},
         "capacity 4, held 0, healthy, caching through sccache",
     ),
@@ -312,8 +311,7 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "held": 0,
             "healthy": True,
             "caching": True,
-            # A finished transaction renders no recovery line: the summary an
-            # operator reads after a successful recovery is the healthy one.
+            # A finished transaction renders no recovery line.
             "cache_recovery": {
                 "phase": "idle",
                 "attempts": 0,

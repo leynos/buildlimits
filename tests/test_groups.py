@@ -6,6 +6,7 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from groups_helpers import refuse_fork
 from request_helpers import launch_pending
 
 from buildlimits import cgroups, launch
@@ -224,12 +225,7 @@ def test_a_child_that_cannot_start_fails_the_launch(
     selector: selectors.BaseSelector,
 ) -> None:
     """Resource exhaustion at fork fails the launch instead of escaping."""
-
-    def exhausted(_spec: object) -> None:
-        """Fail as a fork does when the process limit is reached."""
-        raise OSError(11, "Resource temporarily unavailable")
-
-    monkeypatch.setattr(launch, "spawn_held", exhausted)
+    monkeypatch.setattr(launch, "spawn_held", refuse_fork)
     groups = _placing_groups(selector, object())
     assert groups.place(_entry(cacheable=False), "g1", cached=False) is None, (
         "a launch child that cannot start fails the launch"

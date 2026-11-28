@@ -7,6 +7,7 @@ from buildlimits.journal import admitted_line
 from buildlimits.protocol import Admitted
 
 if typ.TYPE_CHECKING:
+    from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
 
@@ -24,6 +25,11 @@ def launch(
     stop_mode = placement_stop_mode(supervisor)
     try:
         entry = supervisor.requests.pending[request_id]
+        # This handler is the first code that runs after admission decided to
+        # grant the token and launch the group. Read both clocks here, before
+        # any placement work, so the recorded decision boundary is the moment
+        # the decision was applied rather than a later execution timestamp.
+        mark_admission(supervisor, entry)
         # Read the slice before placing this group, so the reading describes
         # the state the group is admitted into rather than one that already
         # includes it. The poll alone would leave up to a poll interval in
@@ -67,6 +73,27 @@ def launch(
                 failure_category=failure_category,
                 stop_mode=placement_stop_mode(supervisor, stop_mode),
             )
+
+
+def mark_admission(supervisor: Supervisor, entry: Pending) -> None:
+    """Capture the one moment the admission decision is applied.
+
+    The monotonic and UTC readings are taken together, before any placement
+    work such as the stray-process guard or the fork. A later reading would
+    timestamp process launch rather than the decision an offline predictor must
+    reproduce. Direct callers of :meth:`Groups.place` that have not marked an
+    admission keep their previous behaviour: placement fills both values only
+    when they are absent.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        Owner of the monotonic clock and the placement wall clock.
+    entry : Pending
+        The admitted request whose decision moment is being recorded.
+    """
+    entry.admitted = supervisor.clock()
+    entry.admitted_at = supervisor.groups.wall_clock()
 
 
 def placement_stop_mode(supervisor: Supervisor, previous: str = "none") -> str:

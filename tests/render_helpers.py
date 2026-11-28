@@ -26,6 +26,7 @@ def empty_document() -> dict[str, object]:
         "replay": {
             "moments": 0,
             "unavailable_admission": 0,
+            "unavailable_availability": 0,
             "applied_labels": 0,
             "unapplied_labels": 0,
         },
@@ -47,6 +48,14 @@ def empty_document() -> dict[str, object]:
                 "admission_missing": 0,
                 "admission_unusable": 0,
                 "unverified_label_time": 0,
+                "availability_recorded": 0,
+                "availability_usable": 0,
+                "availability_missing": 0,
+                "scored": 0,
+                "excluded": {},
+                "duplicates": 0,
+                "conflicts": 0,
+                "uncorrelated": 0,
             },
             "source": {
                 "records_total": 0,

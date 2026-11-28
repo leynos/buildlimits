@@ -7,14 +7,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from buildlimits.predict.ensembles import _normalized_log_loss
-from buildlimits.predict.events import EPOCH, Features
+from buildlimits.predict.events import Features
 from buildlimits.predict.probability import LogisticModel, clip_probability
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
 
 ORIGIN = typ.cast("Origin", "git")
-FEATURES = Features("a" * 64, ORIGIN, EPOCH, 60.0, 2)
+FEATURES = Features("a" * 64, ORIGIN, 60.0, 2)
 
 
 def _model(learning_rate: float = 0.05, clip: float = 1e-6) -> LogisticModel:

@@ -91,6 +91,20 @@ def test_a_version_one_event_may_omit_admission(tmp_path: Path) -> None:
     assert loaded.events[0].admitted_at is None, "the absent time stays unknown"
 
 
+def test_a_half_correlation_pair_is_refused(tmp_path: Path) -> None:
+    """A row naming an attempt without its generation is not a correlation.
+
+    The store writes the pair together or not at all, so a document stating one
+    half describes a row no writer produced. Accepting it would let the event
+    evade duplicate and conflict detection while appearing correlated.
+    """
+    document = diagnostics_document()
+    events_of(document)[0]["attempt"] = "g1"
+
+    with pytest.raises(ValueError, match="stated together"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def test_a_version_two_event_must_name_admission(tmp_path: Path) -> None:
     """A version 2 row keeps the exact event shape, including admission."""
     document = document_as_version(diagnostics_document(), 2)
@@ -267,4 +281,68 @@ def test_an_unavailable_inventory_survives_the_snapshot(tmp_path: Path) -> None:
     )
     assert loaded.diagnostics.history.active_only is False, (
         "the read was not active-only"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("attempt", "a" * 16, "must be stated together"),
+        ("supervisor_generation", "generation-a", "must be stated together"),
+        ("generation_digest", "abc", "generation_digest is outside its bounded shape"),
+        ("record_evidence", "z" * 64, "record_evidence is outside its bounded shape"),
+    ],
+)
+def test_a_version_seven_document_with_broken_correlation_is_refused(
+    tmp_path: Path, field: str, value: object, reason: str
+) -> None:
+    """A version 7 field that cannot be trusted fails the load, not silently.
+
+    Each case is a document a plausible implementation could write by
+    omission: half a correlation pair, a truncated digest, or a digest in the
+    wrong alphabet. The loader must refuse each one rather than accepting the
+    row with the field dropped, because a dropped pair would let the row evade
+    the duplicate and conflict gates while a truncated digest would compare as
+    if it were complete evidence.
+    """
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0][field] = value
+
+    with pytest.raises(ValueError, match=reason):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+@pytest.mark.parametrize("attempt", ["a" * 33, "bad/token", ""])
+def test_a_version_seven_document_with_a_bad_attempt_is_refused(
+    tmp_path: Path, attempt: str
+) -> None:
+    """The attempt half of the pair is validated on its own.
+
+    Each document keeps a valid `supervisor_generation`, so a loader that
+    checked only the generation would accept the row and admit a token the
+    recorder can never write.
+    """
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0]["supervisor_generation"] = "a" * 64
+    rows[0]["attempt"] = attempt
+
+    with pytest.raises(ValueError, match="correlation token"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_the_longest_accepted_token_pair_round_trips(tmp_path: Path) -> None:
+    """Both snapshot bounds are inclusive, so the longest pair loads."""
+    document = diagnostics_document()
+    rows = typ.cast("list[dict[str, object]]", document["events"])
+    rows[0]["supervisor_generation"] = "b" * 64
+    rows[0]["attempt"] = "a" * 32
+    path = write_json(tmp_path / "history.jsonl", document)
+
+    loaded = load_snapshot(path)
+
+    assert loaded.events[0].attempt == "a" * 32, "the attempt survives its bound"
+    assert loaded.events[0].supervisor_generation == "b" * 64, (
+        "and so does the generation"
     )

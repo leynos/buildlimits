@@ -1,17 +1,10 @@
 """The prequential walk over one event stream, ordered by admission time.
 
-Every prediction is made at its event's admission moment. Before a moment is
-answered, exactly the eligible labels whose observation time is strictly
-earlier are delivered; a label observed at the same instant waits for a later
-moment. Events sharing an admission moment are answered in full before any
-label from that moment can count, so simultaneous outcomes cannot inform each
-other.
-
-An event without a usable admission time is never predicted, and its label
-never trains a predictor: a missing timestamp is not evidence that the label
-arrived before the decision. Nothing is sorted into a different window behind
-the store's back; admission times order the predictions, and store order breaks
-ties.
+Every prediction is made at its event's admission moment, and only labels
+verified strictly earlier are delivered first. An event without a usable
+admission time is never predicted and never trains a predictor: a missing
+timestamp is not evidence that the label arrived before the decision. Store
+order breaks ties, so nothing is re-sorted behind the store's back.
 """
 
 import dataclasses as dc
@@ -22,40 +15,22 @@ from buildlimits.predict.events import Features, scored_label
 from buildlimits.predict.history import (
     admission_schedule,
     features,
-    label_batches,
     prediction_moments,
     released_labels,
     unverified_label_count,
 )
+from buildlimits.predict.phases import Split, phases, split
+from buildlimits.predict.populations import independence, population
 from buildlimits.predict.predictors import single_predictors, update_all
+from buildlimits.predict.timing import TimingAudit, audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    import datetime as dt
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Event
     from buildlimits.predict.metrics import Phase
     from buildlimits.predict.predictors import Predictor
-
-
-@dc.dataclass(frozen=True, slots=True)
-class Split:
-    """Where the tuning period ends and the held-out period begins.
-
-    Attributes
-    ----------
-    train_labelled : int
-        Labelled events that may inform tuning and weight fitting.
-    heldout_labelled : int
-        Labelled events reserved for the final comparison.
-    boundary : datetime | None
-        Label time of the first held-out event, or None without one.
-    """
-
-    train_labelled: int
-    heldout_labelled: int
-    boundary: dt.datetime | None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -87,8 +62,8 @@ class Walk:
     events : tuple[Event, ...]
         The stream, in the store's append order.
     rows : tuple[Features | None, ...]
-        Causal features, aligned with ``events``; None where no admission time
-        makes a prediction possible.
+        Causal features aligned with ``events``; None where no prediction is
+        possible.
     phases : tuple[Phase | None, ...]
         The phase of each labelled event, or None for an unscored one.
     series : dict[str, Series]
@@ -97,15 +72,47 @@ class Walk:
         The tuning/held-out boundary.
     moments : tuple[tuple[int, ...], ...]
         Event indices grouped by equal admission time, in time order.
+    timing : TimingAudit
+        Per-event usability against the timing, label and correlation gates,
+        with the closed exclusion reasons a report counts.
+    labelled : int
+        Events carrying a hit or miss label, whether or not their timing was
+        verified. This is the label-coverage denominator, kept apart from the
+        phase counts so a honeypot of unverified labels cannot hide behind
+        ``insufficient data``.
+    independent : tuple[bool, ...]
+        Whether each event is an independent label, in stream order. The
+        held-out comparison asks for this per position, so the same predicate
+        the gate counts decides which held-out rows can support a verdict.
+    independent_labelled : int
+        Labelled events that carry a complete attempt pair and no correlation
+        exclusion. This is the independence count a report states beside the
+        gate's population: a repeated or contradictory append cannot inflate
+        it, and a row whose independence cannot be established does not claim
+        to be independent evidence.
+    usable_labelled : int
+        The independent labels whose timing the audit also accepts. This is
+        the population the minimum-label gate counts, so a history cannot clear
+        it with labels that are independent but unverified, or verified but
+        of unknown independence. A legacy row still replays and scores; it
+        simply does not count here.
+    admission_usable_labelled : int
+        The independent labels whose decision time is usable. Compared with
+        ``availability_usable_labelled``, it names which half of the timing
+        evidence a failing gate is actually short of.
+    availability_usable_labelled : int
+        The independent labels whose availability time is usable.
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
+    unavailable_availability : int
+        Admitted events with no verified availability. A row excluded for
+        another reason is counted by that reason instead.
     applied_labels : int
         Eligible labels delivered before at least one prediction.
     unapplied_labels : int
         Eligible labels that arrived too late to inform any prediction.
     unverified_label_time : int
-        Hit or miss labels withheld because their recorded observation time is
-        unverified. They are neither released nor scored.
+        Hit or miss labels withheld: their recorded time is unproven.
     """
 
     events: tuple[Event, ...]
@@ -114,7 +121,15 @@ class Walk:
     series: dict[str, Series]
     split: Split
     moments: tuple[tuple[int, ...], ...]
+    timing: TimingAudit
+    labelled: int
+    independent: tuple[bool, ...]
+    independent_labelled: int
+    usable_labelled: int
+    admission_usable_labelled: int
+    availability_usable_labelled: int
     unavailable_admission: int
+    unavailable_availability: int
     applied_labels: int
     unapplied_labels: int
     unverified_label_time: int
@@ -153,9 +168,14 @@ def walk_forward(
         The stream, its features, phases and each single predictor's answers.
     """
     stream = tuple(events)
-    moments = prediction_moments(stream)
-    rows = features(stream, load_window_seconds=config.load_window_seconds)
-    phases = _phases(stream, train_fraction=config.train_fraction)
+    timing = audit(stream)
+    moments = prediction_moments(stream, usable=timing.usable)
+    rows = features(
+        stream,
+        load_window_seconds=config.load_window_seconds,
+        usable=timing.usable,
+    )
+    assigned = phases(stream, timing, train_fraction=config.train_fraction)
     replay = _replay(
         single_predictors(config),
         rows,
@@ -168,14 +188,23 @@ def walk_forward(
         )
         for name in replay.probabilities
     }
+    counts = population(stream, timing)
     return Walk(
         events=stream,
         rows=rows,
-        phases=phases,
+        phases=assigned,
         series=series,
-        split=_split(stream, phases),
+        split=split(stream, assigned),
         moments=moments,
-        unavailable_admission=len(stream) - sum(len(group) for group in moments),
+        timing=timing,
+        labelled=counts.labelled,
+        independent=independence(stream, timing),
+        independent_labelled=counts.independent_labelled,
+        usable_labelled=counts.usable_labelled,
+        admission_usable_labelled=counts.admission_usable_labelled,
+        availability_usable_labelled=counts.availability_usable_labelled,
+        unavailable_admission=counts.unavailable_admission,
+        unavailable_availability=counts.unavailable_availability,
         applied_labels=replay.applied_labels,
         unapplied_labels=replay.unapplied_labels,
         unverified_label_time=unverified_label_count(stream),
@@ -306,57 +335,3 @@ def _predict_row(
         answer = predictor.predict(known)
         answers.elapsed[predictor.name][index] = answers.timer() - started
         answers.probabilities[predictor.name][index] = answer
-
-
-def _phases(
-    events: cabc.Sequence[Event],
-    *,
-    train_fraction: float,
-) -> tuple[Phase | None, ...]:
-    """Label each event with the phase its label time belongs to.
-
-    The boundary falls between label batches, never inside one, so every row
-    the store wrote together stays on one side of it. A batch that reaches the
-    target lands wholly in the tuning period, which can leave the tuning share
-    slightly above the configured fraction. With too few labels to reach the
-    boundary every batch is tuning; at a fraction of zero every batch is held
-    out.
-
-    Returns
-    -------
-    tuple[Phase | None, ...]
-        One phase per event, or None where no eligible label arrived.
-    """
-    # Only a verified label can be scored, so only it consumes a phase slot.
-    total = sum(1 for event in events if scored_label(event) is not None)
-    target = int(total * train_fraction)
-    phases: list[Phase | None] = []
-    kept = 0
-    for batch in label_batches(events):
-        phase: Phase = "train" if kept < target else "held-out"
-        for index in batch:
-            if scored_label(events[index]) is None:
-                phases.append(None)
-            else:
-                phases.append(phase)
-                kept += 1
-    return tuple(phases)
-
-
-def _split(events: cabc.Sequence[Event], phases: cabc.Sequence[Phase | None]) -> Split:
-    """Summarize the tuning/held-out boundary.
-
-    Returns
-    -------
-    Split
-        Counts on both sides and the first held-out label time.
-    """
-    boundary_index = next(
-        (index for index, phase in enumerate(phases) if phase == "held-out"), None
-    )
-    train = sum(1 for phase in phases if phase == "train")
-    return Split(
-        train_labelled=train,
-        heldout_labelled=sum(1 for phase in phases if phase == "held-out"),
-        boundary=None if boundary_index is None else events[boundary_index].observed_at,
-    )

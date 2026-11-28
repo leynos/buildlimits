@@ -11,16 +11,14 @@ import datetime as dt
 import typing as typ
 
 from differential_trace_test_helpers import CompletingStatistics, cached_entry
+from outcome_shell_group_helpers import run_cached_group
 from outcome_shell_test_support import (
     OutcomeWorld,
     OutcomeWorldOptions,
-    admitted_launch,
     make_outcome_world,
 )
 
-from buildlimits.effects import Exit
 from buildlimits.outcome_record_format import OutcomeRecord
-from buildlimits.supervisor_outcome_setup import GroupEnding
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -86,12 +84,11 @@ def _fixed_wall_clock(moment: dt.datetime) -> cabc.Callable[[], dt.datetime]:
     return read
 
 
-def _entry_for(group_id: str, admitted_at: dt.datetime) -> Pending:
+def _entry_for(admitted_at: dt.datetime) -> Pending:
     """Return the cached entry the shell's launch hook is given.
 
     The harness has no scope to place a real group in, so the entry is built
-    here carrying the admission time ``Groups.place`` would have stamped and
-    the group identity admission selected.
+    here carrying the admission time ``Groups.place`` would have stamped.
 
     Returns
     -------
@@ -99,7 +96,6 @@ def _entry_for(group_id: str, admitted_at: dt.datetime) -> Pending:
         The cached entry carrying the supplied admission moment.
     """
     entry = cached_entry()
-    entry.group_id = group_id
     entry.admitted_at = admitted_at
     return entry
 
@@ -114,15 +110,8 @@ def _run_group(
     str
         The group identifier admission selected.
     """
-    launch = admitted_launch(world.admission, 1)
-    shell.launched(_entry_for(launch.group_id, admitted_at), launch.group_id)
-    world.admission.leader_exited(launch.group_id, Exit(code=0))
-    world.admission.group_emptied(launch.group_id)
-    shell.emptied(GroupEnding(launch.group_id, True, True))
-    # A detached cache keeps the group's token in server drain until the server
-    # reports no live compilation, so the quiet gate needs that cleared too.
-    world.admission.server_activity(active_compiles=0)
-    return launch.group_id
+    entry = _entry_for(admitted_at)
+    return run_cached_group(world, shell, entry, 1)
 
 
 def _run_cached_window(tmp_path: Path) -> tuple[OutcomeRecord, OutcomeRecord]:
@@ -170,7 +159,9 @@ def test_the_shell_carries_admission_and_reading_times_onto_its_row(
     field is a per-launch observation rather than one shared value. The row's
     ``observed_at`` comes from the shell's wall clock at the reading, not from
     the launch's completion, so a label is never released before the query
-    that produced it returned.
+    that produced it returned. The completion moment is recorded separately:
+    a row that lost it would still score, but the report could not tell a slow
+    build from a fast one.
     """
     warm_up, labelled = _run_cached_window(tmp_path)
 
@@ -181,3 +172,9 @@ def test_the_shell_carries_admission_and_reading_times_onto_its_row(
     assert labelled.admitted_at != warm_up.admitted_at, "each row keeps its own time"
     assert labelled.observed_at == READING_AT, "the reading's moment dates the label"
     assert labelled.observed_at >= ADMITTED_AT, "the decision precedes it"
+    assert labelled.completed_at is not None, (
+        "the shell records the group's own completion, not only the reading"
+    )
+    assert labelled.completed_at <= labelled.observed_at, (
+        "a group completes before the reading that produced its label"
+    )

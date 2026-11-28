@@ -3,9 +3,23 @@
 Events keep the store's append order, so a backward clock step can order
 timestamps against recording order without moving a record into another
 window. A prediction is made at the event's admission moment, and only a label
-whose observation time is strictly earlier may inform it; that ordering lives
-in :mod:`buildlimits.predict.history`. An unknown outcome carries no usable
-label there, so it neither counts as load nor sets an age.
+whose *verified availability* time is strictly earlier may inform it; that
+ordering lives in :mod:`buildlimits.predict.history`. An unknown outcome
+carries no usable label there, so it neither counts as load nor sets an age.
+
+``observed_at`` is retained history, not automatically a label-availability
+time. A version 1 or 2 store row used it for a completion-derived label time,
+which the observer did not accept at that moment. Only
+``label_observed_verified``, written by a recorder when it dated the row at the
+statistics reading that justified the label, is evidence that the outcome was
+knowable then. An event without it is unverified: it is never released to a
+predictor and never scored.
+
+A cache key recurs across compilations, so ``attempt`` and
+``supervisor_generation`` say which invocation a row belongs to. Two rows that
+name the same attempt are one retried append, and two rows that name the same
+attempt with different evidence are a conflict no report may resolve by
+choosing a side.
 """
 
 import dataclasses as dc
@@ -17,6 +31,14 @@ if typ.TYPE_CHECKING:
 
 type Label = typ.Literal["hit", "miss", "unknown"]
 type ScoredLabel = typ.Literal["hit", "miss"]
+type TimingExclusion = typ.Literal[
+    "no_admission_time",
+    "no_availability_time",
+    "admission_after_availability",
+    "completion_after_availability",
+    "completion_before_admission",
+    "unknown_outcome",
+]
 
 LABELS: tuple[Label, ...] = ("hit", "miss", "unknown")
 ORIGINS: tuple[Origin, ...] = ("registry", "git", "path", "unknown")
@@ -48,6 +70,27 @@ class Event:
         never treated as proof: a recorded time can be only a lower bound, and
         an unverified label is neither released nor scored. A source that can
         prove the time, such as a known-property synthetic stream, states it.
+    completed_at : datetime | None
+        When the launch's group completion was handled. It is retained so a
+        report can distinguish completion from availability; it is never used
+        as a prediction moment or a release time.
+    attempt : str | None
+        The bounded admission group identifier for this invocation. ``None``
+        means the row predates the correlation group and cannot be told apart
+        from another invocation of the same key.
+    supervisor_generation : str | None
+        The clock domain and attempt namespace the row was written in, so two
+        supervisor processes never share an attempt namespace.
+    generation_digest : str | None
+        The salted sccache generation the row's reading observed. A repeated
+        attempt must agree about it: two rows naming one invocation but
+        different generations did not come from one reading, so the pair is a
+        contradiction rather than an idempotent duplicate.
+    record_evidence : str | None
+        A digest over the row evidence this event does not otherwise carry: the
+        raw cache result, the parser class, the child sighting and the refusal
+        reason and attribution. Two rows naming one attempt must agree about it
+        too, so a difference no mapped field shows is still a contradiction.
     """
 
     identity: str
@@ -57,6 +100,11 @@ class Event:
     label: Label
     runtime_seconds: float
     label_observed_verified: bool = dc.field(kw_only=True, default=False)
+    completed_at: dt.datetime | None = None
+    attempt: str | None = None
+    supervisor_generation: str | None = None
+    generation_digest: str | None = None
+    record_evidence: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -69,8 +117,6 @@ class Features:
         The hashed compilation identity.
     origin : Origin
         The crate's origin class.
-    observed_at : datetime
-        When the label became known.
     age_seconds : float | None
         Seconds from this identity's previous eligible label to the moment the
         row is measured, or None when no earlier label was known then.
@@ -85,10 +131,52 @@ class Features:
 
     identity: str
     origin: Origin
-    observed_at: dt.datetime
     age_seconds: float | None
     load: int
     predicted_at: dt.datetime | None = None
+
+
+def label_moment(event: Event) -> dt.datetime | None:
+    """Return when the event's label became knowable, if it was verified.
+
+    ``observed_at`` is a label time only when the recorder marked it verified,
+        because it dated that row at the statistics reading that produced the
+        label. For an unverified row the recorded time is a lower bound the
+        observer never accepted, so it releases nothing: reading it would let a
+        prediction use a label that had not been observed yet.
+
+        The marker and the correlation group answer different questions. The marker
+        proves *when* the label was known; ``attempt`` and ``supervisor_generation``
+        say *which invocation* the row belongs to. A row can prove its time without
+        naming an invocation, so an older verified row still releases; what it
+        cannot do is take part in duplicate or conflict detection, and the audit
+        reports it as uncorrelated rather than inventing an identity.
+
+    Parameters
+    ----------
+        event : Event
+            The recorded event.
+
+    Returns
+    -------
+        datetime | None
+            The verified availability time, or None when the source proved none.
+
+    Examples
+    --------
+        >>> label_moment(Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)) is None
+        True
+        >>> label_moment(
+        ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
+        ...           label_observed_verified=True)
+        ... ) == EPOCH
+        True
+        >>> label_moment(
+        ...     Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)
+        ... ) is None
+        True
+    """
+    return event.observed_at if event.label_observed_verified else None
 
 
 def admission_moment(event: Event) -> dt.datetime | None:
@@ -98,8 +186,10 @@ def admission_moment(event: Event) -> dt.datetime | None:
     taken. A source that records none cannot support one: the label time is not
     a substitute, since assuming the label was already known then would be
     exactly the leakage the harness must prevent. An admission recorded after
-    its own label describes a decision taken once the outcome was known, so it
-    cannot support a prediction either. Both cases are reported as unavailable
+    its own verified availability describes a decision taken once the outcome
+    was known; where availability is unverified, the historical observation
+    time is the only upper bound and is used solely to reject that
+    physically impossible ordering. Both cases are reported as unavailable
     rather than repaired by guessing.
 
     Parameters
@@ -122,9 +212,65 @@ def admission_moment(event: Event) -> dt.datetime | None:
     True
     """
     admitted = event.admitted_at
-    if admitted is None or admitted > event.observed_at:
+    if admitted is None:
         return None
-    return admitted
+    available = label_moment(event)
+    latest = event.observed_at if available is None else available
+    return None if admitted > latest else admitted
+
+
+def timing_exclusion(event: Event) -> TimingExclusion | None:
+    """Explain why an event has no usable decision-and-label timing pair.
+
+    The reasons are a closed vocabulary so a report can count them exactly.
+    A reason is reported, never repaired: the event is excluded from the
+    scored population rather than being assigned an invented moment.
+
+    Parameters
+    ----------
+    event : Event
+        The recorded event.
+
+    Returns
+    -------
+    TimingExclusion | None
+        The first failing reason, or None when both moments are usable.
+
+    Examples
+    --------
+    >>> timing_exclusion(Event("a" * 64, "git", None, EPOCH, "hit", 0.1))
+    'no_admission_time'
+    """
+    if event.label not in _SCORED_LABELS:
+        return "unknown_outcome"
+    if event.admitted_at is None:
+        return "no_admission_time"
+    available = label_moment(event)
+    if available is None:
+        return "no_availability_time"
+    if event.admitted_at > available:
+        return "admission_after_availability"
+    return _completion_exclusion(event, available)
+
+
+def _completion_exclusion(
+    event: Event, available: dt.datetime
+) -> TimingExclusion | None:
+    """Return the completion's own contradiction, if it records one.
+
+    Returns
+    -------
+    TimingExclusion | None
+        The closed reason, or None when the completion is absent or ordered.
+    """
+    completed = event.completed_at
+    if completed is None:
+        return None
+    if completed > available:
+        return "completion_after_availability"
+    if completed < typ.cast("dt.datetime", event.admitted_at):
+        return "completion_before_admission"
+    return None
 
 
 def scored_label(event: Event) -> ScoredLabel | None:

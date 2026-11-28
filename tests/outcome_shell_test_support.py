@@ -1,6 +1,7 @@
 """Small deterministic ports for supervisor outcome-shell tests."""
 
 import dataclasses as dc
+import datetime as dt
 import typing as typ
 from types import SimpleNamespace
 
@@ -23,7 +24,6 @@ from buildlimits.supervisor_outcomes import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    import datetime as dt
     from pathlib import Path
 
     from buildlimits.config import SupervisorConfig
@@ -210,6 +210,7 @@ class OutcomeWorld:
     metrics: RecordingMetrics
     statistics: PendingStatistics
     writer: FakeWriter
+    supervisor: SimpleNamespace
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -217,13 +218,21 @@ class OutcomeWorldOptions:
     """Optional injected ports and quiet-point settings for shell tests.
 
     ``wall_clock`` supplies the shell's wall-clock reading, so a test can prove
-    which moment a label and its admission evidence carry. None leaves the
-    shell reading the system UTC clock, as production does.
+    which moment a label and its admission evidence carry.
+
+    ``server_port`` and ``statistics_port`` replace the fakes with real ports,
+    so the opt-in host check drives the shell itself rather than the recorder
+    beneath it; ``supervisor_generation`` fixes the clock domain.
+    ``real_writer`` leaves the store writer to the shell, so the bytes under
+    test come from its own asynchronous append path.
     """
 
     recovery_marker: Path | None = None
     recording: bool = True
     statistics_port: StatisticsPort | None = None
+    server_port: ServerProcessPort | None = None
+    supervisor_generation: str | None = None
+    real_writer: bool = False
     reaper: ChildReaper | None = None
     writer: OutcomeStorePort | None = None
     clock: cabc.Callable[[], float] | None = None
@@ -343,6 +352,7 @@ def make_outcome_world(
         else options.statistics_port
     )
     writer = FakeWriter() if options.writer is None else options.writer
+    shell_writer = None if options.real_writer else writer
     supervisor = SimpleNamespace(
         settings=_world_settings(tmp_path, options),
         metrics=metrics,
@@ -351,6 +361,12 @@ def make_outcome_world(
         admission=admission,
         server=SimpleNamespace(cache_allowed=lambda: True),
         recovery=SimpleNamespace(describe=lambda _now: {"phase": "idle"}),
+        # The production admission boundary stamps an entry from this clock,
+        # so a test that marks an admission reads the same source the shell
+        # would have read in production.
+        groups=SimpleNamespace(
+            wall_clock=options.wall_clock or (lambda: dt.datetime.now(dt.UTC))
+        ),
     )
     supervisor.clock = (lambda: 0.0) if options.clock is None else options.clock
     if options.recording:
@@ -358,11 +374,16 @@ def make_outcome_world(
             typ.cast("Supervisor", supervisor),
             dependencies=OutcomeDependencies(
                 environment={"HOME": str(tmp_path)},
-                writer=writer,
+                writer=shell_writer,
                 statistics=selected_statistics,
-                server=typ.cast("ServerProcessPort", FakeServerProcess()),
+                server=(
+                    FakeServerProcess()
+                    if options.server_port is None
+                    else options.server_port
+                ),
                 reaper=options.reaper,
                 wall_clock=options.wall_clock,
+                supervisor_generation=options.supervisor_generation,
             ),
         )
     else:
@@ -375,4 +396,5 @@ def make_outcome_world(
         # An injected writer is cast to the default fake only so callers that
         # replace it own the concrete type they passed.
         typ.cast("FakeWriter", writer),
+        supervisor,
     )

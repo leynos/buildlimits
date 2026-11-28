@@ -25,7 +25,7 @@ def _row(probability: float | None, outcome: int) -> ScoredRow:
         predictor="steady",
         identity="0" * 64,
         origin="registry",
-        observed_at=STAMP,
+        available_at=STAMP,
         probability=probability,
         outcome=outcome,
         phase="held-out",

@@ -1,12 +1,22 @@
-"""Admission-time and released-history contracts for the event stream."""
+"""Admission-time and released-history contracts for the event stream.
 
+Each fixture makes the verified label-availability time equal to the historical
+observation time. That models a version 3 recorder that accepted the label at
+the moment the old, completion-derived rows recorded, so a test still checks
+the causality rule rather than the format upgrade.
+"""
+
+import dataclasses as dc
 import datetime as dt
+import hashlib
 import typing as typ
 
 import pytest
 
 from buildlimits.predict.events import EPOCH, Event, admission_moment
 from buildlimits.predict.history import features, label_batches
+from buildlimits.predict.phases import phases
+from buildlimits.predict.timing import audit
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
@@ -15,29 +25,52 @@ if typ.TYPE_CHECKING:
 ORIGIN = typ.cast("Origin", "registry")
 
 
-def _causal(seconds: int, label: str) -> Event:
-    """Return one event for identity ``a`` admitted five seconds before its label."""
+def _causal(seconds: int, label: str, attempt: str | None = None) -> Event:
+    """Return one event for identity ``a`` admitted five seconds before its label.
+
+    A test that builds two events at the same instant passes distinct attempts,
+    because two rows sharing one attempt identity would be a duplicate rather
+    than two observations.
+    """
+    moment = EPOCH + dt.timedelta(seconds=seconds)
+    token = f"g{seconds}" if attempt is None else attempt
+    derived = hashlib.sha256(f"{seconds}|{label}|{token}".encode()).hexdigest()
     return Event(
         "a" * 64,
         ORIGIN,
         EPOCH + dt.timedelta(seconds=seconds - 5),
-        EPOCH + dt.timedelta(seconds=seconds),
+        moment,
         typ.cast("Label", label),
         1.0,
         label_observed_verified=True,
+        completed_at=moment,
+        attempt=token,
+        supervisor_generation="test-generation",
+        generation_digest=derived,
+        record_evidence=derived,
     )
 
 
 def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
     """Return one event with explicit admission and label times."""
+    moment = EPOCH + dt.timedelta(seconds=observed)
     return Event(
         identity,
         ORIGIN,
         EPOCH + dt.timedelta(seconds=admitted),
-        EPOCH + dt.timedelta(seconds=observed),
+        moment,
         "hit",
         1.0,
         label_observed_verified=True,
+        completed_at=moment,
+        attempt=f"g{identity[:4]}-{admitted}-{observed}",
+        supervisor_generation="test-generation",
+        generation_digest=hashlib.sha256(
+            f"{identity}|{admitted}|{observed}".encode()
+        ).hexdigest(),
+        record_evidence=hashlib.sha256(
+            f"{identity}|{admitted}|{observed}|hit".encode()
+        ).hexdigest(),
     )
 
 
@@ -151,8 +184,8 @@ def test_load_counts_only_released_events_strictly_before_the_admission() -> Non
         (
             _causal(0, "hit"),
             _causal(30, "hit"),
-            _causal(60, "miss"),
-            _causal(60, "miss"),
+            _causal(60, "miss", attempt="g60-a"),
+            _causal(60, "miss", attempt="g60-b"),
         ),
         load_window_seconds=60.0,
     )
@@ -190,7 +223,15 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
     """
     earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
     event = Event(
-        "d" * 64, ORIGIN, earliest, earliest, "hit", 1.0, label_observed_verified=True
+        "d" * 64,
+        ORIGIN,
+        earliest,
+        earliest,
+        "hit",
+        1.0,
+        label_observed_verified=True,
+        attempt="g0",
+        supervisor_generation="test-generation",
     )
 
     rows = features((event,), load_window_seconds=60.0)
@@ -201,14 +242,18 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
 def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     """A backward clock step never merges records from separate windows."""
     first = _causal(10, "hit")
+    stepped_at = EPOCH + dt.timedelta(seconds=5)
     stepped = Event(
         "b" * 64,
         ORIGIN,
         EPOCH,
-        EPOCH + dt.timedelta(seconds=5),
+        stepped_at,
         "hit",
         1.0,
         label_observed_verified=True,
+        completed_at=stepped_at,
+        attempt="g-stepped",
+        supervisor_generation="test-generation",
     )
     third = _causal(20, "miss")
 
@@ -218,6 +263,70 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     rows = features((first, stepped, third), load_window_seconds=60.0)
     assert typ.cast("Features", rows[1]).load == 0, "the tied label is not earlier"
     assert typ.cast("Features", rows[2]).load == 2, "both earlier labels are history"
+
+
+def test_an_unverified_row_does_not_split_an_equal_time_batch() -> None:
+    """Two rows accepted at one reading share a batch across an unverified row.
+
+    The unverified row has no availability, so it belongs to no batch. Letting
+    it separate the two verified rows would place one of them in tuning and the
+    other in the held-out period, which the split contract forbids.
+    """
+    first = _causal(10, "hit", attempt="g-first")
+    unverified = Event(
+        "b" * 64,
+        ORIGIN,
+        EPOCH,
+        EPOCH + dt.timedelta(seconds=10),
+        "hit",
+        1.0,
+        attempt="g-unverified",
+        supervisor_generation="test-generation",
+    )
+    last = Event(
+        "c" * 64,
+        ORIGIN,
+        EPOCH,
+        EPOCH + dt.timedelta(seconds=10),
+        "miss",
+        1.0,
+        label_observed_verified=True,
+        attempt="g-last",
+        supervisor_generation="test-generation",
+    )
+
+    assert label_batches((first, unverified, last)) == ((0, 2),), (
+        "the unverified row joins no batch and separates nothing"
+    )
+    assigned = phases(
+        (first, unverified, last),
+        audit((first, unverified, last)),
+        train_fraction=0.5,
+    )
+    assert assigned[0] == assigned[2], "one batch cannot straddle the split"
+    assert assigned[1] is None, "an unverified row is in no period"
+
+
+def test_a_rejected_duplicate_does_not_split_an_equal_time_batch() -> None:
+    """A retried append is not evidence of a second reading.
+
+    The duplicate carries the same attempt and evidence as the first row, so
+    the audit rejects it. Letting its stamp close a batch would put the two
+    rows accepted at the later reading on opposite sides of the split.
+    """
+    original = _causal(0, "hit", attempt="g-early")
+    later = _causal(20, "miss", attempt="g-later")
+    duplicate = original
+    trailing = dc.replace(later, attempt="g-trailing")
+
+    stream = (original, later, duplicate, trailing)
+    verdict = audit(stream)
+    assert verdict.reasons[2] == "duplicate_attempt", "the retry is rejected"
+
+    batches = label_batches(stream, excluded=[r is not None for r in verdict.reasons])
+    assert batches == ((0,), (1, 3)), "the two rows of the later reading share a batch"
+    assigned = phases(stream, verdict, train_fraction=0.67)
+    assert assigned[1] == assigned[3], "one batch cannot straddle the split"
 
 
 @pytest.mark.parametrize(

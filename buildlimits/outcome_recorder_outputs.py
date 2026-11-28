@@ -15,6 +15,7 @@ from buildlimits.outcome_record_format import (
     StoreRecord,
     WindowSummary,
 )
+from buildlimits.outcome_recorder_correlation import timing_evidence
 from buildlimits.outcome_recorder_types import (
     OutcomeEvent,
     Outputs,
@@ -71,13 +72,12 @@ class _EventDetails:
 
 @dc.dataclass(frozen=True, slots=True)
 class _RowEvidence:
-    """The evidence one emission's store rows carry, decided once per window.
+    """The evidence one emission's rows carry, decided once per window.
 
     ``observed_at`` is the moment every row shares, ``generation_digest`` names
-    the sccache generation that produced them, and ``provenance`` states
-    whether that moment is proven to be when the label became known. They
-    travel together because they answer one question — what does this row
-    prove? — and separating them invites a time without its proof.
+    the sccache generation, and ``provenance`` states whether that moment is
+    proven. They travel together because they answer one question: what does
+    this row prove?
     """
 
     observed_at: dt.datetime
@@ -273,11 +273,9 @@ def _event_for(
 def record_omission(launch: _Launch, observed_at: dt.datetime | None) -> RecordOmission:
     """Return why one launch's outcome cannot become a store row.
 
-    Both clauses are measured, not inferred: a row needs a salted identity to
-    correlate with its admission, and a wall-clock moment at which its label or
-    refusal became known. The reason is a closed token so the observer can count
-    the omitted outcomes by cause and reconcile them with the events it
-    published.
+    Both clauses are measured, not inferred: a row needs a salted identity and
+    a wall-clock moment at which its label or refusal became known. The closed
+    reason lets the observer count omitted outcomes by cause.
 
     Returns
     -------
@@ -295,11 +293,9 @@ def _row_time(launch: _Launch, observed_at: dt.datetime | None) -> dt.datetime |
     """Return the wall-clock moment one row's label or refusal became known.
 
     Every row a reading emits shares the reading's own moment, never a
-    launch's completion time: a label does not exist until its query returns.
-    Only a purely synthetic event, which carries no wall clock at all, falls
-    back to the launch's own completion time, so a unit test can still assert
-    the row shape. The shell stamps every gate, launch, poll and stop, so a
-    real row never takes that path.
+    launch's completion: a label does not exist until its query returns. Only a
+    purely synthetic event, which carries no wall clock, falls back to the
+    launch's completion.
 
     Returns
     -------
@@ -340,6 +336,7 @@ def _record_for(
         if launch.runtime_seconds is not None
         else max(0.0, details.now - launch.started_at)
     )
+    verified = timing_evidence(launch)
     return OutcomeRecord(
         key=launch.payload.key,
         outcome=details.cache_result,
@@ -354,6 +351,11 @@ def _record_for(
         admitted_at=launch.admitted_at,
         label_time_provenance=evidence.provenance,
         generation_digest=evidence.generation_digest,
+        completed_at=None if verified is None else verified.completed_at,
+        attempt=None if verified is None else verified.attempt,
+        supervisor_generation=(
+            None if verified is None else verified.supervisor_generation
+        ),
     )
 
 

@@ -2,38 +2,35 @@
 
 import dataclasses as dc
 import datetime as dt
+import hashlib
 import json
-import tempfile
 import typing as typ
-from pathlib import Path
 
-import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
+from predict_store_helpers import record_events as record_events
 
-from buildlimits import outcome_record_codec, outcome_store_io
-from buildlimits.outcome_record_encode import encode_line
+from buildlimits import outcome_store_io
 from buildlimits.outcome_record_format import (
-    FORMAT_VERSION,
-    DecodedStore,
     OutcomeRecord,
     StoreHeader,
 )
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
-from buildlimits.predict.dataset import Snapshot, Source, build_snapshot
+from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import Event
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalUnavailable,
     count_journal,
 )
-from buildlimits.predict.records import decode_history
-from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
+from buildlimits.predict.snapshot_store import save_snapshot
 from buildlimits.predict.synthetic import identity, stationary
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_record_format import Origin, StoreRecord
+    from pathlib import Path
+
+    from buildlimits.outcome_record_format import Origin
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Label
@@ -50,27 +47,37 @@ never an assumed default.
 """
 
 
-def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario value; pylint: disable=too-many-arguments
+def hand_event(
     index: int,
     *,
-    observed_at: dt.datetime,
-    admitted_at: dt.datetime | None,
+    moments: tuple[dt.datetime | None, dt.datetime],
     label: Label,
     verified: bool = True,
 ) -> Event:
-    """Return one hand-built event for an ordering or weighting scenario.
+    """Return one hand-built verified event for an ordering or weighting case.
 
     The identity is stable for the given index, so a stream built from
     consecutive indices never repeats one unless a test means it to. The
     observation time is verified by default: a hand-built scenario states the
     moment its label was known, so it is proof rather than a store row's lower
-    bound. A test about the unverified case passes ``verified=False``.
+    bound. A test about the unverified case passes ``verified=False``. The
+    attempt identity is derived from the event's own content, so two different
+    events never collide and an exact repeat is an idempotent duplicate. A test
+    that needs a chosen token replaces it, which states that fact where it
+    matters.
 
     Returns
     -------
     Event
         The event, with the git origin and a one-second runtime.
     """
+    admitted_at, observed_at = moments
+    derived = hashlib.sha256(
+        f"{index}|{admitted_at}|{observed_at}|{label}".encode()
+    ).hexdigest()
+    evidence = hashlib.sha256(
+        f"{index}|{admitted_at}|{observed_at}|{label}|{verified}".encode()
+    ).hexdigest()
     return Event(
         identity=identity(index),
         origin="git",
@@ -79,6 +86,11 @@ def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario 
         label=label,
         runtime_seconds=1.0,
         label_observed_verified=verified,
+        completed_at=observed_at,
+        attempt=f"a{derived[:16]}",
+        supervisor_generation="test-generation",
+        generation_digest=derived,
+        record_evidence=evidence,
     )
 
 
@@ -136,12 +148,13 @@ def outcome_record(index: int, outcome: CacheResult, key: object) -> OutcomeReco
     OutcomeRecord
         A record whose origin rotates over the three known origins.
     """
+    observed_at = OBSERVED_AT + dt.timedelta(seconds=30 * index)
     return OutcomeRecord(
         key=typ.cast("typ.Any", key),
         outcome=outcome,
         origin=typ.cast("Origin", ("registry", "git", "path")[index % 3]),
         runtime_seconds=1.0 + index / 100,
-        observed_at=OBSERVED_AT + dt.timedelta(seconds=30 * index),
+        observed_at=observed_at,
         parser_class="cacheable",
         child_sighting="unavailable",
         child_samples=0,
@@ -166,7 +179,10 @@ def write_admitted_store(path: Path, count: int) -> None:
 
     The label times keep their fixed spacing, and every admission time is two
     seconds earlier, so each row is a genuine pre-admission observation rather
-    than a time derived from when the row was written.
+    than a time derived from when the row was written. No row states a
+    provenance marker, because this fixture models a history an earlier
+    recorder wrote: the admission evidence is usable and the label time is
+    still unproven.
     """
     records = []
     for index in range(count):
@@ -182,6 +198,7 @@ def write_admitted_store(path: Path, count: int) -> None:
                 outcome_reason="none" if labelled else "mixed_window",
                 outcome_attribution="solo" if labelled else "none",
                 admitted_at=record.observed_at - dt.timedelta(seconds=2),
+                label_time_provenance=None,
             )
         )
     outcome_store_io.replace_store(
@@ -208,88 +225,6 @@ def write_admitted_store_snapshot(tmp_path: Path, count: int) -> Path:
         "--skip-journal",
     ])
     return snapshot
-
-
-def record_events(
-    records: tuple[StoreRecord, ...],
-    *,
-    now: dt.datetime,
-    version: int = FORMAT_VERSION,
-) -> tuple[Event, ...]:
-    """Snapshot one reading's records and load the events back.
-
-    A test that inspects the events a recorder emitted must read them through
-    the file the dataset command writes, not through the in-memory rows: only
-    the written document states each event's label-time provenance. The rows
-    therefore travel through the real encoder and codec at ``version``, so a
-    test that claims a version's behaviour has exercised that version's shapes.
-
-    Parameters
-    ----------
-    records : tuple[StoreRecord, ...]
-        The records one reading emitted, outcome rows and summary included.
-    now : datetime
-        The moment the reading returned, used as the store's write time.
-    version : int
-        The document version to write and read back. A version 2 document
-        cannot carry a provenance marker, so a row that states one must be
-        stripped before it is written there.
-
-    Returns
-    -------
-    tuple[Event, ...]
-        The loaded event stream, in store append order.
-    """
-    header = StoreHeader("fixed-salt", now, version=version)
-    document = "\n".join((
-        encode_line(header),
-        *(
-            encode_line(_as_version_row(record, version), version=version)
-            for record in records
-        ),
-    ))
-    decoded = outcome_record_codec.decode_lines(document + "\n")
-    if not isinstance(decoded, DecodedStore):
-        pytest.fail(f"the fixture's own document did not decode: {decoded}")
-    snapshot = build_snapshot(
-        decode_history(decoded),
-        now=now,
-        history_loss=HistoryLoss.active_file_only(),
-    )
-    # The directory is removed on both paths: a leaked one per call would
-    # accumulate for the whole session, since nothing else owns it.
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "history.jsonl"
-        save_snapshot(path, snapshot)
-        return load_snapshot(path).events
-
-
-_PROVENANCE_VERSION = 3
-"""The first store version that states a row's label-time provenance."""
-
-
-def _as_version_row(record: StoreRecord, version: int) -> StoreRecord:
-    """Reproduce the row shape the named document version actually wrote.
-
-    A version 1 or 2 release could not state label-time provenance, and a
-    version 3 release could not state a generation digest, so a test that asks
-    what such a history looks like must strip the evidence its own recorder now
-    sets. Writing it as-is would be refused, which is the encoder correctly
-    refusing to record proof a document cannot carry.
-
-    Returns
-    -------
-    StoreRecord
-        The record as that version would have written it.
-    """
-    if not isinstance(record, OutcomeRecord):
-        return record
-    if version >= FORMAT_VERSION:
-        return record
-    stripped = dc.replace(record, generation_digest=None)
-    if version >= _PROVENANCE_VERSION:
-        return stripped
-    return dc.replace(stripped, label_time_provenance=None)
 
 
 def write_snapshot(tmp_path: Path, count: int) -> Path:

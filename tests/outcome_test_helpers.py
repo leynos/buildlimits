@@ -283,8 +283,15 @@ def record_after(minute: int, *, now: dt.datetime = STORE_EPOCH) -> OutcomeRecor
     return attributed_record(observed_at=now + dt.timedelta(minutes=minute))
 
 
-def launch_payload(recorder: ModuleType, key: object) -> object:
+def launch_payload(
+    recorder: ModuleType, key: object, *, generation: str | None = "test-generation"
+) -> object:
     """Build the immutable metadata retained for one cached launch.
+
+    A real launch always names the supervisor generation whose clock stamped
+    it, so the default models one. A test that needs a payload predating that
+    evidence passes ``generation=None``, and the row then keeps the version 2
+    shape rather than claiming a correlation it cannot support.
 
     Returns
     -------
@@ -296,7 +303,12 @@ def launch_payload(recorder: ModuleType, key: object) -> object:
     ``launch_payload(outcome_module("outcome_recorder"), cache_key()).origin``
     is ``"registry"``.
     """
-    return recorder.LaunchPayload(key=key, origin="registry", parser_class="cacheable")
+    return recorder.LaunchPayload(
+        key=key,
+        origin="registry",
+        parser_class="cacheable",
+        supervisor_generation=generation,
+    )
 
 
 def clear_gate_event(

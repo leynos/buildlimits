@@ -1,6 +1,7 @@
 """Shared fixtures for the cache-outcome recorder contracts."""
 
 import dataclasses as dc
+import datetime as dt
 import typing as typ
 
 from outcome_test_helpers import (
@@ -33,10 +34,12 @@ __all__ = (
     "state_with_window",
     "stats_reading",
     "stats_text",
+    "stored_record",
 )
 
+from buildlimits.outcome_record_format import OutcomeRecord
+
 if typ.TYPE_CHECKING:
-    import datetime as dt
     from types import ModuleType
 
     from buildlimits.outcome_record_format import StoreRecord
@@ -139,6 +142,39 @@ def recorder_ticket(state: object) -> object | None:
     ``recorder_ticket(querying)`` is the value passed to ``CloseQuery``.
     """
     return _recorder_state(state).ticket
+
+
+def stored_record(
+    *,
+    generation: str | None = "generation-a",
+    attempt: str | None = "g1",
+    completed: dt.datetime | None = None,
+) -> OutcomeRecord:
+    """Return one complete outcome record for an encode, decode or count case.
+
+    Returns
+    -------
+    OutcomeRecord
+        A record whose timing group is complete unless the caller overrides a
+        field that makes it invalid.
+    """
+    return OutcomeRecord(
+        key=cache_key(),
+        outcome="hit",
+        origin="registry",
+        runtime_seconds=1.0,
+        observed_at=OBSERVED_AT,
+        parser_class="cacheable",
+        child_sighting="unavailable",
+        child_samples=0,
+        admitted_at=OBSERVED_AT - dt.timedelta(seconds=9),
+        completed_at=(
+            OBSERVED_AT - dt.timedelta(seconds=3) if completed is None else completed
+        ),
+        label_time_provenance="verified",
+        attempt=attempt,
+        supervisor_generation=generation,
+    )
 
 
 def baseline_state(recorder: ModuleType, baseline: object | None = None) -> object:

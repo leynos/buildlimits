@@ -130,8 +130,12 @@ class _Comparison:
         Interval | None
             The Brier difference and its block-bootstrap interval.
         """
-        ours = heldout_positions(self.walk, name, self.series[name])
-        theirs = heldout_positions(self.walk, other, self.series[other])
+        ours = heldout_positions(
+            self.walk, name, self.series[name], independent=self.walk.independent
+        )
+        theirs = heldout_positions(
+            self.walk, other, self.series[other], independent=self.walk.independent
+        )
         return block_bootstrap(paired_differences(ours, theirs), config=config)
 
 

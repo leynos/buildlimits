@@ -2,15 +2,22 @@
 
 import contextlib
 import dataclasses as dc
+import secrets
 import typing as typ
 
+from buildlimits import outcome_key, outcome_parser, outcome_shell_keys
 from buildlimits.journal import log
 from buildlimits.outcome_gate import QuietInputs
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
-from buildlimits.outcome_recorder_types import Querying, RecorderState
+from buildlimits.outcome_recorder_types import (
+    LaunchPayload,
+    Querying,
+    RecorderState,
+)
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_retention_report import RetentionLimits
+from buildlimits.outcome_sightings import request_metadata
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -18,6 +25,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.nonblocking_child import ChildReaper
+    from buildlimits.outcome_key import Salt
     from buildlimits.outcome_ports import (
         OutcomeStorePort,
         ServerProcessPort,
@@ -78,6 +86,56 @@ class GroupEnding:
     group_id: str
     is_cached: bool
     is_clean: bool
+
+
+def mint_generation() -> str:
+    """Return a fresh bounded supervisor generation token.
+
+    The token is random rather than derived from the host, so it names one
+    supervisor process without revealing a machine, path or process
+    identifier. Sixteen random bytes keep collisions negligible across every
+    restart that could share a store.
+
+    Returns
+    -------
+    str
+        Thirty-two lowercase hexadecimal characters.
+    """
+    return secrets.token_hex(16)
+
+
+def launch_payload(entry: Pending, salt: Salt | None, generation: str) -> LaunchPayload:
+    """Build the bounded metadata one cached launch retains.
+
+    The payload names the salted request identity, its origin class, the argv
+    parser's prediction and the supervisor generation that stamped the row. It
+    never carries an argument, a path or a compiler output.
+
+    Parameters
+    ----------
+    entry : Pending
+        The admitted request.
+    salt : Salt | None
+        The local salt, or None until the writer has produced one.
+    generation : str
+        The supervisor generation the row will carry.
+
+    Returns
+    -------
+    LaunchPayload
+        The privacy-safe metadata for the launch.
+    """
+    argv = entry.request.argv
+    env = entry.request.env
+    return LaunchPayload(
+        key=outcome_shell_keys.cache_key(argv, env, salt),
+        origin=origin_kind(
+            outcome_key.crate_origin(env, salt) if salt is not None else None
+        ),
+        parser_class=outcome_parser.parser_class(argv),
+        metadata=request_metadata(argv),
+        supervisor_generation=generation,
+    )
 
 
 def disabled_description() -> dict[str, object]:
