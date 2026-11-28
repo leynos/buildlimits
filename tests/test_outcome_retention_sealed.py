@@ -85,22 +85,6 @@ def retain(
     return run_retain(layout(root), retention, RunOptions(now=now, dry_run=dry_run))
 
 
-def archive(
-    root: Path,
-    retention: RetentionPolicy,
-    *,
-    now: dt.datetime = NOW,
-) -> RunReport:
-    """Run the archiving operation once at a fixed moment.
-
-    Returns
-    -------
-    RunReport
-        The run report.
-    """
-    return run_archive(layout(root), retention, RunOptions(now=now))
-
-
 def refuse_compression(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every XZ entry point fail if retention reaches one."""
 
@@ -242,7 +226,11 @@ def test_an_existing_archive_stays_an_archive_when_retention_rewrites_it(
     """A straddling archive is recompressed; it is never converted to plain."""
     expired, at_cutoff, fresh = straddling_rows()
     sealed_source(tmp_path, 1, (expired, at_cutoff, fresh))
-    first = archive(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=0))
+    first = run_archive(
+        layout(tmp_path),
+        policy(1_000_000, max_age_days=0, max_bytes=0),
+        RunOptions(now=NOW),
+    )
     assert first.status == "ok", "the fixture archive is published untrimmed"
 
     report = retain(tmp_path, policy(1_000_000, max_age_days=30, max_bytes=0))

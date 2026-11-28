@@ -17,6 +17,7 @@ import secrets
 import stat
 import typing as typ
 
+from buildlimits.outcome_archive_cleanup import TEMP_SUFFIX
 from buildlimits.outcome_archive_dirs import (
     UnsafePathError,
     ensure_private_directory,
@@ -31,7 +32,6 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 _FILE_MODE = 0o600
-_TEMP_SUFFIX = ".tmp"
 
 __all__ = [
     "UnsafePathError",
@@ -40,9 +40,7 @@ __all__ = [
     "open_private_regular",
     "open_private_temp",
     "publish_no_clobber",
-    "remove_maintenance_files",
     "remove_private_files",
-    "remove_stale_temps",
     "require_private_chain",
     "require_private_regular",
 ]
@@ -106,7 +104,7 @@ def open_private_temp(directory: Path, *, prefix: str) -> tuple[int, Path]:
     OSError
         If the temporary file cannot be created or made private.
     """
-    name = f".{prefix}.{secrets.token_hex(8)}{_TEMP_SUFFIX}"
+    name = f".{prefix}.{secrets.token_hex(8)}{TEMP_SUFFIX}"
     path = directory / name
     flags = (
         os.O_WRONLY
@@ -225,134 +223,6 @@ def remove_private_files(directory: Path, names: cabc.Iterable[str]) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def remove_stale_temps(directory: Path) -> tuple[str, ...]:
-    """Remove abandoned private temporary files under the archive lock.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names that were removed.
-    """
-    return _remove_matching(
-        directory,
-        lambda name: name.endswith(_TEMP_SUFFIX),
-        tolerate_failures=True,
-    )
-
-
-def _remove_matching(
-    directory: Path,
-    matches: cabc.Callable[[str], bool],
-    *,
-    tolerate_failures: bool = False,
-) -> tuple[str, ...]:
-    """Remove the regular files one predicate names, through one descriptor.
-
-    Parameters
-    ----------
-    directory : Path
-        The directory to clean.
-    matches : Callable[[str], bool]
-        Whether one file name is abandoned work.
-    tolerate_failures : bool
-        Whether a file that cannot be inspected or removed is skipped, as a
-        best-effort cleanup allows.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names that were removed; a failure propagates when not tolerated.
-    """
-    descriptor = open_private_chain_when_present(directory)
-    if descriptor is None:
-        return ()
-    try:
-        with os.scandir(descriptor) as iterator:
-            removed = [
-                entry.name
-                for entry in iterator
-                if matches(entry.name)
-                and _remove_entry(
-                    descriptor, entry, tolerate_failures=tolerate_failures
-                )
-            ]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    return tuple(removed)
-
-
-def _remove_entry(
-    descriptor: int,
-    entry: os.DirEntry[str],
-    *,
-    tolerate_failures: bool,
-) -> bool:
-    """Remove one listed entry, reporting whether it is now gone.
-
-    Returns
-    -------
-    bool
-        True when this call removed the entry.
-
-    Raises
-    ------
-    OSError
-        If the entry cannot be removed and ``tolerate_failures`` is false.
-    """
-    try:
-        metadata = entry.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        if not tolerate_failures:
-            raise
-        return False
-    if not stat.S_ISREG(metadata.st_mode):
-        return False
-    try:
-        os.unlink(entry.name, dir_fd=descriptor)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        if not tolerate_failures:
-            raise
-        return False
-    return True
-
-
-def remove_maintenance_files(directory: Path, prefix: str) -> tuple[str, ...]:
-    """Remove abandoned maintenance temporaries under the archive lock.
-
-    The sealed directory is shared with the writer, which publishes metadata
-    through its own temporary files while a seal is in progress. Only names
-    carrying the maintenance prefix are removed, so a concurrent seal can never
-    lose the file it is about to install.
-
-    Parameters
-    ----------
-    directory : Path
-        The directory whose abandoned maintenance files are removed.
-    prefix : str
-        The maintenance prefix, matched as ``.<prefix>-``.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names that were removed.
-
-    Notes
-    -----
-    A missing directory holds nothing. A refused chain or a failed removal or
-    sync propagates as `OSError`.
-    """
-    marker = f".{prefix}-"
-    return _remove_matching(
-        directory,
-        lambda name: name.startswith(marker) and name.endswith(_TEMP_SUFFIX),
-    )
 
 
 def require_private_regular(metadata: os.stat_result) -> None:

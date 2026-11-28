@@ -18,13 +18,16 @@ from pathlib import Path
 import pytest
 from outcome_archive_helpers import refuse
 
-from buildlimits import outcome_archive_dirs, outcome_archive_fs
+from buildlimits import (
+    outcome_archive_dirs,
+    outcome_archive_fs,
+)
+from buildlimits.outcome_archive_cleanup import remove_stale_temps
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
     atomic_write_json,
     open_private_temp,
     publish_no_clobber,
-    remove_stale_temps,
     require_private_regular,
 )
 

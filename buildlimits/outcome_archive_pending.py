@@ -67,48 +67,114 @@ def narrow(follow_up: Plan, done: Done) -> Plan:
     Plan
         The plan narrowed to the work one more pass may perform.
     """
-    # An eviction step that failed is not retried. The eviction order is
-    # oldest-first, so every step at or after that sequence is left for the
-    # next firing: trimming a newer archive would discard rows from history
-    # that survives while the entry the budget asked for is still present.
+    trims, deletes = _eviction_steps(follow_up, done)
     return dc.replace(
         follow_up,
-        archive=tuple(
-            entry for entry in follow_up.archive if entry.sequence not in done.failed
+        archive=_unfailed(follow_up.archive, done.failed),
+        reconcile=_unfailed_pairs(follow_up.reconcile, done.failed),
+        heal=_unfailed(follow_up.heal, done.failed),
+        sealed_repairs=_repairable(follow_up.sealed_repairs, done.failed),
+        stale_sealed_markers=_unfailed_sequences(
+            follow_up.stale_sealed_markers, done.failed
         ),
-        reconcile=tuple(
-            pair for pair in follow_up.reconcile if pair[0].sequence not in done.failed
-        ),
-        heal=tuple(
-            entry for entry in follow_up.heal if entry.sequence not in done.failed
-        ),
-        sealed_repairs=tuple(
-            entry
-            for entry in follow_up.sealed_repairs
-            if entry.sequence not in done.failed and not is_proven_absent(entry.path)
-        ),
-        stale_sealed_markers=tuple(
-            sequence
-            for sequence in follow_up.stale_sealed_markers
-            if sequence not in done.failed
-        ),
-        orphans=tuple(
-            sequence for sequence in follow_up.orphans if sequence not in done.failed
-        ),
-        trims=tuple(
-            (entry, trim)
-            for entry, trim in follow_up.trims
-            if evictable(entry.sequence, done.removed, done.blocked)
-            and not is_proven_absent(entry.path)
-            and not already_applied(entry, trim, done.applied)
-        ),
-        deletes=tuple(
-            entry
-            for entry in follow_up.deletes
-            if evictable(entry.sequence, done.removed, done.blocked)
-            and not is_proven_absent(entry.path)
-        ),
+        orphans=_unfailed_sequences(follow_up.orphans, done.failed),
+        trims=trims,
+        deletes=deletes,
     )
+
+
+def _unfailed(
+    entries: cabc.Iterable[SegmentEntry], failed: set[int]
+) -> tuple[SegmentEntry, ...]:
+    """Return the entries whose step has not failed.
+
+    Returns
+    -------
+    tuple[SegmentEntry, ...]
+        The entries a later pass may act on.
+    """
+    return tuple(entry for entry in entries if entry.sequence not in failed)
+
+
+def _unfailed_pairs(
+    pairs: cabc.Iterable[tuple[SegmentEntry, SegmentEntry]], failed: set[int]
+) -> tuple[tuple[SegmentEntry, SegmentEntry], ...]:
+    """Return the duplicate pairs whose reconciliation has not failed.
+
+    Returns
+    -------
+    tuple[tuple[SegmentEntry, SegmentEntry], ...]
+        The pairs a later pass may settle.
+    """
+    return tuple(pair for pair in pairs if pair[0].sequence not in failed)
+
+
+def _repairable(
+    entries: cabc.Iterable[SegmentEntry], failed: set[int]
+) -> tuple[SegmentEntry, ...]:
+    """Return the sealed sources a later pass may still repair.
+
+    An entry that is proven absent has nothing to repair, while one that cannot
+    be inspected must stay so its failure is recorded against it.
+
+    Returns
+    -------
+    tuple[SegmentEntry, ...]
+        The sources a later pass may describe.
+    """
+    return tuple(
+        entry
+        for entry in entries
+        if entry.sequence not in failed and not is_proven_absent(entry.path)
+    )
+
+
+def _unfailed_sequences(
+    sequences: cabc.Iterable[int], failed: set[int]
+) -> tuple[int, ...]:
+    """Return the sequences whose step has not failed.
+
+    Returns
+    -------
+    tuple[int, ...]
+        The sequences a later pass may act on.
+    """
+    return tuple(sequence for sequence in sequences if sequence not in failed)
+
+
+def _eviction_steps(
+    follow_up: Plan, done: Done
+) -> tuple[
+    tuple[tuple[SegmentEntry, Trim], ...],
+    tuple[SegmentEntry, ...],
+]:
+    """Return the trims and deletions a later pass may still perform.
+
+    An eviction step that failed is not retried, and every step at or after it
+    waits for the next firing: the order is oldest-first, so trimming newer
+    history while the older entry remains would discard rows the budget asked
+    to keep. A trim already applied against the same measured archive is not
+    repeated.
+
+    Returns
+    -------
+    tuple
+        The trims and deletions the pass may perform.
+    """
+    trims = tuple(
+        (entry, trim)
+        for entry, trim in follow_up.trims
+        if evictable(entry.sequence, done.removed, done.blocked)
+        and not is_proven_absent(entry.path)
+        and not already_applied(entry, trim, done.applied)
+    )
+    deletes = tuple(
+        entry
+        for entry in follow_up.deletes
+        if evictable(entry.sequence, done.removed, done.blocked)
+        and not is_proven_absent(entry.path)
+    )
+    return trims, deletes
 
 
 def has_work(plan: Plan) -> bool:

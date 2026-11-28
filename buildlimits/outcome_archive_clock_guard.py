@@ -241,17 +241,29 @@ def _boottime(value: object) -> float | None:
     Returns
     -------
     float | None
-        The reading, or None when it was null.
+        The reading, or None when it was null. A wrong-shaped value is
+        refused by ``_finite_float``.
+    """
+    if value is None:
+        return None
+    return _finite_float(value)
+
+
+def _finite_float(value: object) -> float:
+    """Convert one JSON number, refusing a value no clock could have read.
+
+    Returns
+    -------
+    float
+        The finite reading.
 
     Raises
     ------
     TypeError
-        If the value is neither a finite number nor null. A JSON integer can
-        exceed the float range, and a JSON exponent can name infinity, so both
-        are refused rather than allowed to escape as an unhandled conversion.
+        If the value is not a finite number. A JSON integer can exceed the
+        float range and a JSON exponent can name infinity, so both are refused
+        rather than allowed to escape as an unhandled conversion.
     """
-    if value is None:
-        return None
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = "a baseline boot time must be a number"
         raise TypeError(msg)

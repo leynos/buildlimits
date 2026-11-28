@@ -77,6 +77,10 @@ maintenance pass is repaired rather than trusted.
       the truncated stream, the corrupt-row trim, real boot-clock sources, the
       unsettled reading and the retention-mode duplicate. Local slipcover line
       coverage is 91.46% against a threshold of 91.31%.
+- [x] EP-6 (CodeScene): the local delta's complexity and duplication findings
+      were cleared by extracting the cleanup walk, the sealed scan, the shared
+      per-entry dispatch, the retention decision maps and the age straddler
+      predicate, and by splitting the boot-time guard and the pending filters.
 - [ ] EP-6 (remaining): hosted CI green, formal review, readiness, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,

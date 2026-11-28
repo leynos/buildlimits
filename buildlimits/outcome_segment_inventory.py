@@ -11,12 +11,12 @@ and the gap and integrity flags a report shows.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_sealed_scan import scan_sealed
 from buildlimits.outcome_segment_gaps import retained_gaps
 from buildlimits.outcome_segment_scan import (
     SegmentEntry,
     regular_files,
     scan_archived,
-    scan_sealed,
 )
 from buildlimits.outcome_segment_sidecar import metadata_fields
 

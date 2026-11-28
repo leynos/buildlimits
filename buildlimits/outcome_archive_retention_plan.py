@@ -24,6 +24,7 @@ from buildlimits.outcome_archive_budget import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
@@ -83,51 +84,102 @@ def retention_steps(
 
     Returns
     -------
-    _Retention
+    Retention
         The deletions, trims, their causes, and whether a configured budget
         was left to the follow-up plan.
     """
-    candidates = tuple(
-        entry for entry in inventory.effective if entry.sequence not in duplicated
+    decisions = _Decisions(
+        candidates=tuple(
+            entry for entry in inventory.effective if entry.sequence not in duplicated
+        )
     )
-    deletes: dict[int, SegmentEntry] = {}
-    causes: dict[int, str] = {}
-    if budget.cutoff is not None:
-        for entry in candidates:
-            plan_age_step(entry, budget.cutoff, deletes)
-    _attribute(deletes, causes, "age")
-    trims = age_trims(
-        candidates, budget.cutoff, deletes, include_sealed=budget.can_trim_sealed
+    _age_steps(decisions, budget.cutoff)
+    decisions.trims = age_trims(
+        decisions.candidates,
+        budget.cutoff,
+        decisions.deletes,
+        include_sealed=budget.can_trim_sealed,
     )
-    measurable = _budgets_are_measurable(candidates, budget, deletes, duplicated)
-    settled = True
-    if measurable:
-        # Both walks always run: the record walk composes with the byte walk's
-        # decisions, so a stopped byte walk must not skip the cap.
-        settled = plan_byte_steps(candidates, budget, deletes, trims)
-        _attribute(deletes, causes, "bytes")
-        settled = plan_record_steps(candidates, budget, deletes, trims) and settled
-        _attribute(deletes, causes, "records")
-    else:
-        # An unmeasurable cap is a run invariant rather than a planning
-        # decision: even a pass that defers its walk has to report it.
-        require_measurable_active(budget)
+    measurable = _budgets_are_measurable(
+        decisions.candidates, budget, decisions.deletes, duplicated
+    )
+    settled = _capacity_steps(decisions, budget, measurable=measurable)
     # A later walk may delete an archive an earlier one already planned to trim;
     # rewriting a file that is about to be removed would only churn it, so a
     # deleted sequence is never also planned as a trim.
     trimmed = tuple(
-        (entry, trims[entry.sequence])
-        for entry in candidates
-        if entry.sequence in trims and entry.sequence not in deletes
+        (entry, decisions.trims[entry.sequence])
+        for entry in decisions.candidates
+        if entry.sequence in decisions.trims and entry.sequence not in decisions.deletes
     )
     bounded = budget.policy.has_byte_limit or budget.policy.max_records is not None
     deferred = bounded and (not measurable or not settled)
     return Retention(
-        deletes=tuple(deletes[sequence] for sequence in sorted(deletes)),
+        deletes=tuple(
+            decisions.deletes[sequence] for sequence in sorted(decisions.deletes)
+        ),
         trims=trimmed,
-        causes=tuple(sorted(causes.items())),
+        causes=tuple(sorted(decisions.causes.items())),
         deferred=deferred,
     )
+
+
+@dc.dataclass(slots=True)
+class _Decisions:
+    """The eviction one retention plan accumulates in place.
+
+    Attributes
+    ----------
+    candidates : tuple[SegmentEntry, ...]
+        The closed entries the plan may act on, oldest first.
+    deletes : dict[int, SegmentEntry]
+        The entries planned for whole deletion, by sequence.
+    causes : dict[int, str]
+        The closed bound that made each deletion eligible, by sequence.
+    trims : dict[int, Trim]
+        The trims planned so far, by sequence. The byte and record walks
+        compose with them.
+    """
+
+    candidates: tuple[SegmentEntry, ...]
+    deletes: dict[int, SegmentEntry] = dc.field(default_factory=dict)
+    causes: dict[int, str] = dc.field(default_factory=dict)
+    trims: dict[int, Trim] = dc.field(default_factory=dict)
+
+
+def _age_steps(decisions: _Decisions, cutoff: dt.datetime | None) -> None:
+    """Apply the age rule and attribute its whole deletions."""
+    if cutoff is not None:
+        for entry in decisions.candidates:
+            plan_age_step(entry, cutoff, decisions.deletes)
+    _attribute(decisions.deletes, decisions.causes, "age")
+
+
+def _capacity_steps(decisions: _Decisions, budget: Budget, *, measurable: bool) -> bool:
+    """Apply the byte and record bounds, or report why they were deferred.
+
+    Returns
+    -------
+    bool
+        Whether the walks settled both bounds.
+    """
+    if not measurable:
+        # An unmeasurable cap is a run invariant rather than a planning
+        # decision: even a pass that defers its walk has to report it.
+        require_measurable_active(budget)
+        return False
+    settled = plan_byte_steps(
+        decisions.candidates, budget, decisions.deletes, decisions.trims
+    )
+    _attribute(decisions.deletes, decisions.causes, "bytes")
+    settled = (
+        plan_record_steps(
+            decisions.candidates, budget, decisions.deletes, decisions.trims
+        )
+        and settled
+    )
+    _attribute(decisions.deletes, decisions.causes, "records")
+    return settled
 
 
 def _attribute(

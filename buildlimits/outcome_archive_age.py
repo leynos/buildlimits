@@ -80,11 +80,28 @@ def age_trims(
         return {}
     trims: dict[int, Trim] = {}
     for entry in candidates:
-        if entry.sequence in deletes or not entry.has_metadata:
-            continue
-        if entry.state != "archived" and not include_sealed:
-            continue
-        first = entry.first_observed_at
-        if first is not None and first < cutoff:
+        if _straddles(entry, cutoff, deletes=deletes, include_sealed=include_sealed):
             trims[entry.sequence] = Trim(before=cutoff)
     return trims
+
+
+def _straddles(
+    entry: SegmentEntry,
+    cutoff: dt.datetime,
+    *,
+    deletes: dict[int, SegmentEntry],
+    include_sealed: bool,
+) -> bool:
+    """Whether one entry needs a prefix trim for the cutoff.
+
+    Returns
+    -------
+    bool
+        True when the entry survives and holds rows older than the cutoff.
+    """
+    if entry.sequence in deletes or not entry.has_metadata:
+        return False
+    if entry.state != "archived" and not include_sealed:
+        return False
+    first = entry.first_observed_at
+    return first is not None and first < cutoff

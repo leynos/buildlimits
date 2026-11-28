@@ -91,14 +91,8 @@ def build_sealed_temp(
     Returns
     -------
     tuple[Path, ArchiveFacts]
-        The verified temporary file and the facts it holds.
-
-    Raises
-    ------
-    OutputFaultError
-        If the temporary does not scan back to the bytes written. The source
-        was readable, so the fault names this run's own output rather than the
-        history it read.
+        The verified temporary file and the facts it holds; a temporary that
+        does not scan back is refused by ``_verified_facts``.
     """
     descriptor, temporary = open_private_temp(
         context.layout.sealed_dir, prefix=maintenance_prefix(entry.sequence)
@@ -108,6 +102,24 @@ def build_sealed_temp(
     except BaseException:
         discard(temporary)
         raise
+    return temporary, _verified_facts(temporary, written)
+
+
+def _verified_facts(temporary: Path, written: ArchiveFacts) -> ArchiveFacts:
+    """Prove one temporary scans back to the bytes this pass wrote.
+
+    Returns
+    -------
+    ArchiveFacts
+        The facts the temporary actually holds.
+
+    Raises
+    ------
+    OutputFaultError
+        If the temporary will not decode, ends in a torn tail, or describes
+        different bytes. The source decoded cleanly in every case, so the
+        fault names this run's output and the source must survive.
+    """
     try:
         scanned = read_source_facts(temporary)
     except SegmentFaultError as fault:
@@ -121,11 +133,10 @@ def build_sealed_temp(
     if scanned.had_torn_tail or not written.matches(scanned):
         # Every row this pass wrote carries its terminator, so a torn tail or a
         # different count, size or digest means the temporary is not what this
-        # process wrote. The source decoded cleanly, so only the output is at
-        # fault and the source must survive for the next attempt.
+        # process wrote.
         discard(temporary)
         raise OutputFaultError("truncated_xz")
-    return temporary, scanned
+    return scanned
 
 
 def write_sealed_metadata(

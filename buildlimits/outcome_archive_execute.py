@@ -11,6 +11,7 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits import (
+    outcome_archive_cleanup,
     outcome_archive_evict,
     outcome_archive_firing,
     outcome_archive_fs,
@@ -285,8 +286,8 @@ def _prepare(context: ArchiveContext) -> None:
     """
     layout = context.layout
     outcome_archive_fs.ensure_private_directory(layout.archive_dir)
-    outcome_archive_fs.remove_stale_temps(layout.archive_dir)
-    outcome_archive_fs.remove_maintenance_files(
+    outcome_archive_cleanup.remove_stale_temps(layout.archive_dir)
+    outcome_archive_cleanup.remove_maintenance_files(
         layout.sealed_dir, outcome_segments.SEALED_TEMP_PREFIX
     )
     outcome_archive_lock.require_headroom(

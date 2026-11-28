@@ -28,6 +28,39 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan, PlanSummary
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
+
+class _EntryAction(typ.Protocol):
+    """One per-entry operation the shared fault boundary wraps."""
+
+    def __call__(self, context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
+        """Perform the operation for one entry."""
+
+
+class _EntryQuarantine(typ.Protocol):
+    """One quarantine move the shared fault boundary may take."""
+
+    def __call__(
+        self, context: ArchiveContext, entry: SegmentEntry, reason: str
+    ) -> ActionResult:
+        """Move the artefact one closed fault names into quarantine."""
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _EntryActor:
+    """The operation and quarantine move one per-entry step is made of.
+
+    Attributes
+    ----------
+    act : _EntryAction
+        The operation to perform.
+    quarantine : _EntryQuarantine
+        Where a closed fault moves the artefact it names.
+    """
+
+    act: _EntryAction
+    quarantine: _EntryQuarantine
+
+
 __all__ = [
     "ArchiveRun",
     "RunOutcome",
@@ -214,35 +247,57 @@ def _clear_stale_marker(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> 
 
 def _repair_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
     """Re-derive one sealed source's metadata, quarantining an invalid one."""
-    outcome_archive_evict.quarantining(
+    _per_entry(
+        run,
+        entry,
         outcome,
-        entry.sequence,
-        lambda: outcome_archive_files.repair_sealed_metadata(run.context, entry),
-        lambda reason: outcome_archive_quarantine.quarantine_source(
-            run.context, entry, reason
+        _EntryActor(
+            outcome_archive_files.repair_sealed_metadata,
+            outcome_archive_quarantine.quarantine_source,
         ),
     )
 
 
 def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
     """Archive one sealed source, quarantining it when it is invalid."""
-    outcome_archive_evict.quarantining(
+    _per_entry(
+        run,
+        entry,
         outcome,
-        entry.sequence,
-        lambda: outcome_archive_files.archive_source(run.context, entry),
-        lambda reason: outcome_archive_quarantine.quarantine_source(
-            run.context, entry, reason
+        _EntryActor(
+            outcome_archive_files.archive_source,
+            outcome_archive_quarantine.quarantine_source,
         ),
     )
 
 
 def _heal_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
     """Rebuild one sidecar, quarantining an archive that will not verify."""
+    _per_entry(
+        run,
+        entry,
+        outcome,
+        _EntryActor(
+            outcome_archive_files.repair_sidecar,
+            outcome_archive_quarantine.quarantine_archive,
+        ),
+    )
+
+
+def _per_entry(
+    run: ArchiveRun,
+    entry: SegmentEntry,
+    outcome: RunOutcome,
+    actor: _EntryActor,
+) -> None:
+    """Run one per-entry operation behind the shared fault boundary.
+
+    Only the caller knows which file a closed fault implicates, so the actor
+    names both the operation and the quarantine move it owns.
+    """
     outcome_archive_evict.quarantining(
         outcome,
         entry.sequence,
-        lambda: outcome_archive_files.repair_sidecar(run.context, entry),
-        lambda reason: outcome_archive_quarantine.quarantine_archive(
-            run.context, entry, reason
-        ),
+        lambda: actor.act(run.context, entry),
+        lambda reason: actor.quarantine(run.context, entry, reason),
     )
