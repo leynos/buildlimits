@@ -349,26 +349,6 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "last reason no_quiet_point"
         ),
     ),
-    "outcomes-with-omissions": (
-        {
-            "capacity": 2,
-            "held": 0,
-            "healthy": True,
-            "caching": True,
-            "cache_outcomes": {
-                "enabled": True,
-                "attributed": 3,
-                "readings": 4,
-                "record_omitted": 2,
-                "record_omitted_key": 1,
-                "record_omitted_label_time": 1,
-            },
-        },
-        (
-            "cache outcomes recording: 3 attributed, 4 readings, 2 omitted "
-            "(1 without a key, 1 without a label time)"
-        ),
-    ),
     "outcomes-disabled": (
         {
             "capacity": 2,

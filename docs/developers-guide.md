@@ -414,6 +414,7 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.phases`                                                                   | The tuning/held-out split, placed between label batches so one reading never straddles the boundary, and the summary of where it fell                                                                                                                                                                                                             |
 | `predict.timing`                                                                   | The per-event audit: the closed exclusion vocabulary, duplicate and conflict classification, the scored and uncorrelated counts, and `exclusions`                                                                                                                                                                                                 |
 | `predict.snapshot_clock`                                                           | The chronology rules a snapshot must satisfy: verified label times in append order, and no label before a decision the file already recorded                                                                                                                                                                                                      |
+| `status_render_outcomes`                                                           | The optional cache-outcome section of the status summary: bounded counts and closed reasons only, with no attempt, generation, path or cache key                                                                                                                                                                                                  |
 | `predict.populations`                                                              | The label populations the evidence gates read: recorded, independent, jointly usable, and the two timing halves that name which evidence a failing gate lacks                                                                                                                                                                                     |
 | `predict.observer_accounting`                                                      | Bounded recorder counts from the journal, with appends counted apart from compactions and seals, and omitted outcomes counted by cause                                                                                                                                                                                                            |
 | `outcome_record_timing`                                                            | Version 5 timing fields, the bounded correlation tokens, and `bounded_token`, `valid_evidence` and `valid_fields`                                                                                                                                                                                                                                 |
@@ -1016,7 +1017,15 @@ discarded append: `StoreWriter.append` catches it with the other encode
 failures and publishes `StoreResult("append", "save_failed", discarded=1)`,
 which the shell folds into `store_discarded` and the `outcome_store` metric
 carries with `store_reason="save_failed"`, so a version refusal is visible in
-status and telemetry without a token or a path in either.
+status and telemetry without a token or a path in either. The other two new
+refusal boundaries already report themselves. `build_shell` catches any
+construction failure — the only way a generation mint can fail — logs
+`cache outcome recorder disabled during initialization` and emits
+`outcome_reading` with `outcome_reason="recorder_disabled"`. An admission-clock
+read happens inside the `scope_placement` span, whose `finish` states a fixed
+`failure_category` and which the placement handler already uses to fail the
+launch; a separate log line there would duplicate the span record and sit on
+the launch path.
 
 `outcome_key.generation_digest` is the one place the digest triple is joined,
 and `outcome_shell_keys.generation_digest` the one place the shell supplies the
@@ -1048,11 +1057,12 @@ against the decision, availability and correlation gates with a closed
 exclusion vocabulary. `predict.history` exposes four functions the replay
 composes, and each takes an optional `usable` or `excluded` flag sequence so a
 caller that has already run the audit does not run it again.
-`label_batches(events, excluded=...)` skips the rows marked excluded,
-`prediction_moments(events, usable=...)`, `features(events, ..., usable=...)`
-and `released_labels(events, usable=...)` skip the rows the audit withheld.
-Omitting the argument is not "no filtering": each function derives the flags by
-running `predict.timing.audit` itself, so the default and an explicit audit
+`label_batches(events, excluded=...)` skips only the rows the caller marks
+excluded; it runs no audit of its own, so a caller such as `predict.phases`
+must compute the correlation exclusions and pass them. The other three derive
+the flags when they are omitted: `prediction_moments(events, usable=...)`,
+`features(events, ..., usable=...)` and `released_labels(events, usable=...)`
+run `predict.timing.audit` themselves, so their default and an explicit audit
 agree by construction. `predict.scoring`'s
 `heldout_positions(walk, name, probabilities, independent=...)` takes the same
 idea to the comparison: when `independent` is supplied, held-out rows whose

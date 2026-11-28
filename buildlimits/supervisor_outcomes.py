@@ -340,6 +340,7 @@ class OutcomeShell:
         self._telemetry.publish(outputs)
         self._counters.record(outputs)
         for record in outputs.records:
+            self._counters.note_record(record)
             self._resources.writer.append(record)
 
     def _describe(self) -> dict[str, object]:

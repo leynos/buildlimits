@@ -116,3 +116,38 @@ def test_ready_saturated_and_legacy_rendering_remains_byte_identical() -> None:
     assert render({**base, "admission": "legacy"}) == original, (
         "non-dictionary legacy data is ignored"
     )
+
+
+def test_the_summary_reports_correlation_outcomes_and_omissions() -> None:
+    """The recorder line names omissions and the correlation counts it can see.
+
+    The shell knows how many outcomes it could not store and why, how many rows
+    carried no attempt pair, and how many repeated an attempt it had already
+    appended. It cannot say whether a repeat agreed with its original, because
+    that verdict compares whole recorded evidence over the entire store; the
+    line therefore reports repeats, and the replay classifies them.
+    """
+    state = {
+        "capacity": 2,
+        "held": 0,
+        "healthy": True,
+        "caching": True,
+        "cache_outcomes": {
+            "enabled": True,
+            "attributed": 3,
+            "readings": 4,
+            "record_omitted": 2,
+            "record_omitted_key": 1,
+            "record_omitted_label_time": 1,
+            "uncorrelated_rows": 5,
+            "repeated_attempts": 7,
+        },
+    }
+
+    rendered = render(state)
+
+    assert (
+        "cache outcomes recording: 3 attributed, 4 readings, 2 omitted "
+        "(1 without a key, 1 without a label time), 5 without a correlation "
+        "pair, 7 repeated attempt rows"
+    ) in rendered, rendered

@@ -193,12 +193,42 @@ many were omitted and splits them by the recorded cause: `without a key` when
 the launch had no salted identity, and `without a label time` when no
 wall-clock moment could date it. Those are the production signals for timing
 evidence: nothing is dropped silently, and no attempt token, generation or path
-appears in the line. If recording stops after an internal failure, the line
-reports that and keeps the last reason when one was recorded. If a single
-status read cannot build the outcome snapshot, the line reads
-`cache outcomes status unavailable`; recording continues and a later read may
-recover, so this is not a recorder failure. For history and reading or store
-failures, query:
+appears in the line.
+
+The same line reports two correlation counts the supervisor can observe about
+its own appends: rows `without a correlation pair`, which an older recorder
+wrote and which the replay reports as uncorrelated, and
+`repeated attempt rows`, whose attempt identity this process appended more than
+once. A repeated row is not necessarily a problem — a retried append after a
+crash is expected — so the count is a prompt to check the replay report, which
+decides whether the repeat was identical or contradictory and states both
+counts under `duplicates` and `conflicts`. The supervisor cannot make that
+decision itself: it sees only the rows this process wrote, while the store
+holds every process's rows. Neither count names an attempt, a generation or a
+path.
+
+What each signal asks an operator to do:
+
+- `without a key` — the recorder could not build the salted cache identity.
+  Check that the store salt is available; rows keep being produced and the
+  count falling is the sign of recovery.
+- `without a label time` — no wall-clock moment could date the reading. Check
+  the system clock and the statistics query; a sustained count means labels are
+  being observed but cannot be placed in time.
+- `without a correlation pair` — expected only while a host still has rows from
+  an older recorder. It should stop growing once the upgraded supervisor has
+  written a full store window.
+- `repeated attempt rows` — expected in small numbers after a crash or a
+  restart. Read the replay report's duplicate and conflict counts before
+  treating it as a fault.
+- `cache outcome recorder disabled during initialization` — construction
+  failed, so recording is off until the supervisor restarts. The last reason is
+  kept for the next status read. If recording stops after an internal failure,
+  the line reports that and keeps the last reason when one was recorded. If a
+  single status read cannot build the outcome snapshot, the line reads
+  `cache outcomes status unavailable`; recording continues and a later read may
+  recover, so this is not a recorder failure. For history and reading or store
+  failures, query:
 
 ```bash
 build-limits-metrics --since 1d --max-records 100000
