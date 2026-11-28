@@ -415,18 +415,22 @@ bound.
 
 ### Enforce retention without archiving
 
-Compressing closed history is optional. The same command's `retain` subcommand
+Archiving closed history is optional. The same command's `retain` subcommand
 applies the configured retention policy to active and closed history without
-compressing a sealed source. Use it when a host should enforce the age, byte
-and record bounds but should not spend CPU on XZ, or when a separate archive
-timer already handles compression.
+archiving a sealed source. Use it when a host should enforce the age, byte and
+record bounds but should not spend CPU compressing history that has not been
+archived yet, or when a separate archive timer already handles compression. An
+existing archive is still recompressed when it straddles a bound, because
+keeping published history compressed is part of the contract.
 
 `retain` shares everything that decides an outcome with `run`: the validated
 policy, the archive lock, the settled inventory-and-active reading, the
 retention floor, the oldest-first eviction order and the exit codes. It never
 schedules archival. A sealed source that straddles a bound is rewritten in
-place; a sealed source outside every bound is removed whole; an existing XZ
-archive is recompressed or removed whole and is never converted back to plain.
+place. A sealed source is removed whole when an applicable bound takes all of
+its rows — every row older than the age cutoff, for instance, even when the
+byte and record budgets are unmet. An existing XZ archive is recompressed or
+removed whole and is never converted back to plain.
 
 An in-place rewrite streams the source one row at a time into a verified
 private temporary beside it, then publishes in a fixed order: a durable

@@ -69,7 +69,10 @@ maintenance pass is repaired rather than trusted.
       undecodable fragment the reader drops, with a regression test that fails
       without the adjustment; the guide distinguishes a failed first baseline
       write from a failed update.
-- [ ] EP-6 (remaining): fourth review, ready for review, merge.
+- [x] EP-6 (review round 4): the guide states that one applicable bound can
+      require whole-source removal, and limits the no-compression claim to
+      sealed history.
+- [ ] EP-6 (remaining): fifth review, ready for review, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and
