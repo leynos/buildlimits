@@ -15,17 +15,18 @@ from pathlib import Path
 
 from outcome_archive_helpers import (
     NOW,
+    age_policy,
     document,
     layout,
     policy,
     refuse,
-    sealed_source,
+    retain,
 )
-from outcome_test_helpers import attributed_record
+from outcome_sealed_helpers import sealed_source
+from outcome_test_helpers import attributed_record, records_at
 from segment_test_helpers import write_private
 
 from buildlimits import outcome_sealed_trim
-from buildlimits.outcome_archive import RunOptions, run_retain
 from buildlimits.outcome_archive_verify import ArchiveFacts
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import (
@@ -38,9 +39,7 @@ from buildlimits.outcome_segments import (
 if typ.TYPE_CHECKING:
     import pytest
 
-    from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_retention import RetentionPolicy
 
 CUTOFF = NOW - dt.timedelta(days=30)
 
@@ -55,28 +54,6 @@ def sealed_files(root: Path) -> set[str]:
     """
     directory = layout(root).sealed_dir
     return {path.name for path in directory.iterdir()}
-
-
-def retain(root: Path, retention: RetentionPolicy) -> RunReport:
-    """Run the retention-only operation once at the shared test moment.
-
-    Returns
-    -------
-    RunReport
-        The run report.
-    """
-    return run_retain(layout(root), retention, RunOptions(now=NOW))
-
-
-def age_policy() -> RetentionPolicy:
-    """Return a policy that trims the fixtures' expired leading row.
-
-    Returns
-    -------
-    RetentionPolicy
-        A thirty-day age bound with no byte or record cap.
-    """
-    return policy(1_000_000, max_age_days=30, max_bytes=0)
 
 
 def straddling_rows() -> tuple[StoreRecord, StoreRecord]:
@@ -295,3 +272,47 @@ def test_the_cleanup_removes_only_maintenance_temporaries(tmp_path: Path) -> Non
     assert report.status == "ok", "the pass completes"
     assert not ours.exists(), "the abandoned maintenance temporary is removed"
     assert writer.exists(), "the writer's temporary is left alone"
+
+
+def test_a_trim_meeting_a_corrupt_source_quarantines_it(tmp_path: Path) -> None:
+    """A row a planned trim cannot decode moves the source to quarantine."""
+    import json
+
+    from buildlimits.outcome_store_sealing import sealed_metadata
+
+    directory = layout(tmp_path).sealed_dir
+    path = write_private(directory / segment_name(1), document(()) + b"{bad}\n{}\n")
+    metadata = sealed_metadata(list(records_at(NOW, 2)), 1, "salt-1", NOW)
+    (path.parent / sealed_meta_name(1)).write_text(
+        json.dumps(metadata), encoding="utf-8"
+    )
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=1))
+
+    assert report.status == "corrupt", "the fault needs an operator"
+    assert [(action.action, action.reason) for action in report.actions] == [
+        ("quarantined", "corrupt")
+    ], "the source is quarantined rather than trimmed"
+
+
+def test_a_temporary_that_cannot_be_scanned_is_the_runs_own_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault reading back the verified temporary names this run's output."""
+    from buildlimits.outcome_archive_rows import SegmentFaultError
+
+    expired, fresh = straddling_rows()
+    source = sealed_source(tmp_path, 1, (expired, fresh))
+
+    def unreadable(_path: Path) -> typ.NoReturn:
+        """Refuse the verification pass over the temporary."""
+        raise SegmentFaultError("truncated_xz")
+
+    monkeypatch.setattr(outcome_sealed_trim, "read_source_facts", unreadable)
+
+    report = retain(tmp_path, age_policy())
+
+    assert report.failures == ((1, "truncated_xz"),), (
+        "the output fault is named, not the readable source"
+    )
+    assert source.read_bytes() == document((expired, fresh)), "the source is untouched"

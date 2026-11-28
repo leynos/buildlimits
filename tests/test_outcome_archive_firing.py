@@ -121,3 +121,28 @@ def test_the_persisted_report_names_a_failed_baseline_write(
     assert persisted["maintenance"]["baseline_written"] is False, (
         "the persisted document does not claim a baseline it never wrote"
     )
+
+
+def test_a_reading_that_never_settles_reports_unsettled_and_records_the_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A moving store is retryable, and the firing still records its reading."""
+    from buildlimits import outcome_archive_retain
+    from buildlimits.outcome_archive_history import ActiveHistory
+    from buildlimits.outcome_segment_inventory import Inventory
+
+    store_layout = layout(tmp_path)
+
+    def never_settles(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        """Describe a store that changed across every bounded reading."""
+        return Inventory(), ActiveHistory(), False
+
+    monkeypatch.setattr(outcome_archive_retain, "settled_snapshot", never_settles)
+
+    report = run_retain(store_layout, policy(1_000_000), RunOptions(now=NOW))
+
+    assert report.status == "unsettled", "the timer retries the firing"
+    assert report.plan is None, "no plan is reported from a torn pair"
+    assert outcome_archive_clock_guard.read_baseline(store_layout) is not None, (
+        "the firing records its reading even when it plans nothing"
+    )

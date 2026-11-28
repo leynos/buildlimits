@@ -335,3 +335,41 @@ def test_another_filesystem_fault_after_the_work_is_a_failure(
 
     assert report.status == "failed", "an unexplained fault is not retryable"
     assert report.reason == "unreadable", "the reason names the closed category"
+
+
+def test_a_failed_reconcile_due_to_a_filesystem_fault_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-closed reconcile fault is recorded and the run continues."""
+    from buildlimits import outcome_archive_reconcile
+
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    run(tmp_path, policy())
+    restore_source(layout(tmp_path), 1)
+
+    monkeypatch.setattr(outcome_archive_reconcile, "reconcile_duplicate", refuse)
+
+    report = run(tmp_path, policy())
+
+    assert (1, "unreadable") in report.failures, "the fault is recorded"
+    assert report.status == "corrupt", "the run names the fault it met"
+
+
+def test_a_failed_marker_cleanup_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale marker that cannot be removed is a recorded failure."""
+    from segment_test_helpers import write_private
+
+    from buildlimits import outcome_archive_run
+
+    marker = layout(tmp_path).sealed_dir / "segment-000000000004.jsonl.trimming"
+    write_private(marker, b'{"schema":1,"sequence":4}\n')
+
+    monkeypatch.setattr(outcome_archive_run, "end_sealed_replacement", refuse)
+
+    report = run(tmp_path, policy())
+
+    assert (4, "unreadable") in report.failures, "the fault is recorded"
+    assert marker.exists(), "the marker is left for the next firing"

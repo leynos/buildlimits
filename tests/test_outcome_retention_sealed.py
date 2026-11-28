@@ -15,14 +15,8 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_archive_helpers import (
-    NOW,
-    document,
-    layout,
-    policy,
-    sealed_bytes,
-    sealed_source,
-)
+from outcome_archive_helpers import NOW, document, layout, policy
+from outcome_sealed_helpers import sealed_bytes, sealed_source, sealed_source_exists
 from outcome_test_helpers import attributed_record, records_at
 from segment_test_helpers import write_private
 
@@ -344,4 +338,50 @@ def test_a_torn_tail_does_not_cost_a_complete_row_to_the_byte_allowance(
     assert report.status == "ok", "the allowance is met"
     assert sealed_bytes(tmp_path, 1) == document(rows), (
         "the fragment costs no complete row"
+    )
+
+
+def test_a_trim_that_keeps_no_record_removes_the_source(
+    tmp_path: Path,
+) -> None:
+    """A byte allowance too small for one row leaves no header-only segment."""
+    rows = records_at(NOW - dt.timedelta(hours=1), 2)
+    sealed_source(tmp_path, 1, rows)
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=1))
+
+    assert report.status == "ok", "the removal completes"
+    assert not sealed_source_exists(tmp_path, 1), "the source is gone"
+    assert not (layout(tmp_path).sealed_dir / sealed_meta_name(1)).exists(), (
+        "its metadata goes with it"
+    )
+    assert [(action.action, action.reason) for action in report.actions] == [
+        ("deleted", "bytes")
+    ], "the removal names the bound that asked for it"
+
+
+def test_a_mismatched_duplicate_is_quarantined_and_the_source_kept(
+    tmp_path: Path,
+) -> None:
+    """A retention pass never re-archives: the bad archive goes, the source stays."""
+    from outcome_archive_helpers import run as archive_run
+    from outcome_archive_helpers import write as write_store
+    from outcome_sealed_helpers import sealed_source as measured_sealed_source
+
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, records_at(NOW, 1), policy())
+    archive_run(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=0))
+    measured_sealed_source(tmp_path, 1, records_at(NOW, 3))
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=0))
+
+    assert report.status == "ok", "the quarantine is not a run failure"
+    assert [(action.action, action.reason) for action in report.actions] == [
+        ("quarantined", "mismatch")
+    ], "the unusable archive is quarantined"
+    assert not (layout(tmp_path).archive_dir / archive_name(1)).exists(), (
+        "the mismatched archive leaves the archive directory"
+    )
+    assert sealed_source_exists(tmp_path, 1), (
+        "the sealed source is kept for a later plan"
     )

@@ -72,7 +72,12 @@ maintenance pass is repaired rather than trusted.
 - [x] EP-6 (review round 4): the guide states that one applicable bound can
       require whole-source removal, and limits the no-compression claim to
       sealed history.
-- [ ] EP-6 (remaining): fifth review, ready for review, merge.
+- [x] EP-6 (coverage): the hosted coverage ratchet fell 1.07 points, so the
+      branch adds focused tests for the new guards, the baseline failure lines,
+      the truncated stream, the corrupt-row trim, real boot-clock sources, the
+      unsettled reading and the retention-mode duplicate. Local slipcover line
+      coverage is 91.46% against a threshold of 91.31%.
+- [ ] EP-6 (remaining): hosted CI green, formal review, readiness, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

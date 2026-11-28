@@ -17,7 +17,7 @@ from segment_test_helpers import document as encode_document
 
 from buildlimits.outcome_archive_cli import main
 from buildlimits.outcome_archive_render import write_report
-from buildlimits.outcome_archive_report import RunReport
+from buildlimits.outcome_archive_report import Maintenance, RunReport
 from buildlimits.outcome_segments import SegmentLayout
 
 if typ.TYPE_CHECKING:
@@ -185,3 +185,27 @@ def test_a_preview_detects_a_clock_jump_without_claiming_a_withheld_bound(
     output = capsys.readouterr().out
 
     assert output == snapshot, "the preview's lines are a stable contract"
+
+
+def test_a_report_withholds_the_baseline_line_when_the_state_was_written(
+    capsys: pytest.CaptureFixture[str],
+    snapshot: SnapshotAssertion,
+) -> None:
+    """A failed baseline write is named without claiming the state failed."""
+    report = RunReport(
+        status="failed",
+        operation="retain",
+        reason="clock_baseline_failed",
+        started_at=NOW,
+        finished_at=NOW,
+        maintenance=Maintenance(
+            state_written=True,
+            baseline_written=False,
+            reason="clock_baseline_failed",
+        ),
+    )
+
+    write_report(report, as_json=False)
+    output = capsys.readouterr().out
+
+    assert output == snapshot, "the maintenance line is a stable contract"

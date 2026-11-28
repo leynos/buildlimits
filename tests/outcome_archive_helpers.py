@@ -7,7 +7,6 @@ states only the archive behaviour it observes.
 
 import datetime as dt
 import errno
-import json
 import lzma
 import typing as typ
 
@@ -19,20 +18,23 @@ from outcome_store_helpers import close_writer, segment_writer
 # The archive fixtures build their rows with the shared record builder; the
 # shorter name keeps the dozens of fixture call sites readable.
 from outcome_test_helpers import records_at as records
-from segment_test_helpers import document, write_private
+from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
 from buildlimits import outcome_archive_fs, outcome_record_encode
-from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
+from buildlimits.outcome_archive import (
+    RunOptions,
+    RunReport,
+    run_archive,
+    run_retain,
+)
 from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_record_format import StoreHeader
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import (
     archive_name,
-    sealed_meta_name,
     segment_name,
 )
-from buildlimits.outcome_store_sealing import sealed_metadata
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -45,6 +47,7 @@ NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
 __all__ = [
     "NOW",
+    "age_policy",
     "archives",
     "document",
     "layout",
@@ -53,11 +56,9 @@ __all__ = [
     "records",
     "refuse",
     "restore_source",
+    "retain",
     "run",
     "seal_store",
-    "sealed_bytes",
-    "sealed_source",
-    "sealed_source_exists",
     "seeded_store",
     "segment_bytes_for",
     "store_with_archive",
@@ -127,67 +128,6 @@ def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
         Always, with ``EIO``.
     """
     raise OSError(errno.EIO, "injected failure")
-
-
-def sealed_source(
-    root: Path,
-    sequence: int,
-    rows: cabc.Sequence[StoreRecord],
-    *,
-    sealed_at: dt.datetime = NOW,
-) -> Path:
-    """Write one measured sealed source, as the writer would close it.
-
-    A fixture that writes only the source leaves it unmeasured, because the
-    planner trusts the writer's metadata for the counts and span. Publishing
-    both keeps every retention test describing a source a real seal produced.
-
-    Parameters
-    ----------
-    root : Path
-        The directory the store lives under.
-    sequence : int
-        The sequence number the source's name carries.
-    rows : Sequence[StoreRecord]
-        The rows the writer closed into the source, encoded under the shared
-        test salt.
-    sealed_at : datetime
-        The moment the writer recorded for the seal.
-
-    Returns
-    -------
-    Path
-        The source path.
-    """
-    directory = layout(root).sealed_dir
-    path = write_private(directory / segment_name(sequence), document(tuple(rows)))
-    metadata = sealed_metadata(list(rows), sequence, "salt-1", sealed_at)
-    (directory / sealed_meta_name(sequence)).write_text(
-        json.dumps(metadata), encoding="utf-8"
-    )
-    return path
-
-
-def sealed_bytes(root: Path, sequence: int) -> bytes:
-    """Return the plain document one sealed source holds.
-
-    Returns
-    -------
-    bytes
-        The source's JSON Lines content.
-    """
-    return (layout(root).sealed_dir / segment_name(sequence)).read_bytes()
-
-
-def sealed_source_exists(root: Path, sequence: int) -> bool:
-    """Whether one sealed source is still present.
-
-    Returns
-    -------
-    bool
-        True when the source file exists.
-    """
-    return (layout(root).sealed_dir / segment_name(sequence)).exists()
 
 
 def write(
@@ -296,6 +236,33 @@ def run(
         retention,
         RunOptions(now=NOW, dry_run=dry_run, on_retry=on_retry),
     )
+
+
+def retain(
+    root: Path,
+    retention: RetentionPolicy,
+    *,
+    dry_run: bool = False,
+) -> RunReport:
+    """Run the retention-only operation once at a fixed wall time.
+
+    Returns
+    -------
+    RunReport
+        The run report.
+    """
+    return run_retain(layout(root), retention, RunOptions(now=NOW, dry_run=dry_run))
+
+
+def age_policy() -> RetentionPolicy:
+    """Return a policy that trims a fixture's expired leading row.
+
+    Returns
+    -------
+    RetentionPolicy
+        A thirty-day age bound with no byte or record cap.
+    """
+    return policy(1_000_000, max_age_days=30, max_bytes=0)
 
 
 def archives(root: Path) -> list[Path]:

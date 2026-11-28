@@ -14,6 +14,22 @@
   
   '''
 # ---
+# name: test_a_report_withholds_the_baseline_line_when_the_state_was_written
+  '''
+  operation: retain
+  status: failed
+  retain: sealed history is rewritten in place, never compressed
+  reason: clock_baseline_failed
+  started: 2026-11-19T00:00:00Z
+  elapsed: 0.000s
+  retained: 0 of 0 logical bytes
+  history: 0 records, observed unknown
+  active: 0 logical bytes
+  cutoff: age eviction disabled
+  clock baseline: not written (clock_baseline_failed)
+  
+  '''
+# ---
 # name: test_a_skewed_report_labels_the_withheld_age_bound
   '''
   operation: retain

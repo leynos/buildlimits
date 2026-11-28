@@ -12,14 +12,8 @@ import json
 import typing as typ
 from pathlib import Path
 
-from outcome_archive_helpers import (
-    NOW,
-    document,
-    layout,
-    policy,
-    sealed_source,
-    sealed_source_exists,
-)
+from outcome_archive_helpers import NOW, document, layout, policy
+from outcome_sealed_helpers import sealed_source, sealed_source_exists
 from outcome_test_helpers import attributed_record
 
 from buildlimits.outcome_archive import RunOptions, run_archive, run_retain
@@ -32,6 +26,8 @@ from buildlimits.outcome_archive_clock_guard import (
 from buildlimits.outcome_segments import CLOCK_BASELINE_NAME
 
 if typ.TYPE_CHECKING:
+    import pytest
+
     from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_retention import RetentionPolicy
 
@@ -324,3 +320,69 @@ def test_an_archive_run_shares_the_same_clock_guard(tmp_path: Path) -> None:
     assert any(action.action == "archived" for action in report.actions), (
         "archival work still runs on a skewed firing"
     )
+
+
+def test_an_unavailable_boot_identity_is_reported_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform without a readable boot identity names no identity."""
+    from buildlimits import outcome_store_clock
+
+    class _Unreadable:
+        """A boot-identity source that refuses every read."""
+
+        def read_text(self, **_kwargs: object) -> typ.NoReturn:
+            """Refuse the read as an unreadable procfs entry would."""
+            raise OSError("injected read failure")
+
+    monkeypatch.setattr(outcome_store_clock, "BOOT_ID_PATH", _Unreadable())
+
+    assert outcome_store_clock.system_boot_id() is None, (
+        "an unreadable boot identity is unknown, not an empty string"
+    )
+
+
+def test_an_unavailable_boot_clock_is_reported_as_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform without CLOCK_BOOTTIME names no reading."""
+    import time
+
+    from buildlimits import outcome_store_clock
+
+    def refuse(_clock: object) -> typ.NoReturn:
+        """Refuse the reading as an unavailable clock would."""
+        raise OSError("injected clock failure")
+
+    monkeypatch.setattr(time, "CLOCK_BOOTTIME", 1, raising=False)
+    monkeypatch.setattr(time, "clock_gettime", refuse)
+
+    assert outcome_store_clock.system_boottime() is None, (
+        "an unavailable clock is unknown, not zero"
+    )
+
+
+def test_a_platform_without_a_boot_clock_reads_no_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform without CLOCK_BOOTTIME names no reading."""
+    import time
+
+    from buildlimits import outcome_store_clock
+
+    monkeypatch.setattr(time, "CLOCK_BOOTTIME", None, raising=False)
+
+    assert outcome_store_clock.system_boottime() is None, (
+        "an absent boot clock is unknown, not zero"
+    )
+
+
+def test_the_host_boot_identity_and_boot_clock_are_readable() -> None:
+    """A Linux host names both the boot and its elapsed seconds."""
+    from buildlimits import outcome_store_clock
+
+    identity = outcome_store_clock.system_boot_id()
+    boottime = outcome_store_clock.system_boottime()
+
+    assert isinstance(identity, str) and identity, "the host names its boot"
+    assert boottime is not None and boottime >= 0, "the boot clock has advanced"

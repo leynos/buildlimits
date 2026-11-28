@@ -347,3 +347,16 @@ def test_fact_matching_ignores_the_observation_span() -> None:
             had_torn_tail=facts.had_torn_tail,
         )
     ), "a different count never matches"
+
+
+def test_a_truncated_compressed_stream_is_a_segment_fault() -> None:
+    """A compressed stream without its footer is not a complete document."""
+    document = encode_document(records_at(NOW, 2))
+    truncated = lzma.compress(document)[:-8]
+
+    with pytest.raises(SegmentFaultError) as raised:
+        scan_archive(LineStream(io.BytesIO(truncated), is_compressed=True))
+
+    assert raised.value.reason == "truncated_xz", (
+        "an incomplete stream is named as the truncation it is"
+    )
