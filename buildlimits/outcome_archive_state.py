@@ -40,6 +40,7 @@ def retention_floor(
     inventory: Inventory,
     previous: outcome_segment_state.RetentionFloor,
     outcome: RunOutcome,
+    durable_removed: cabc.Iterable[int] = (),
 ) -> int:
     """Return the lowest sequence this history intentionally starts at.
 
@@ -61,6 +62,10 @@ def retention_floor(
         recorded one derives its baseline from the history it has.
     outcome : RunOutcome
         The actions this run performed.
+    durable_removed : Iterable[int]
+        Sequences a previous run recorded as removed before it stopped. Only a
+        sequence the inventory no longer holds counts, because a marker whose
+        unlink failed describes a removal that did not happen.
 
     Returns
     -------
@@ -68,9 +73,11 @@ def retention_floor(
         The retention floor to persist.
     """
     present = [entry.sequence for entry in inventory.effective]
+    held = set(present)
     deleted = {
         action.sequence for action in outcome.actions if action.action == "deleted"
     }
+    deleted.update(sequence for sequence in durable_removed if sequence not in held)
     floor = _floor_baseline(present, deleted, previous)
     # Only a contiguous deleted prefix advances the floor. A sequence that is
     # missing without a deletion may be a gap retention did not create, and
@@ -120,6 +127,11 @@ def _floor_baseline(
 def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
     """Persist the retention floor and the run report durably.
 
+    The floor is shared by both operations, because either may delete history.
+    The report is not: an archive firing and a retention-only firing write
+    separate documents, so a timer that runs one cannot make the other's most
+    recent result disappear.
+
     Parameters
     ----------
     layout : SegmentLayout
@@ -131,8 +143,13 @@ def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
         ``OSError`` so the caller can report that no state was installed.
     """
     write_floor(layout, floor, report)
+    destination = (
+        layout.last_retain_file
+        if report.operation == "retain"
+        else layout.last_run_file
+    )
     outcome_archive_fs.atomic_write_json(
-        layout.last_run_file, outcome_archive_codec.report_dict(report)
+        destination, outcome_archive_codec.report_dict(report)
     )
 
 

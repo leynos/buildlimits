@@ -8,7 +8,7 @@ itself stays a plain value with no filesystem read in it.
 
 import typing as typ
 
-from buildlimits.outcome_archive_plan import plan_run
+from buildlimits.outcome_archive_plan import PlanInputs, plan_run
 from buildlimits.outcome_archive_report import RunReport, RunStatus
 from buildlimits.outcome_archive_report_fields import settled_fields
 
@@ -51,6 +51,9 @@ def settled_report(
             active,
             retention_unsettled=settled.retention_unsettled,
         ),
+        operation=run.context.operation,
+        clock_skew=run.context.clock_skew,
+        clock_baseline_unreadable=run.context.clock_baseline_unreadable,
         started_at=run.started_at,
         finished_at=run.context.clock(),
         **settled_fields(run, inventory, active, is_settled=settled.is_settled),
@@ -100,10 +103,30 @@ def retention_owes_work(
     just before the read is archival work the next firing picks up, and the
     report already counts its bytes.
 
+    A retention-only run has no archival step to settle such a source, so an
+    unmeasured source or an unfinished rewrite marker is retention work too:
+    the next firing cannot decide a bound until it has repaired one. An
+    archive run measures the source by compressing it, so those steps are not
+    owed work there. The plan is built with the same operation and clock guard
+    the run used, so a decision the run withheld is never counted as pending.
+
     Returns
     -------
     bool
-        True when the plan still evicts history or defers a budget.
+        True when the plan still evicts history, repairs a measurement, or
+        defers a budget.
     """
-    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
-    return bool(pending.trims or pending.deletes or pending.retention_deferred)
+    pending = plan_run(
+        inventory,
+        run.context.policy,
+        PlanInputs(
+            now=run.started_at,
+            active=active,
+            operation=run.context.operation,
+            suppress_age=run.context.suppress_age,
+        ),
+    )
+    owed = bool(pending.trims or pending.deletes or pending.retention_deferred)
+    if run.context.operation == "retain":
+        owed = owed or bool(pending.sealed_repairs or pending.stale_sealed_markers)
+    return owed

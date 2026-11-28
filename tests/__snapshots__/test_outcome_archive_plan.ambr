@@ -9,6 +9,8 @@
     'reconcile': 1,
     'retained_logical_bytes': '<bytes>',
     'retention_deferred': True,
+    'sealed_repair': 0,
+    'stale_marker': 0,
     'trim': 1,
   })
 # ---

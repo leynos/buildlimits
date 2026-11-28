@@ -61,11 +61,14 @@ def dry_report(
                 else "corrupt"
             )
         ),
+        operation=run.context.operation,
+        clock_skew=run.context.clock_skew,
+        clock_baseline_unreadable=run.context.clock_baseline_unreadable,
         started_at=run.started_at,
         finished_at=clock(),
         dry_run=True,
         **settled_fields(run, inventory, active),
-        maintenance=Maintenance(state_written=False),
+        maintenance=Maintenance(state_written=False, baseline_written=False),
         # The reason the active file could not be counted is the reason the
         # inspection reports ``corrupt``; leaving it out would name the status
         # without the closed fault behind it.
@@ -96,12 +99,19 @@ def unsettled_report(
     limits = RetentionLimits.of(context.policy)
     return RunReport(
         status="unsettled",
+        operation=context.operation,
+        clock_skew=context.clock_skew,
+        clock_baseline_unreadable=context.clock_baseline_unreadable,
         started_at=started_at,
         finished_at=context.clock(),
         dry_run=dry_run,
         budget_bytes=limits.max_bytes,
         limits=limits,
-        maintenance=Maintenance(state_written=False, reason="unsettled"),
+        maintenance=Maintenance(
+            state_written=False,
+            baseline_written=not dry_run,
+            reason="unsettled",
+        ),
     )
 
 
@@ -127,12 +137,19 @@ def unfinished_report(
     limits = RetentionLimits.of(context.policy)
     return RunReport(
         status=fault.status,
+        operation=context.operation,
+        clock_skew=context.clock_skew,
+        clock_baseline_unreadable=context.clock_baseline_unreadable,
         started_at=started_at,
         finished_at=context.clock(),
         dry_run=dry_run,
         budget_bytes=limits.max_bytes,
         limits=limits,
-        maintenance=Maintenance(state_written=False, reason=fault.reason),
+        maintenance=Maintenance(
+            state_written=False,
+            baseline_written=False,
+            reason=fault.reason,
+        ),
         reason=fault.reason,
     )
 
@@ -166,6 +183,9 @@ def after_work_failure(
     """
     return RunReport(
         status="no_headroom" if reason == "no_headroom" else "failed",
+        operation=run.context.operation,
+        clock_skew=run.context.clock_skew,
+        clock_baseline_unreadable=run.context.clock_baseline_unreadable,
         started_at=run.started_at,
         finished_at=run.context.clock(),
         budget_bytes=run.context.policy.max_bytes,

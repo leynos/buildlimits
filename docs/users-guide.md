@@ -39,7 +39,7 @@ records the exact grammar and its evidence.
 | `build-limits-recover`           | Runs or inspects a managed-cache recovery transaction    |
 | `build-limits-metrics`           | Summarizes bounded compile-admission journal metrics     |
 | `build-limits-cache-replay`      | Reads the local outcome history for H2 and H3 evidence   |
-| `build-limits-outcome-archive`   | Archives closed outcome history and applies retention    |
+| `build-limits-outcome-archive`   | Archives or retains closed outcome history under policy  |
 | `build-limits-predict-dataset`   | Snapshots recorded outcomes for offline prediction       |
 | `build-limits-predict-benchmark` | Compares cache-hit predictors over a snapshot            |
 
@@ -410,6 +410,146 @@ retained history. The JSON carries the same figures as `retained_records`,
 `observed_from`, `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so
+no single source the archiver or a retention pass streams through exceeds that
+bound.
+
+### Enforce retention without archiving
+
+Archiving closed history is optional. The same command's `retain` subcommand
+applies the configured retention policy to active and closed history without
+archiving a sealed source. Use it when a host should enforce the age, byte and
+record bounds but should not spend CPU compressing history that has not been
+archived yet, or when a separate archive timer already handles compression. An
+existing archive is still recompressed when it straddles a bound, because
+keeping published history compressed is part of the contract.
+
+`retain` shares everything that decides an outcome with `run`: the validated
+policy, the archive lock, the settled inventory-and-active reading, the
+retention floor, the oldest-first eviction order and the exit codes. It never
+schedules archival. A sealed source that straddles a bound is rewritten in
+place. A sealed source is removed whole when an applicable bound takes all of
+its rows — every row older than the age cutoff, for instance, even when the
+byte and record budgets are unmet. An existing XZ archive is recompressed or
+removed whole and is never converted back to plain.
+
+An in-place rewrite streams the source one row at a time into a verified
+private temporary beside it, then publishes in a fixed order: a durable
+`segment-NNNNNNNNNNNN.jsonl.trimming` marker, the atomic rename, the new
+metadata, and finally the marker's removal. While the marker exists the
+inventory treats the source's counts, span and salt as unknown, so a process
+that stops anywhere in that sequence leaves work the next firing repairs from
+the file itself rather than metadata that may describe bytes already replaced.
+The metadata keeps the source's original seal time, so a rewrite does not make
+the history look younger. A host with an aborted rewrite reports it on its own
+line:
+
+<!-- tested-example: buildlimits-outcome-retain-unfinished-trim -->
+```text
+unfinished sealed trim: 3
+```
+
+The operation needs temporary disk space beside the sealed directory for the
+temporary it writes, so `cache_outcomes_archive_headroom_bytes` covers both
+operations. The pass refuses to start when the filesystem cannot hold one
+segment, and a filesystem that fills while it works reports `no_headroom` at
+exit 75 so the timer retries.
+
+Schedule it as its own oneshot service and daily timer, as the same user that
+runs the supervisor. A firing that only rewrites sealed history holds no
+encoder, but one that trims an existing archive recompresses it with the same
+encoder the archive command uses. The unit below therefore allows the same
+memory as the archive command's; a host whose closed history is entirely sealed
+may lower `MemoryMax`, while one that keeps archives should not.
+
+<!-- tested-example: buildlimits-outcome-retain-service -->
+```ini
+# ~/.config/systemd/user/buildlimits-outcome-retain.service
+[Unit]
+Description=Enforce buildlimits cache-outcome retention
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/build-limits-outcome-archive retain
+MemoryMax=512M
+TimeoutStartSec=1h
+```
+
+<!-- tested-example: buildlimits-outcome-retain-timer -->
+```ini
+# ~/.config/systemd/user/buildlimits-outcome-retain.timer
+[Unit]
+Description=Daily buildlimits cache-outcome retention
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable the timer with:
+
+<!-- tested-example: buildlimits-outcome-retain-enable -->
+```bash
+systemctl --user enable --now buildlimits-outcome-retain.timer
+```
+
+The configuration and store caveats are the same as for the archive command:
+pass `--config` and `--store` when the supervisor reads or writes somewhere
+other than the user manager's defaults. Both timers may run side by side,
+because they take the same non-blocking lock; a firing that finds it held exits
+75 and leaves the work to the next one. Running both is safe but redundant:
+`run` already applies retention after archiving.
+
+The first command below is a preview: it takes no lock, changes no file and
+records no report, so it is safe to run at any time. The second applies the
+configured retention bounds and does change files. Copy only the first command
+to preview a firing:
+
+<!-- tested-example: buildlimits-outcome-retain-commands -->
+```bash
+build-limits-outcome-archive retain --dry-run
+build-limits-outcome-archive retain
+```
+
+The plain report labels the operation and what it does not do:
+
+<!-- tested-example: buildlimits-outcome-retain-report -->
+```text
+operation: retain
+status: ok
+retain: sealed history is rewritten in place, never compressed
+```
+
+Its `actions`, `evictions`, `limits` and `history` lines carry the same
+meanings as for an archive run, and `--json` publishes the same document with
+`"operation": "retain"`. A retention firing writes `last-retain.json` beside
+the archives and leaves `last-run.json` untouched, so reading one operation's
+latest result never hides the other's. It publishes one `retention_run` metric
+record with the same fields as `archive_run`, and its archived count is a
+measured zero.
+
+A wall-clock jump of more than a day between two firings is treated as suspect,
+exactly as the writer treats one inside a process. Each locked firing records
+`clock-baseline.json` with the boot identifier, the wall time and
+`CLOCK_BOOTTIME`; the next firing compares its own reading with it. When the
+two clocks disagree by more than a day, that firing withholds the age bound,
+still applies the byte and record bounds, and reports:
+
+<!-- tested-example: buildlimits-outcome-retain-clock-skew -->
+```text
+clock skew: age eviction withheld
+```
+
+The plain `cutoff:` line then reads `withheld by clock skew` rather than
+claiming age eviction is disabled, and the JSON carries `"clock_skew": true`.
+The firing records its own reading, so the next undisturbed firing applies the
+real age bound. A reboot, a missing baseline or a damaged one applies no guard,
+because a fresh boot and a fresh store have nothing to compare. `inspect` and
+`--dry-run` report the decision without acting on it and never replace the
+baseline, so a preview shows the age eviction a real run would perform on a
+quiet clock.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view. Whichever bound is reached first evicts the oldest history:
@@ -480,7 +620,8 @@ oversized, is compacted as the store loads, and a row that arrives already
 expired is dropped once it is appended. A host that was idle past the bound, or
 one that only receives old observations, therefore does not carry its expired
 rows forward indefinitely. An oversized file is sealed first, and the
-archiver's next run applies the age policy to that segment.
+archiver's next run applies the age policy to that segment; a retention-only
+firing trims the sealed source in place without archiving it.
 
 Temporary disk use is separate from the budget. Each sealed segment is
 compressed and verified whole before any eviction, and a trim needs room for
@@ -498,10 +639,10 @@ A changed bound takes effect where its owner next acts. A running supervisor
 keeps the policy it loaded when it started, so clean shutdown applies the
 bounds it started with rather than any edited ones. Reducing the byte, age or
 record bound therefore compacts or seals the active file at the next supervisor
-start, and evicts closed history at the next archive run. A reduced record cap
-seals a segmented active file so the archiver can trim the closed rows; a byte
-or age bound compacts it in place. No running process rewrites history merely
-because the configuration changed.
+start, and evicts closed history at the next archive or retention run. A
+reduced record cap seals a segmented active file so the archiver can trim the
+closed rows; a byte or age bound compacts it in place. No running process
+rewrites history merely because the configuration changed.
 
 A wall-clock jump of more than a day, in either direction, is treated as
 suspect. The writer then skips age eviction for that pass, reports `clock_skew`
@@ -553,10 +694,13 @@ The writer and archiver keep their state beside the store:
 - `cache-outcomes.seq` is the writer's next-sequence counter.
 - `cache-outcomes.sealed/` holds closed plain segments,
   `segment-NNNNNNNNNNNN.jsonl`, with `segment-NNNNNNNNNNNN.jsonl.meta.json`
-  sidecars.
+  sidecars. A `segment-NNNNNNNNNNNN.jsonl.trimming` marker records an in-place
+  rewrite that has not yet published its metadata, and `.retain-*.tmp` files
+  are the temporaries such a rewrite leaves if it stops.
 - `cache-outcomes.archive/` holds `segment-NNNNNNNNNNNN.jsonl.xz` archives
   with `.jsonl.xz.json` sidecars, plus `retention.json`,
-  `retention-pending.json`, `last-run.json`, `archive.lock` and `quarantine/`.
+  `retention-pending.json`, `last-run.json`, `last-retain.json`,
+  `clock-baseline.json`, `archive.lock` and `quarantine/`.
 
 The archiver refuses a store whose directories, or any directory above them,
 are symlinks, are not directories, or are writable by another user; such a run
@@ -690,9 +834,12 @@ force, and what history it currently retains.
   any other reason, such as an archive the process may no longer inspect,
   proves neither outcome, so the failure is reported without advancing the
   floor.
-- `last-run.json` is the full run report. Its `limits`, `retained`,
-  `evictions` and `maintenance` sections are the documents the `--json` form
-  prints.
+- `last-run.json` is the full report of the most recent archive firing, and
+  `last-retain.json` is the full report of the most recent retention-only
+  firing. Each has the shape the `--json` form prints, including its
+  `operation` key, and neither replaces the other. `clock-baseline.json`
+  records the boot identifier, wall time and `CLOCK_BOOTTIME` of the most
+  recent locked firing, which the clock guard compares the next firing with.
 
 `limits` describes the policy: `max_age_days`, `max_age_seconds`, `max_bytes`,
 `max_records` (`null` when count is unbounded), `headroom_bytes`,
@@ -719,19 +866,24 @@ reader's `--max-records` query cap.
 `records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and
 `age_and_bytes_and_records`; every key is always present, and only the bounds
 that acted are non-zero. Each action in `actions` also names its reason, and
-`failures`, `gaps`, `missing_sidecars`, `corrupt_sidecars` and
-`orphan_sidecars` identify history that could not be processed. `maintenance`
-reports whether `retention.json` and `last-run.json` were installed, with
-`state_write_failed` when they were not: archives and evictions already
-published stay in place, and the next firing rewrites the state from what is on
-disk. A failed write still gives the retention floor its own attempt, so a
-deletion the run completed is not later reported as a missing sequence when the
-fault was transient. A retry that still cannot replace `retention.json` falls
-back to `retention-pending.json`, which every later read merges with the
-primary record; only when both records refuse the write is the completed
-deletion later reported as a gap. A dry run, a deferred run and a run that
-could not start install no state and report `state_written` as false. A run
-that published archives and then could not measure the result reports
+`failures`, `gaps`, `missing_sidecars`, `corrupt_sidecars`, `orphan_sidecars`
+and `sealed_replacing` identify history that could not be processed.
+`maintenance` reports whether `retention.json` and the operation's report were
+installed, with `state_write_failed` when they were not: archives and evictions
+already published stay in place, and the next firing rewrites the state from
+what is on disk. A clock baseline that could not be recorded is reported beside
+it as `baseline_written: false` with `clock_baseline_failed`. The store is
+intact, and the effect depends on whether an earlier baseline exists: a failed
+update leaves the earlier reading in place, so the next firing still compares
+against it, while a failed first write leaves no baseline at all, and a missing
+baseline applies no guard. A failed state write still gives the retention floor
+its own attempt, so a deletion the run completed is not later reported as a
+missing sequence when the fault was transient. A retry that still cannot replace
+`retention.json` falls back to `retention-pending.json`, which every later
+read merges with the primary record; only when both records refuse the write is
+the completed deletion later reported as a gap. A dry run, a deferred run and a
+run that could not start install no state and report `state_written` as false.
+A run that published archives and then could not measure the result reports
 `retained` as `null` and `reason` as `unreadable`, and still lists the actions
 it performed, so the evictions it did are not hidden by the missing total. Its
 completed deletions are recorded in the floor as well, so a failed measurement
@@ -1679,8 +1831,10 @@ data is inferred for an empty window.
 The archive command's `archive_run` record carries the firing's status and
 reason, its archived, trimmed, deleted and quarantined action counts, the
 closed cause each eviction served, the retained logical bytes, row count and
-unmeasured entries, the number of failed sequences and the elapsed time. It is
-a closed-vocabulary adapter record and names no path.
+unmeasured entries, the number of failed sequences and the elapsed time. A
+retention-only firing publishes `retention_run` with the same fields, its
+archived count measured as zero. Both are closed-vocabulary adapter records and
+name no path.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

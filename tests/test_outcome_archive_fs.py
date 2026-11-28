@@ -14,6 +14,7 @@ import pytest
 from segment_test_helpers import mode, swap_after_validation
 
 from buildlimits import outcome_archive_fs
+from buildlimits.outcome_archive_cleanup import remove_stale_temps
 from buildlimits.outcome_archive_dirs import open_private_chain
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
@@ -23,7 +24,6 @@ from buildlimits.outcome_archive_fs import (
     open_private_temp,
     publish_no_clobber,
     remove_private_files,
-    remove_stale_temps,
     require_private_chain,
 )
 

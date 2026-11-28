@@ -18,7 +18,12 @@ __all__ = ["publish_run"]
 
 
 def publish_run(metrics: MetricsPort | None, report: RunReport) -> None:
-    """Publish one ``archive_run`` event, when a caller supplied a port.
+    """Publish one run event, named for the operation that produced it.
+
+    An archive firing publishes ``archive_run``; a retention-only firing
+    publishes ``retention_run``. Both carry the same fields, so one dashboard
+    query can compare them, and ``archived`` stays a measured zero for a
+    retention-only run rather than the field disappearing.
 
     Parameters
     ----------
@@ -37,8 +42,9 @@ def publish_run(metrics: MetricsPort | None, report: RunReport) -> None:
         return
     counts = collections.Counter(action.action for action in report.actions)
     elapsed = (report.finished_at - report.started_at).total_seconds()
+    event = "retention_run" if report.operation == "retain" else "archive_run"
     metrics.emit(
-        "archive_run",
+        event,
         archive_status=report.status,
         archive_reason=report.reason or "none",
         archived=counts["archived"],

@@ -13,7 +13,7 @@ import typing as typ
 if typ.TYPE_CHECKING:
     import datetime as dt
 
-__all__ = ["Trim", "fits_allowance", "policy_drops"]
+__all__ = ["Trim", "TrimWalk", "fits_allowance", "policy_drops"]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -106,3 +106,61 @@ def fits_allowance(trim: Trim, *, dropped: int) -> bool:
         return True
     retained = trim.source_bytes - trim.policy_bytes - dropped
     return retained <= trim.allowed_bytes
+
+
+@dc.dataclass(slots=True)
+class TrimWalk:
+    """The decision state one rewrite carries from row to row.
+
+    A prefix trim decides each row from the row itself and the rows already
+    seen, so the counters belong to the walk rather than to the loop that
+    drives it. The archive writer and the plain in-place writer share this
+    state, so a sealed source trimmed in place and an archive recompressed
+    under the same policy drop exactly the same rows.
+
+    Attributes
+    ----------
+    trim : Trim
+        The prefix policy.
+    seen : int
+        Records already decided, which the explicit count rule reads.
+    dropped : int
+        Bytes of record rows the byte allowance has already dropped.
+    """
+
+    trim: Trim
+    seen: int = 0
+    dropped: int = 0
+
+    def keep(self, raw: bytes, observed_at: dt.datetime) -> bool:
+        """Decide one record row and update the walk's counters.
+
+        Parameters
+        ----------
+        raw : bytes
+            The row's original bytes, without its newline.
+        observed_at : datetime
+            The row's observation time.
+
+        Returns
+        -------
+        bool
+            Whether the row is retained.
+
+        Examples
+        --------
+        >>> import datetime as dt
+        >>> walk = TrimWalk(Trim(records=1))
+        >>> walk.keep(b"{}", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+        False
+        >>> walk.keep(b"{}", dt.datetime(2026, 1, 2, tzinfo=dt.UTC))
+        True
+        """
+        drops = policy_drops(observed_at, self.trim, seen=self.seen)
+        self.seen += 1
+        if drops:
+            return False
+        if not fits_allowance(self.trim, dropped=self.dropped):
+            self.dropped += len(raw) + 1
+            return False
+        return True

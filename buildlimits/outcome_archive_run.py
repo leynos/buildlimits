@@ -1,9 +1,10 @@
-"""Executing one archive plan, one closed operation at a time.
+"""Executing one maintenance plan, one closed operation at a time.
 
 Every per-segment operation is wrapped here so one unreadable file becomes a
 recorded failure instead of ending the run. The order is fixed: reconcile first
 so a half-published pair is settled before anything is archived again, then
-archive, heal, quarantine orphans, trim and finally delete.
+clear stale rewrite markers and re-derive unmeasurable sealed metadata, archive,
+heal, quarantine orphans, trim and finally delete.
 """
 
 import dataclasses as dc
@@ -13,16 +14,52 @@ from buildlimits import (
     outcome_archive_evict,
     outcome_archive_files,
     outcome_archive_quarantine,
+    outcome_archive_reconcile,
 )
+from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_replace import end_sealed_replacement
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
-    from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_archive_plan import Plan, PlanSummary
     from buildlimits.outcome_segment_inventory import SegmentEntry
+
+
+class _EntryAction(typ.Protocol):
+    """One per-entry operation the shared fault boundary wraps."""
+
+    def __call__(self, context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
+        """Perform the operation for one entry."""
+
+
+class _EntryQuarantine(typ.Protocol):
+    """One quarantine move the shared fault boundary may take."""
+
+    def __call__(
+        self, context: ArchiveContext, entry: SegmentEntry, reason: str
+    ) -> ActionResult:
+        """Move the artefact one closed fault names into quarantine."""
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _EntryActor:
+    """The operation and quarantine move one per-entry step is made of.
+
+    Attributes
+    ----------
+    act : _EntryAction
+        The operation to perform.
+    quarantine : _EntryQuarantine
+        Where a closed fault moves the artefact it names.
+    """
+
+    act: _EntryAction
+    quarantine: _EntryQuarantine
+
 
 __all__ = [
     "ArchiveRun",
@@ -104,14 +141,37 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
     source out of the retained history, so the totals the plan's budget was
     computed from no longer describe the store, and evicting against them
     could discard history a fresh plan would keep.
+
+    Repairs run before archival and eviction because neither can measure a
+    source whose metadata is untrusted. A retention-only plan has no archival
+    step at all, so its repairs are what make the follow-up plan able to
+    decide the age, byte and record bounds for sealed history.
     """
     first_action = len(outcome.actions)
+    # The actors are built here, at call time, so a caller that replaces one of
+    # the per-entry operations sees its replacement used.
+    repair = _EntryActor(
+        outcome_archive_files.repair_sealed_metadata,
+        outcome_archive_quarantine.quarantine_source,
+    )
+    archive = _EntryActor(
+        outcome_archive_files.archive_source,
+        outcome_archive_quarantine.quarantine_source,
+    )
+    heal = _EntryActor(
+        outcome_archive_files.repair_sidecar,
+        outcome_archive_quarantine.quarantine_archive,
+    )
     for sealed, archived in run.plan.reconcile:
         _reconcile_one(run, sealed, archived, outcome)
+    for sequence in run.plan.stale_sealed_markers:
+        _clear_stale_marker(run, sequence, outcome)
+    for entry in run.plan.sealed_repairs:
+        _per_entry(run, entry, outcome, repair)
     for entry in run.plan.archive:
-        _archive_one(run, entry, outcome)
+        _per_entry(run, entry, outcome, archive)
     for entry in run.plan.heal:
-        _heal_one(run, entry, outcome)
+        _per_entry(run, entry, outcome, heal)
     for sequence in run.plan.orphans:
         _quarantine_orphan(run, sequence, outcome)
     if quarantined_history(outcome, first_action):
@@ -161,7 +221,7 @@ def _reconcile_one(
     """Settle one already-published pair, quarantining a bad source."""
     try:
         outcome.actions.append(
-            outcome_archive_files.reconcile_duplicate(run.context, sealed, archived)
+            outcome_archive_reconcile.reconcile_duplicate(run.context, sealed, archived)
         )
     except (OutputFaultError, SegmentFaultError) as fault:
         # Re-archiving a quarantined duplicate can meet the same closed faults
@@ -189,25 +249,30 @@ def _quarantine_orphan(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> N
         outcome.failures.append((sequence, outcome_archive_evict.failure_reason(error)))
 
 
-def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Archive one sealed source, quarantining it when it is invalid."""
+def _clear_stale_marker(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> None:
+    """Remove one rewrite marker whose sealed source is already gone."""
+    try:
+        end_sealed_replacement(run.context.layout.sealed_dir, sequence)
+    except OSError as error:
+        outcome.failures.append((sequence, outcome_archive_evict.failure_reason(error)))
+        return
+    outcome.actions.append(ActionResult("repaired", sequence, reason="stale_marker"))
+
+
+def _per_entry(
+    run: ArchiveRun,
+    entry: SegmentEntry,
+    outcome: RunOutcome,
+    actor: _EntryActor,
+) -> None:
+    """Run one per-entry operation behind the shared fault boundary.
+
+    Only the caller knows which file a closed fault implicates, so the actor
+    names both the operation and the quarantine move it owns.
+    """
     outcome_archive_evict.quarantining(
         outcome,
         entry.sequence,
-        lambda: outcome_archive_files.archive_source(run.context, entry),
-        lambda reason: outcome_archive_quarantine.quarantine_source(
-            run.context, entry, reason
-        ),
-    )
-
-
-def _heal_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Rebuild one sidecar, quarantining an archive that will not verify."""
-    outcome_archive_evict.quarantining(
-        outcome,
-        entry.sequence,
-        lambda: outcome_archive_files.repair_sidecar(run.context, entry),
-        lambda reason: outcome_archive_quarantine.quarantine_archive(
-            run.context, entry, reason
-        ),
+        lambda: actor.act(run.context, entry),
+        lambda reason: actor.quarantine(run.context, entry, reason),
     )

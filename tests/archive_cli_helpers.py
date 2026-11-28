@@ -14,7 +14,7 @@ from pathlib import Path
 from segment_test_helpers import document
 
 from buildlimits.outcome_segments import SegmentLayout, sealed_meta_name, segment_name
-from buildlimits.outcome_store_sealing import sealed_metadata
+from buildlimits.outcome_store_documents import sealed_metadata
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:

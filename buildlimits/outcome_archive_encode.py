@@ -12,13 +12,12 @@ import os
 import typing as typ
 
 from buildlimits import outcome_segment_sidecar, outcome_segments
+from buildlimits.outcome_archive_allowance import composed_trim
 from buildlimits.outcome_archive_fs import (
     atomic_write_json,
     open_private_regular,
     open_private_temp,
 )
-from buildlimits.outcome_archive_rows import DocumentReader, iter_records
-from buildlimits.outcome_archive_trim import Trim, policy_drops
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     OutputFaultError,
@@ -32,6 +31,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_archive_context import ArchiveContext
+    from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_sidecar import Sidecar
 
 __all__ = [
@@ -228,83 +228,6 @@ def discard(path: Path) -> None:
         path.unlink()
 
 
-def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
-    """Return the trim the writing pass needs, measuring policy drops first.
-
-    A byte allowance must be compared with the document that survives the
-    count and age rules, and only a whole pass over the source can measure
-    what those rules drop. That pass is skipped when the allowance cannot
-    compose with either rule, so an ordinary archive still reads its source
-    once before the verification pass. The measurement propagates the
-    ``SegmentFaultError`` its reader reports when a row or header in the source
-    is invalid.
-
-    Parameters
-    ----------
-    source_path : Path
-        The plain or compressed document the writing pass will read.
-    options : EncodeOptions
-        The preset, prefix trim and source encoding.
-
-    Returns
-    -------
-    Trim
-        The trim, with ``policy_bytes`` measured when the byte allowance
-        composes with a count or age rule.
-    """
-    trim = options.trim
-    composes = trim.before is not None or trim.records != 0
-    if trim.allowed_bytes is None or not composes:
-        return trim
-    descriptor, _metadata = open_private_regular(
-        source_path, os.O_RDONLY, enforce_mode=False
-    )
-    with os.fdopen(descriptor, "rb") as source:
-        measured = policy_dropped_bytes(
-            LineStream(source, is_compressed=options.is_compressed), trim
-        )
-    return dc.replace(trim, policy_bytes=measured)
-
-
-def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
-    """Measure the bytes a trim's count and age rules drop over a whole source.
-
-    A byte allowance is compared with the document that results after every
-    other rule has been applied, and a row the count or age rule drops after
-    the byte suffix has started is absent from that document too. Deciding the
-    suffix before seeing those rows would discard a row that fits, so this
-    pass measures them first. Rows are still read one at a time, so the memory
-    bound is unchanged.
-
-    Parameters
-    ----------
-    stream : LineStream
-        The uncompressed source rows.
-    trim : Trim
-        The policy whose ``records`` and ``before`` rules apply.
-
-    Returns
-    -------
-    int
-        Bytes, including newlines, of the record rows those rules drop.
-
-    Examples
-    --------
-    >>> import datetime as dt, io
-    >>> from buildlimits.outcome_record_encode import encode_line
-    >>> from buildlimits.outcome_record_format import StoreHeader
-    >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    >>> text = encode_line(header) + chr(10)
-    >>> policy_dropped_bytes(LineStream(io.BytesIO(text.encode())), Trim())
-    0
-    """
-    dropped = 0
-    for seen, row in enumerate(iter_records(DocumentReader(stream))):
-        if policy_drops(row.record.observed_at, trim, seen=seen):
-            dropped += len(row.raw) + 1
-    return dropped
-
-
 def _write_temp(
     source_path: Path,
     descriptor: int,
@@ -331,7 +254,9 @@ def _write_temp(
     # that are not private regular files, and that rejection must not leak the
     # temporary's descriptor.
     with os.fdopen(descriptor, "wb") as sink:
-        trim = _composed_trim(source_path, options)
+        trim = composed_trim(
+            source_path, options.trim, is_compressed=options.is_compressed
+        )
         source_descriptor, _metadata = open_private_regular(
             source_path, os.O_RDONLY, enforce_mode=False
         )

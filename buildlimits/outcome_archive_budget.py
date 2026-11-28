@@ -5,13 +5,14 @@ the size its sidecar records rather than the XZ file's own size. Planning
 deletes whole entries oldest-first and only then trims the straddler; every
 estimate is conservative, never freeing more bytes than a sidecar proves.
 
-A sealed source counts towards both budgets and can be evicted whole, but it
-is never trimmed: it is still uncompressed, so a straddler ends the walk and
-the follow-up plan trims the archive it becomes. The writer's active rows
-count too, but only those the age rule keeps: a row the writer will compact
-away on its next idle tick is not retained history, and counting it would
-evict eligible closed history to make room for bytes retention has already
-expired.
+A sealed source counts towards both budgets and can be evicted whole. In an
+archive run it is never trimmed: it is still uncompressed, so a straddler ends
+the walk and the follow-up plan trims the archive it becomes. A retention-only
+run rewrites the plain source in place, so the same walk may give it a prefix
+trim without compressing it. The writer's active rows count too, but only those
+the age rule keeps: a row the writer will compact away on its next idle tick is
+not retained history, and counting it would evict eligible closed history to
+make room for bytes retention has already expired.
 
 A count trim is only planned for an archive that no time or byte trim already
 rewrites. Those trims drop rows the planner never counted, at positions a
@@ -76,15 +77,20 @@ class Budget:
     policy : RetentionPolicy
         The effective retention policy.
     cutoff : datetime | None
-        The age cutoff, or None when no age limit is configured.
+        The age cutoff, or None when no age limit is configured or the clock
+        guard withheld it.
     active : ActiveHistory
         What the writer's active file holds. The candidates cover the closed
         history the writer sealed but the archiver has not compressed.
+    can_trim_sealed : bool
+        Whether a sealed source may be rewritten in place rather than ending
+        the walk. Only a retention-only run sets this.
     """
 
     policy: RetentionPolicy
     cutoff: dt.datetime | None
     active: ActiveHistory = dc.field(default_factory=ActiveHistory)
+    can_trim_sealed: bool = False
 
 
 def plan_byte_steps(
@@ -107,7 +113,9 @@ def plan_byte_steps(
     """
     if not budget.policy.has_byte_limit:
         return True
-    walk = _BudgetWalk(candidates, deletes, trims)
+    walk = _BudgetWalk(
+        candidates, deletes, trims, can_trim_sealed=budget.can_trim_sealed
+    )
     retained = budget.active.budget_bytes + sum(
         size for _, size in walk.surviving(planned_size)
     )
@@ -157,7 +165,9 @@ def plan_record_steps(
     max_records = budget.policy.max_records
     if max_records is None:
         return True
-    walk = _BudgetWalk(candidates, deletes, trims)
+    walk = _BudgetWalk(
+        candidates, deletes, trims, can_trim_sealed=budget.can_trim_sealed
+    )
     retained = budget.active.budget_records
     retained += sum(
         records
@@ -233,11 +243,14 @@ class _BudgetWalk:
         The entries already planned for deletion, updated in place.
     trims : dict[int, Trim]
         The trims already planned, by sequence, updated in place.
+    can_trim_sealed : bool
+        Whether a sealed source may be given a prefix trim in place.
     """
 
     candidates: tuple[SegmentEntry, ...]
     deletes: dict[int, SegmentEntry]
     trims: dict[int, Trim]
+    can_trim_sealed: bool = False
 
     def surviving[Kept](
         self, keep: cabc.Callable[[SegmentEntry, Trim | None], Kept]
@@ -271,10 +284,11 @@ class _BudgetWalk:
         An entry is deleted while its planned value fits inside the remaining
         excess, and the walk stops as soon as the excess is covered rather than
         churning a later archive. The first entry that does not fit is trimmed,
-        so no later entry is rewritten when the budget is met. A sealed source
-        never gets an allowance, because it cannot be rewritten until this run
-        has compressed it, and an unplannable entry ends the walk: evicting
-        newer history ahead of older history of unknown count would break
+        so no later entry is rewritten when the budget is met. In an archive
+        run a sealed source never gets an allowance, because it cannot be
+        rewritten until this run has compressed it; a retention-only run can
+        rewrite it in place. An unplannable entry ends the walk: evicting newer
+        history ahead of older history of unknown count would break
         oldest-first retention. A trim callable may decline to compose too.
 
         Parameters
@@ -306,7 +320,7 @@ class _BudgetWalk:
                 self.deletes[entry.sequence] = entry
                 excess -= value
                 continue
-            if entry.state == "sealed":
+            if entry.state == "sealed" and not self.can_trim_sealed:
                 return False
             trim = trim_straddler(self.trims.get(entry.sequence, Trim()), value, excess)
             if trim is None:

@@ -47,6 +47,7 @@ class SettledFields(typ.TypedDict):
     missing_sidecars: tuple[int, ...]
     corrupt_sidecars: tuple[int, ...]
     orphan_sidecars: tuple[int, ...]
+    sealed_replacing: tuple[int, ...]
     limits: RetentionLimits
     retained: RetainedHistory
 
@@ -86,6 +87,7 @@ def settled_fields(
         "missing_sidecars": inventory.missing_sidecars,
         "corrupt_sidecars": inventory.corrupt_sidecars,
         "orphan_sidecars": inventory.orphan_sidecars,
+        "sealed_replacing": inventory.sealed_replacing,
         "limits": RetentionLimits.of(run.context.policy),
         "retained": retained,
     }

@@ -16,8 +16,8 @@ import os
 import secrets
 import stat
 import typing as typ
-from pathlib import Path
 
+from buildlimits.outcome_archive_cleanup import TEMP_SUFFIX
 from buildlimits.outcome_archive_dirs import (
     UnsafePathError,
     ensure_private_directory,
@@ -29,19 +29,19 @@ from buildlimits.outcome_store_io import fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
 _FILE_MODE = 0o600
-_TEMP_SUFFIX = ".tmp"
 
 __all__ = [
     "UnsafePathError",
     "atomic_write_json",
+    "atomic_write_json_prefixed",
     "ensure_private_directory",
     "open_private_regular",
     "open_private_temp",
     "publish_no_clobber",
     "remove_private_files",
-    "remove_stale_temps",
     "require_private_chain",
     "require_private_regular",
 ]
@@ -105,7 +105,7 @@ def open_private_temp(directory: Path, *, prefix: str) -> tuple[int, Path]:
     OSError
         If the temporary file cannot be created or made private.
     """
-    name = f".{prefix}.{secrets.token_hex(8)}{_TEMP_SUFFIX}"
+    name = f".{prefix}.{secrets.token_hex(8)}{TEMP_SUFFIX}"
     path = directory / name
     flags = (
         os.O_WRONLY
@@ -161,6 +161,35 @@ def atomic_write_json(path: Path, document: cabc.Mapping[str, object]) -> None:
     document : collections.abc.Mapping[str, object]
         A JSON-compatible mapping.
 
+    Notes
+    -----
+    A temporary that cannot be written or published propagates as `OSError`
+    from `atomic_write_json_prefixed`, which this delegates to unchanged.
+    """
+    atomic_write_json_prefixed(path, document, prefix=path.name)
+
+
+def atomic_write_json_prefixed(
+    path: Path,
+    document: cabc.Mapping[str, object],
+    *,
+    prefix: str,
+) -> None:
+    """Write one JSON document durably through a named temporary.
+
+    A caller whose directory is shared with the supervisor names its temporary
+    with its own prefix, so a concurrent writer's file is never mistaken for
+    an abandoned one.
+
+    Parameters
+    ----------
+    path : Path
+        The destination file.
+    document : collections.abc.Mapping[str, object]
+        A JSON-compatible mapping.
+    prefix : str
+        The temporary file's name prefix.
+
     Raises
     ------
     OSError
@@ -169,7 +198,7 @@ def atomic_write_json(path: Path, document: cabc.Mapping[str, object]) -> None:
     encoded = json.dumps(
         document, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
-    descriptor, temporary = open_private_temp(path.parent, prefix=path.name)
+    descriptor, temporary = open_private_temp(path.parent, prefix=prefix)
     try:
         write_all(descriptor, encoded + b"\n")
         os.fsync(descriptor)
@@ -224,44 +253,6 @@ def remove_private_files(directory: Path, names: cabc.Iterable[str]) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def remove_stale_temps(directory: Path) -> tuple[str, ...]:
-    """Remove abandoned private temporary files under the archive lock.
-
-    Parameters
-    ----------
-    directory : Path
-        The directory whose ``.tmp`` entries are abandoned.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Names that were removed.
-    """
-    removed: list[str] = []
-    try:
-        iterator = os.scandir(directory)
-    except OSError:
-        return ()
-    try:
-        for entry in iterator:
-            if not entry.name.endswith(_TEMP_SUFFIX):
-                continue
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                continue
-            try:
-                Path(entry.path).unlink()
-            except OSError:
-                continue
-            removed.append(entry.name)
-    finally:
-        iterator.close()
-    return tuple(removed)
 
 
 def require_private_regular(metadata: os.stat_result) -> None:

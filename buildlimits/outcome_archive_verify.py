@@ -19,7 +19,7 @@ from buildlimits.outcome_archive_rows import (
     SegmentFaultError,
     iter_records,
 )
-from buildlimits.outcome_archive_trim import Trim, fits_allowance, policy_drops
+from buildlimits.outcome_archive_trim import Trim, TrimWalk
 from buildlimits.outcome_record_stream import StreamFaultError
 
 if typ.TYPE_CHECKING:
@@ -191,8 +191,7 @@ def write_archive(
         format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, preset=preset
     )
     emitted = _Emitted(sink, compressor)
-    seen = 0
-    dropped = 0
+    walk = TrimWalk(trim)
     first: dt.datetime | None = None
     last: dt.datetime | None = None
     try:
@@ -201,12 +200,7 @@ def write_archive(
                 # The header belongs in the archive but is not a record.
                 emitted.write(row.raw)
                 continue
-            drops = policy_drops(row.record.observed_at, trim, seen=seen)
-            seen += 1
-            if drops:
-                continue
-            if not fits_allowance(trim, dropped=dropped):
-                dropped += len(row.raw) + 1
+            if not walk.keep(row.raw, row.record.observed_at):
                 continue
             emitted.push_record(row.raw)
             observed = row.record.observed_at

@@ -14,6 +14,7 @@ from buildlimits import (
     outcome_archive_files,
     outcome_archive_fs,
     outcome_archive_quarantine,
+    outcome_sealed_trim,
 )
 from buildlimits.outcome_archive_context import ActionResult
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
@@ -34,28 +35,80 @@ def _trim_one(
     trim: Trim,
     outcome: RunOutcome,
 ) -> bool:
-    """Apply one planned trim, quarantining an archive that will not verify.
+    """Apply one planned trim to whichever form the entry has.
 
     The recorded action names the bounds that caused the rewrite, so a report
     reader can tell an age eviction, a byte allowance and a record cap apart
-    without re-planning.
+    without re-planning. An archive is recompressed; a sealed source is
+    rewritten in place as plain JSON Lines, because a retention-only run never
+    compresses history.
 
     Returns
     -------
     bool
         Whether the rewrite succeeded.
     """
+    reason = _trim_reason(trim)
+    if entry.state == "sealed":
+        return _trim_sealed(run, entry, trim, outcome)
     return quarantining(
         outcome,
         entry.sequence,
         lambda: dc.replace(
             outcome_archive_files.recompress_archive(run.context, entry, trim),
-            reason=_trim_reason(trim),
+            reason=reason,
         ),
-        lambda reason: outcome_archive_quarantine.quarantine_archive(
-            run.context, entry, reason
+        lambda fault: outcome_archive_quarantine.quarantine_archive(
+            run.context, entry, fault
         ),
     )
+
+
+def _trim_sealed(
+    run: ArchiveRun,
+    entry: SegmentEntry,
+    trim: Trim,
+    outcome: RunOutcome,
+) -> bool:
+    """Rewrite one sealed source in place, reporting a failed removal as done.
+
+    A trim that keeps no records removes the source instead. That removal is
+    proven the same way a planned deletion is: a fault after the rows are gone
+    is still reported, but the completed deletion is recorded too, so the floor
+    can advance over the sequence rather than reporting it as lost history for
+    ever.
+
+    Returns
+    -------
+    bool
+        Whether the rewrite or removal succeeded.
+    """
+    reason = _trim_reason(trim)
+    try:
+        action = outcome_sealed_trim.trim_sealed_source(run.context, entry, trim)
+    except OutputFaultError as fault:
+        # The source was readable and the fault is in this run's own output,
+        # so the source must survive for the next attempt.
+        outcome.failures.append((entry.sequence, fault.reason))
+        return False
+    except SegmentFaultError as fault:
+        _quarantine_fault(
+            outcome,
+            entry.sequence,
+            fault.reason,
+            lambda fault_reason: outcome_archive_quarantine.quarantine_source(
+                run.context, entry, fault_reason
+            ),
+        )
+        return False
+    except OSError as error:
+        outcome.failures.append((entry.sequence, failure_reason(error)))
+        if not outcome_archive_fs.is_proven_absent(entry.path):
+            return False
+        outcome.actions.append(ActionResult("deleted", entry.sequence, reason=reason))
+        return True
+    outcome.actions.append(dc.replace(action, reason=reason))
+    return True
 
 
 def _delete_one(

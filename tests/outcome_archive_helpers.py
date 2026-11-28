@@ -22,11 +22,19 @@ from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
 from buildlimits import outcome_archive_fs, outcome_record_encode
-from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
+from buildlimits.outcome_archive import (
+    RunOptions,
+    RunReport,
+    run_archive,
+    run_retain,
+)
 from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_record_format import StoreHeader
 from buildlimits.outcome_retention import RetentionPolicy
-from buildlimits.outcome_segments import archive_name, segment_name
+from buildlimits.outcome_segments import (
+    archive_name,
+    segment_name,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -39,6 +47,7 @@ NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
 __all__ = [
     "NOW",
+    "age_policy",
     "archives",
     "document",
     "layout",
@@ -47,6 +56,7 @@ __all__ = [
     "records",
     "refuse",
     "restore_source",
+    "retain",
     "run",
     "seal_store",
     "seeded_store",
@@ -103,6 +113,21 @@ def segment_bytes_for(rows: int) -> int:
     header = outcome_record_encode.encode_line(StoreHeader("0" * 64, NOW))
     record = outcome_record_encode.encode_line(records(NOW, 1)[0])
     return len(header.encode()) + 1 + rows * (len(record.encode()) + 1)
+
+
+def refuse_removal_without_unlinking(*_args: object, **_kwargs: object) -> typ.NoReturn:
+    """Refuse one removal, leaving every file the caller named in place.
+
+    Both the sealed in-place rewrite and the whole-entry deletion publish a
+    removal marker before their unlink, so the fault they meet here is the one
+    that decides whether the marker must be withdrawn.
+
+    Raises
+    ------
+    OSError
+        Always, naming a removal the process may not perform.
+    """
+    raise OSError(errno.EACCES, "injected removal failure")
 
 
 def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
@@ -226,6 +251,33 @@ def run(
         retention,
         RunOptions(now=NOW, dry_run=dry_run, on_retry=on_retry),
     )
+
+
+def retain(
+    root: Path,
+    retention: RetentionPolicy,
+    *,
+    dry_run: bool = False,
+) -> RunReport:
+    """Run the retention-only operation once at a fixed wall time.
+
+    Returns
+    -------
+    RunReport
+        The run report.
+    """
+    return run_retain(layout(root), retention, RunOptions(now=NOW, dry_run=dry_run))
+
+
+def age_policy() -> RetentionPolicy:
+    """Return a policy that trims a fixture's expired leading row.
+
+    Returns
+    -------
+    RetentionPolicy
+        A thirty-day age bound with no byte or record cap.
+    """
+    return policy(1_000_000, max_age_days=30, max_bytes=0)
 
 
 def archives(root: Path) -> list[Path]:

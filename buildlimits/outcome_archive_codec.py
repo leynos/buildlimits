@@ -39,7 +39,10 @@ def report_dict(report: RunReport) -> dict[str, object]:
     """
     return {
         "schema": ARCHIVE_SCHEMA,
+        "operation": report.operation,
         "status": report.status,
+        "clock_skew": report.clock_skew,
+        "clock_baseline_unreadable": report.clock_baseline_unreadable,
         "dry_run": report.dry_run,
         "started_at": utc_text(report.started_at),
         "finished_at": utc_text(report.finished_at),
@@ -63,6 +66,7 @@ def report_dict(report: RunReport) -> dict[str, object]:
         "missing_sidecars": list(report.missing_sidecars),
         "corrupt_sidecars": list(report.corrupt_sidecars),
         "orphan_sidecars": list(report.orphan_sidecars),
+        "sealed_replacing": list(report.sealed_replacing),
         "evictions": eviction_counts(report.actions),
         "limits": None if report.limits is None else report.limits.as_dict(),
         "retained": None if report.retained is None else report.retained.as_dict(),

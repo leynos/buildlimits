@@ -17,7 +17,7 @@ from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_files, outcome_archive_retain
 from buildlimits.outcome_segments import sealed_meta_name, segment_name
-from buildlimits.outcome_store_sealing import sealed_metadata
+from buildlimits.outcome_store_documents import sealed_metadata
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

@@ -1,19 +1,22 @@
-"""Settling the history an archive run leaves behind.
+"""Settling the history one maintenance run leaves behind.
 
 The writer never takes the archive lock, so it can seal a source after the run
 has planned and before the follow-up passes look again. Each pass re-reads the
-store, performs the archive, reconcile, heal and orphan work it discovers, then
-applies the retention the settled inventory plans. The passes are bounded; a
-run that still finds work reports an unsettled result so the next firing retries.
+store, performs the repair, archive, reconcile, heal and orphan work it
+discovers, then applies the retention the settled inventory plans. A
+retention-only run performs the same passes without an archive step, so what a
+seal leaves behind is measured and trimmed rather than compressed. The passes
+are bounded; a run that still finds work reports an unsettled result so the
+next firing retries.
 """
 
-import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_segment_inventory
+from buildlimits import outcome_archive_pending, outcome_segment_inventory
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_fs import is_proven_absent
 from buildlimits.outcome_archive_history import ActiveHistory
-from buildlimits.outcome_archive_plan import PlanSummary, plan_run
+from buildlimits.outcome_archive_plan import PlanInputs, PlanSummary, plan_run
 from buildlimits.outcome_archive_run import (
     ArchiveRun,
     RunOutcome,
@@ -25,14 +28,10 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+    from buildlimits.outcome_archive_pending import AppliedTrims
     from buildlimits.outcome_archive_plan import Plan
-    from buildlimits.outcome_archive_trim import Trim
-    from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
+    from buildlimits.outcome_segment_inventory import Inventory
     from buildlimits.outcome_segments import SegmentLayout
-
-    # A trim is only meaningful against the archive version it was planned
-    # for, so each applied trim carries that version's measurement.
-    type AppliedTrims = dict[int, tuple[Trim, int, int | None]]
 
 __all__ = ["retain", "settled_snapshot"]
 
@@ -100,8 +99,8 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
         discovered is still pending, or a pass could not confirm what it saw,
         so the caller reports a retryable result rather than success.
     """
-    applied = _applied_trims(run, outcome)
-    removed = _removed(outcome)
+    applied = outcome_archive_pending.applied_trims(run, outcome)
+    removed = outcome_archive_pending.removed(outcome)
     for attempt in range(_MAX_RETAIN_PASSES):
         try:
             pending = _pending_work(run, outcome, applied, removed)
@@ -127,7 +126,7 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
             # and report the store settled with its budget unmet. The plan is
             # rebuilt from the store as the quarantine left it instead.
             continue
-        applied.update(_measured(pending.trims))
+        applied.update(outcome_archive_pending.measured(pending.trims))
         removed.update(entry.sequence for entry in pending.deletes)
     try:
         # The last pass may have finished the last operation, so a check made
@@ -152,44 +151,17 @@ def _pending_work(
         None when the store plans no further work.
     """
     follow_up = _replan(run)
-    failed = {sequence for sequence, _reason in outcome.failures}
-    blocked = _failed_eviction(run, outcome)
-    archive = tuple(
-        entry for entry in follow_up.archive if entry.sequence not in failed
-    )
-    reconcile = tuple(
-        pair for pair in follow_up.reconcile if pair[0].sequence not in failed
-    )
-    heal = tuple(entry for entry in follow_up.heal if entry.sequence not in failed)
-    orphans = tuple(
-        sequence for sequence in follow_up.orphans if sequence not in failed
-    )
-    # An eviction step that failed is not retried. The eviction order is
-    # oldest-first, so every step at or after that sequence is left for the
-    # next firing: trimming a newer archive would discard rows from history
-    # that survives while the entry the budget asked for is still present.
-    trims = tuple(
-        (entry, trim)
-        for entry, trim in follow_up.trims
-        if _evictable(entry.sequence, removed, blocked)
-        and entry.path.exists()
-        and not _already_applied(entry, trim, applied)
-    )
-    deletes = tuple(
-        entry
-        for entry in follow_up.deletes
-        if _evictable(entry.sequence, removed, blocked) and entry.path.exists()
-    )
-    narrowed = dc.replace(
+    narrowed = outcome_archive_pending.narrow(
         follow_up,
-        archive=archive,
-        reconcile=reconcile,
-        heal=heal,
-        orphans=orphans,
-        trims=trims,
-        deletes=deletes,
+        outcome_archive_pending.Done(
+            failed={sequence for sequence, _reason in outcome.failures},
+            blocked=outcome_archive_pending.failed_eviction(run, outcome),
+            applied=applied,
+            removed=removed,
+            proven_absent=_proven_absent(follow_up),
+        ),
     )
-    if any((archive, reconcile, heal, orphans, trims, deletes)):
+    if outcome_archive_pending.has_work(narrowed):
         return narrowed
     # A deferred budget with nothing left to perform cannot settle in this
     # run: no action repairs it. Returning the empty plan keeps the run
@@ -198,54 +170,26 @@ def _pending_work(
     return narrowed if follow_up.retention_deferred else None
 
 
-def _already_applied(entry: SegmentEntry, trim: Trim, applied: AppliedTrims) -> bool:
-    """Whether this trim already rewrote this version of the archive.
+def _proven_absent(plan: Plan) -> frozenset[int]:
+    """Probe the plan's entries for a confirmed absence.
 
-    A count trim and a byte allowance are relative to the document they
-    rewrite. Once applied, the sidecar describes the smaller archive, so the
-    same trim proposed for the same measurement is the rewrite this run has
-    already performed and repeating it would discard rows a later pass has not
-    accounted for. The same trim proposed for a differently measured archive -
-    the active file grew past the cap and the budget asks for the same number
-    of rows again - is a new decision; suppressing it would leave the store
-    over its bound while the run reported success.
+    The bookkeeping module decides which steps to keep; only the caller that
+    owns the store probes its files. A lookup that fails for any reason other
+    than absence leaves the step in place, so its failure is recorded.
 
     Returns
     -------
-    bool
-        True only when the recorded trim and archive measurement both match.
+    frozenset[int]
+        Sequences whose files are confirmed gone.
     """
-    return applied.get(entry.sequence) == (
-        trim,
-        entry.logical_bytes,
-        entry.record_count,
+    entries = [
+        *plan.sealed_repairs,
+        *(entry for entry, _trim in plan.trims),
+        *plan.deletes,
+    ]
+    return frozenset(
+        entry.sequence for entry in entries if is_proven_absent(entry.path)
     )
-
-
-def _evictable(sequence: int, removed: set[int], blocked: int | None) -> bool:
-    """Whether an eviction step for ``sequence`` may run in this pass.
-
-    Returns
-    -------
-    bool
-        False when the entry is already removed, or when an eviction at or
-        before this sequence failed and its newer steps must wait.
-    """
-    return sequence not in removed and (blocked is None or sequence < blocked)
-
-
-def _failed_eviction(run: ArchiveRun, outcome: RunOutcome) -> int | None:
-    """Return the oldest sequence whose planned eviction failed, if any.
-
-    Returns
-    -------
-    int or None
-        The barrier sequence, or None when no eviction step failed.
-    """
-    failed = {sequence for sequence, _reason in outcome.failures}
-    planned = [entry.sequence for entry, _trim in run.plan.trims]
-    planned.extend(entry.sequence for entry in run.plan.deletes)
-    return min((sequence for sequence in planned if sequence in failed), default=None)
 
 
 def _replan(run: ArchiveRun) -> Plan:
@@ -271,15 +215,31 @@ def _replan(run: ArchiveRun) -> Plan:
     """
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
+    # A firing whose age bound is withheld counts every committed active row,
+    # exactly as its initial plan and final report do. Applying the cutoff here
+    # would make a capacity bound plan against a smaller active total and leave
+    # the store over its byte or record bound.
+    cutoff = (
+        None if run.context.suppress_age else run.context.policy.cutoff(run.context.now)
+    )
     active = active_history(
         layout.active,
-        cutoff=run.context.policy.cutoff(run.context.now),
+        cutoff=cutoff,
         on_retry=run.context.on_retry,
     )
     if outcome_segment_inventory.read_inventory(layout) != inventory:
         msg = "a source was sealed while the follow-up plan read the store"
         raise _InventoryChangedError(msg)
-    return plan_run(inventory, run.context.policy, now=run.context.now, active=active)
+    return plan_run(
+        inventory,
+        run.context.policy,
+        PlanInputs(
+            now=run.context.now,
+            active=active,
+            operation=run.context.operation,
+            suppress_age=run.context.suppress_age,
+        ),
+    )
 
 
 def settled_snapshot(
@@ -345,56 +305,3 @@ def _follow_up_run(run: ArchiveRun, plan: Plan) -> ArchiveRun:
         summary=PlanSummary.of(plan),
         started_at=run.started_at,
     )
-
-
-def _applied_trims(run: ArchiveRun, outcome: RunOutcome) -> AppliedTrims:
-    """Return the trims the performed plan applied, with the archive version.
-
-    The measurement is the one the performed plan saw, so a later plan that
-    proposes the same trim against a differently measured archive is known to
-    be making a new decision.
-
-    Returns
-    -------
-    AppliedTrims
-        The trim and source measurement of every applied trim, by sequence.
-    """
-    trimmed = {
-        action.sequence for action in outcome.actions if action.action == "trimmed"
-    }
-    return _measured(
-        (entry, trim) for entry, trim in run.plan.trims if entry.sequence in trimmed
-    )
-
-
-def _measured(trims: cabc.Iterable[tuple[SegmentEntry, Trim]]) -> AppliedTrims:
-    """Pair each trim with the archive version it was decided from.
-
-    A trim is only comparable with a later plan when it carries the
-    measurement it was planned against, so the trims a plan applied and the
-    trims a later plan proposes are both recorded through this one shape.
-
-    Returns
-    -------
-    AppliedTrims
-        The trim and source measurement of every given trim, by sequence.
-    """
-    return {
-        entry.sequence: (trim, entry.logical_bytes, entry.record_count)
-        for entry, trim in trims
-    }
-
-
-def _removed(outcome: RunOutcome) -> set[int]:
-    """Return the sequences this run removed, which no later pass can reuse.
-
-    Only a deletion removes an entry. A quarantined *source* leaves its
-    archive in place, and that archive is still eligible for the budget a
-    follow-up plan recomputes.
-
-    Returns
-    -------
-    set[int]
-        The sequences removed whole.
-    """
-    return {action.sequence for action in outcome.actions if action.action == "deleted"}

@@ -11,7 +11,11 @@ import typing as typ
 
 from buildlimits import outcome_records, outcome_segments
 from buildlimits.outcome_segment_state import read_sequence
-from buildlimits.outcome_store_documents import write_metadata, write_sequence
+from buildlimits.outcome_store_documents import (
+    sealed_metadata,
+    write_metadata,
+    write_sequence,
+)
 from buildlimits.outcome_store_io import (
     ensure_directory,
     prepare_store,
@@ -20,19 +24,17 @@ from buildlimits.outcome_store_io import (
     sync_file,
     sync_rename,
 )
-from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:
-    import datetime as dt
     from pathlib import Path
 
-    from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_store_state import StoreFiles
 
 ARCHIVE_BACKLOG_SEGMENTS = 8
-_METADATA_SCHEMA = 1
-
-__all__ = ["ARCHIVE_BACKLOG_SEGMENTS", "seal"]
+__all__ = [
+    "ARCHIVE_BACKLOG_SEGMENTS",
+    "seal",
+]
 
 
 def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
@@ -170,28 +172,6 @@ def highest_segment_name(directory: Path) -> int:
         if digits.isdecimal():
             highest = max(highest, int(digits))
     return highest
-
-
-def sealed_metadata(
-    records: list[StoreRecord], sequence: int, salt_id: str, now: dt.datetime
-) -> dict[str, object]:
-    """Describe the rows about to be sealed for the archiver and reports.
-
-    Returns
-    -------
-    dict[str, object]
-        Counts, salt identity and observed range, with no private values.
-    """
-    observed = [record.observed_at for record in records]
-    return {
-        "schema": _METADATA_SCHEMA,
-        "sequence": sequence,
-        "salt_id": salt_id,
-        "record_count": len(observed),
-        "first_observed_at": optional_utc_text(min(observed, default=None)),
-        "last_observed_at": optional_utc_text(max(observed, default=None)),
-        "sealed_at": utc_text(now),
-    }
 
 
 def write_sealing_state(

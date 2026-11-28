@@ -1,0 +1,47 @@
+# serializer version: 1
+# name: test_a_preview_detects_a_clock_jump_without_claiming_a_withheld_bound
+  '''
+  operation: retain
+  status: ok
+  retain: sealed history is rewritten in place, never compressed
+  started: 2026-11-19T00:00:00Z
+  elapsed: 0.000s
+  retained: 0 of 0 logical bytes
+  history: 0 records, observed unknown
+  active: 0 logical bytes
+  cutoff: 2026-11-20T00:00:00+00:00
+  clock skew: suspect reading; a run would withhold age eviction
+  
+  '''
+# ---
+# name: test_a_report_withholds_the_baseline_line_when_the_state_was_written
+  '''
+  operation: retain
+  status: failed
+  retain: sealed history is rewritten in place, never compressed
+  reason: clock_baseline_failed
+  started: 2026-11-19T00:00:00Z
+  elapsed: 0.000s
+  retained: 0 of 0 logical bytes
+  history: 0 records, observed unknown
+  active: 0 logical bytes
+  cutoff: age eviction disabled
+  clock baseline: not written (clock_baseline_failed)
+  
+  '''
+# ---
+# name: test_a_skewed_report_labels_the_withheld_age_bound
+  '''
+  operation: retain
+  status: ok
+  retain: sealed history is rewritten in place, never compressed
+  started: 2026-11-19T00:00:00Z
+  elapsed: 0.000s
+  retained: 0 of 0 logical bytes
+  history: 0 records, observed unknown
+  active: 0 logical bytes
+  cutoff: withheld by clock skew
+  clock skew: age eviction withheld
+  
+  '''
+# ---

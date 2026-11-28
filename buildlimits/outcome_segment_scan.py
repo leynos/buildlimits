@@ -13,11 +13,7 @@ import stat
 import typing as typ
 
 from buildlimits.outcome_archive_dirs import open_private_chain_when_present
-from buildlimits.outcome_segment_sidecar import (
-    Sidecar,
-    read_mapping,
-    read_sidecar,
-)
+from buildlimits.outcome_segment_sidecar import Sidecar, read_sidecar
 from buildlimits.outcome_segments import sidecar_name
 
 if typ.TYPE_CHECKING:
@@ -26,15 +22,12 @@ if typ.TYPE_CHECKING:
 
 _ARCHIVE_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz$")
 _SIDECAR_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.json$")
-_SEALED_RE = re.compile(r"^segment-(\d{12})\.jsonl$")
-_SEALED_META_RE = re.compile(r"^segment-(\d{12})\.jsonl\.meta\.json$")
 _REPLACING_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.replacing$")
 
 __all__ = [
     "SegmentEntry",
     "regular_files",
     "scan_archived",
-    "scan_sealed",
 ]
 
 
@@ -81,40 +74,6 @@ class SegmentEntry:
     has_metadata: bool = False
 
 
-def scan_sealed(
-    directory: Path,
-) -> tuple[list[SegmentEntry], dict[int, dict[str, object]]]:
-    """List sealed sources and their optional writer metadata.
-
-    Returns
-    -------
-    tuple[list[SegmentEntry], dict[int, dict[str, object]]]
-        Sealed entries and metadata keyed by sequence.
-    """
-    entries: list[SegmentEntry] = []
-    metadata: dict[int, dict[str, object]] = {}
-    for path, size in regular_files(directory):
-        matched = _SEALED_RE.fullmatch(path.name)
-        if matched is not None:
-            sequence = int(matched.group(1))
-            entries.append(
-                SegmentEntry(
-                    sequence=sequence,
-                    path=path,
-                    state="sealed",
-                    physical_bytes=size,
-                    logical_bytes=size,
-                )
-            )
-            continue
-        meta_match = _SEALED_META_RE.fullmatch(path.name)
-        if meta_match is not None:
-            document = read_mapping(path)
-            if document is not None:
-                metadata[int(meta_match.group(1))] = document
-    return entries, metadata
-
-
 def scan_archived(
     directory: Path,
 ) -> tuple[list[SegmentEntry], tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
@@ -143,13 +102,13 @@ def scan_archived(
 def _sequence_set(files: list[tuple[Path, int]], pattern: re.Pattern[str]) -> set[int]:
     """Return every sequence a file in this listing names for ``pattern``.
 
-    The sidecar and replacing-marker conventions differ only in their infix,
-    so the walk is shared and each caller names the convention it reads.
+    The sidecar and marker conventions differ only in their infix, so the walk
+    is shared and each caller names the convention it reads.
 
     Returns
     -------
     set[int]
-        Sequences named by a matching file, whether or not its archive exists.
+        Sequences named by a matching file, whether its archive exists or not.
     """
     return {
         int(match.group(1))

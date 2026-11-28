@@ -11,12 +11,13 @@ and the gap and integrity flags a report shows.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_sealed_scan import scan_sealed
 from buildlimits.outcome_segment_gaps import retained_gaps
+from buildlimits.outcome_segment_removed import removed_sequences
 from buildlimits.outcome_segment_scan import (
     SegmentEntry,
     regular_files,
     scan_archived,
-    scan_sealed,
 )
 from buildlimits.outcome_segment_sidecar import metadata_fields
 
@@ -55,6 +56,10 @@ class Inventory:
         Archives whose sidecar cannot be trusted.
     orphan_sidecars : tuple[int, ...]
         Sidecars with no archive.
+    sealed_replacing : tuple[int, ...]
+        Sequences whose in-place sealed rewrite has not recorded its metadata.
+        A marked source's metadata is withheld from this inventory, so these
+        sequences are the ones a repair step has to settle.
     retention_floor : int | None
         Lowest sequence intentionally retained, when recorded.
     """
@@ -67,6 +72,7 @@ class Inventory:
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
+    sealed_replacing: tuple[int, ...] = ()
     retention_floor: int | None = None
 
     @property
@@ -149,10 +155,15 @@ def read_inventory(
     ``OSError`` rather than reporting an empty one: a count that was never
     measured must not read as a measured zero.
     """
-    sealed, sealed_meta = scan_sealed(layout.sealed_dir)
+    sealed, sealed_meta, replacing = scan_sealed(layout.sealed_dir)
     archived, missing, corrupt, orphans = scan_archived(layout.archive_dir)
     with_meta = _with_sealed_metadata(sealed, sealed_meta)
-    gaps, gaps_truncated = retained_gaps(with_meta, archived, retention_floor)
+    gaps, gaps_truncated = retained_gaps(
+        with_meta,
+        archived,
+        retention_floor,
+        removed_sequences(layout.archive_dir),
+    )
     return Inventory(
         sealed=with_meta,
         archived=tuple(sorted(archived, key=lambda entry: entry.sequence)),
@@ -162,6 +173,7 @@ def read_inventory(
         missing_sidecars=missing,
         corrupt_sidecars=corrupt,
         orphan_sidecars=orphans,
+        sealed_replacing=replacing,
         retention_floor=retention_floor,
     )
 

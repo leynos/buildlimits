@@ -13,17 +13,21 @@ import contextlib
 import errno
 import os
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from outcome_archive_helpers import refuse
 
-from buildlimits import outcome_archive_dirs, outcome_archive_fs
+from buildlimits import (
+    outcome_archive_dirs,
+    outcome_archive_fs,
+)
+from buildlimits.outcome_archive_cleanup import remove_stale_temps
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
     atomic_write_json,
     open_private_temp,
     publish_no_clobber,
-    remove_stale_temps,
     require_private_regular,
 )
 
@@ -87,29 +91,25 @@ def test_a_state_sync_that_fails_keeps_no_temporary(
     assert path.exists(), "the replaced document is still readable"
 
 
-class _RefusingUnlink(Path):
-    """A path whose removal always fails, as a held file's would."""
-
-    def unlink(
-        self,
-        missing_ok: bool = False,  # ruff: ignore[boolean-default-value-positional-argument] - must keep Path.unlink's positional signature to override it.
-    ) -> None:
-        """Refuse the removal and report a filesystem failure."""
-        raise OSError(errno.EBUSY, "the entry is held")
-
-
 def test_a_stale_temporary_that_cannot_be_removed_is_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An entry the run cannot remove is left for the next holding of the lock."""
     stale = tmp_path / ".state.abcdef.tmp"
     stale.write_text("{}")
-    monkeypatch.setattr(outcome_archive_fs, "Path", _RefusingUnlink)
+
+    refuse = mock.Mock(side_effect=OSError(errno.EBUSY, "the entry is held"))
+    monkeypatch.setattr(outcome_archive_fs.os, "unlink", refuse)
 
     removed = remove_stale_temps(tmp_path)
 
     assert not removed, "a removal that failed is not reported as removed"
     assert stale.exists(), "the held entry survives"
+    # The removal is attempted by scanned name only, never by a re-resolved
+    # path that another account could have replaced since the scan.
+    assert [call.args for call in refuse.call_args_list] == [(stale.name,)], (
+        "the held entry is addressed by the name the scan returned"
+    )
 
 
 class _UnreadableEntry:
