@@ -154,9 +154,11 @@ def test_the_retention_example_states_the_policy_it_documents(
     assert policy.is_segmented is True, "the budget rotates the active file"
 
 
-def test_the_archive_service_runs_a_subcommand_the_command_accepts() -> None:
-    """The unit's ExecStart is a command line this package's parser accepts."""
-    values = _ini_values(_marked_example(ARCHIVE_SERVICE, "ini"))
+def _assert_oneshot_service(
+    identifier: str, *, memory: str, timeout: str, operation: str
+) -> None:
+    """Assert one marked example is a oneshot unit the command accepts."""
+    values = _ini_values(_marked_example(identifier, "ini"))
     (exec_start,) = values["ExecStart"]
     program, *arguments = exec_start.split()
 
@@ -164,39 +166,46 @@ def test_the_archive_service_runs_a_subcommand_the_command_accepts() -> None:
         "the unit runs the archiver this guide documents"
     )
     outcome_archive_cli._build_parser().parse_args(arguments)
+    assert arguments[-1] == operation, "the unit performs the documented operation"
     assert values["Type"] == ("oneshot",), "a oneshot unit exits with the run"
-    assert values["MemoryMax"] == ("512M",), "the unit bounds the peak it was sized for"
-    assert values["TimeoutStartSec"] == ("2h",), "the unit allows for a backlog run"
+    assert values["MemoryMax"] == (memory,), "the unit bounds the peak it was sized for"
+    assert values["TimeoutStartSec"] == (timeout,), "the unit allows for a backlog run"
 
 
-def test_the_archive_timer_is_daily_and_persistent() -> None:
-    """A missed daily firing is caught up at the next start."""
-    values = _ini_values(_marked_example(ARCHIVE_TIMER, "ini"))
+def _assert_daily_persistent_timer(identifier: str) -> dict[str, tuple[str, ...]]:
+    """Assert one marked example is a daily timer a missed firing catches up.
+
+    Returns
+    -------
+    dict[str, tuple[str, ...]]
+        The unit's values, for a caller that reads more of them.
+    """
+    values = _ini_values(_marked_example(identifier, "ini"))
 
     assert values["OnCalendar"] == ("daily",), "the guide schedules a daily run"
     assert values["Persistent"] == ("true",), "a missed firing still runs"
     assert values["WantedBy"] == ("timers.target",), "enabling the timer starts it"
+    return values
 
 
-def test_the_archive_enable_example_names_the_timer_it_defines() -> None:
-    """The enable command is the timer unit the guide installs."""
-    commands = _example_commands(_marked_example(ARCHIVE_ENABLE, "bash"))
-    timer = _ini_values(_marked_example(ARCHIVE_TIMER, "ini"))
+def _assert_enable_names_timer(enable: str, timer: str, unit: str) -> None:
+    """Assert one marked enable example starts the timer another defines."""
+    commands = _example_commands(_marked_example(enable, "bash"))
+    values = _assert_daily_persistent_timer(timer)
 
-    assert timer["WantedBy"] == ("timers.target",), "the timer is installable"
-    assert commands["systemctl"] == (
-        "--user",
-        "enable",
-        "--now",
-        "buildlimits-outcome-archive.timer",
-    ), "the unit enabled is the one the previous example writes"
+    assert values["WantedBy"] == ("timers.target",), "the timer is installable"
+    assert commands["systemctl"] == ("--user", "enable", "--now", unit), (
+        "the unit enabled is the one the previous example writes"
+    )
 
 
-def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> None:
-    """Every documented invocation is one the command actually accepts."""
+def _assert_parser_accepts_every(
+    identifier: str, expected: list[tuple[str, ...]]
+) -> None:
+    """Assert every documented invocation is one the command accepts."""
     lines = [
         line.split()
-        for line in _marked_example(ARCHIVE_COMMANDS, "bash").splitlines()
+        for line in _marked_example(identifier, "bash").splitlines()
         if line.strip()
     ]
     parser = outcome_archive_cli._build_parser()
@@ -207,65 +216,56 @@ def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> No
     )
     for arguments in invocations:
         parser.parse_args(list(arguments))
-    assert invocations == [("inspect",), ("run", "--dry-run"), ("run",)], (
-        "the guide shows the plan, a dry run and the real run"
+    assert invocations == expected, "the guide shows the documented invocations"
+
+
+def test_the_archive_service_runs_a_subcommand_the_command_accepts() -> None:
+    """The unit's ExecStart is a command line this package's parser accepts."""
+    _assert_oneshot_service(
+        ARCHIVE_SERVICE, memory="512M", timeout="2h", operation="run"
+    )
+
+
+def test_the_archive_timer_is_daily_and_persistent() -> None:
+    """A missed daily firing is caught up at the next start."""
+    _assert_daily_persistent_timer(ARCHIVE_TIMER)
+
+
+def test_the_archive_enable_example_names_the_timer_it_defines() -> None:
+    """The enable command is the timer unit the guide installs."""
+    _assert_enable_names_timer(
+        ARCHIVE_ENABLE, ARCHIVE_TIMER, "buildlimits-outcome-archive.timer"
+    )
+
+
+def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> None:
+    """Every documented invocation is one the command actually accepts."""
+    _assert_parser_accepts_every(
+        ARCHIVE_COMMANDS, [("inspect",), ("run", "--dry-run"), ("run",)]
     )
 
 
 def test_the_retain_service_runs_the_operation_the_command_accepts() -> None:
     """The unit's ExecStart is the retention subcommand, not archival."""
-    values = _ini_values(_marked_example(RETAIN_SERVICE, "ini"))
-    (exec_start,) = values["ExecStart"]
-    program, *arguments = exec_start.split()
-
-    assert program.endswith("/build-limits-outcome-archive"), (
-        "the unit runs the archiver this guide documents"
+    _assert_oneshot_service(
+        RETAIN_SERVICE, memory="256M", timeout="1h", operation="retain"
     )
-    outcome_archive_cli._build_parser().parse_args(arguments)
-    assert arguments[-1] == "retain", "the unit performs the retention operation"
-    assert values["Type"] == ("oneshot",), "a oneshot unit exits with the run"
-    assert values["MemoryMax"] == ("256M",), "the unit bounds the peak it was sized for"
-    assert values["TimeoutStartSec"] == ("1h",), "the unit allows for a backlog run"
 
 
 def test_the_retain_timer_is_daily_and_persistent() -> None:
     """A missed daily retention firing is caught up at the next start."""
-    values = _ini_values(_marked_example(RETAIN_TIMER, "ini"))
-
-    assert values["OnCalendar"] == ("daily",), "the guide schedules a daily run"
-    assert values["Persistent"] == ("true",), "a missed firing still runs"
-    assert values["WantedBy"] == ("timers.target",), "enabling the timer starts it"
+    _assert_daily_persistent_timer(RETAIN_TIMER)
 
 
 def test_the_retain_enable_example_names_the_timer_it_defines() -> None:
     """The enable command is the retention timer the guide installs."""
-    commands = _example_commands(_marked_example(RETAIN_ENABLE, "bash"))
-    timer = _ini_values(_marked_example(RETAIN_TIMER, "ini"))
-
-    assert timer["WantedBy"] == ("timers.target",), "the timer is installable"
-    assert commands["systemctl"] == (
-        "--user",
-        "enable",
-        "--now",
-        "buildlimits-outcome-retain.timer",
-    ), "the unit enabled is the one the previous example writes"
+    _assert_enable_names_timer(
+        RETAIN_ENABLE, RETAIN_TIMER, "buildlimits-outcome-retain.timer"
+    )
 
 
 def test_the_retain_command_example_uses_subcommands_the_parser_accepts() -> None:
     """Every documented retention invocation is one the command accepts."""
-    lines = [
-        line.split()
-        for line in _marked_example(RETAIN_COMMANDS, "bash").splitlines()
-        if line.strip()
-    ]
-    parser = outcome_archive_cli._build_parser()
-    invocations = [tuple(line[1:]) for line in lines]
-
-    assert {line[0] for line in lines} == {"build-limits-outcome-archive"}, (
-        "every line runs the documented command"
-    )
-    for arguments in invocations:
-        parser.parse_args(list(arguments))
-    assert invocations == [("retain", "--dry-run"), ("retain",)], (
-        "the guide shows the retention preview and the real run"
+    _assert_parser_accepts_every(
+        RETAIN_COMMANDS, [("retain", "--dry-run"), ("retain",)]
     )
