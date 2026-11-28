@@ -107,11 +107,33 @@ def gaps_between(
     for present_sequence in sorted(sequences):
         if present_sequence < next_missing:
             continue
-        while next_missing < present_sequence:
-            if next_missing not in explained:
-                if len(gaps) == MAX_GAP_SEQUENCES:
-                    return tuple(gaps), True
-                gaps.append(next_missing)
-            next_missing += 1
+        next_missing, truncated = _fill_below(
+            present_sequence, next_missing, explained, gaps
+        )
+        if truncated:
+            return tuple(gaps), True
         next_missing = present_sequence + 1
     return tuple(gaps), False
+
+
+def _fill_below(
+    present_sequence: int,
+    next_missing: int,
+    explained: set[int],
+    gaps: list[int],
+) -> tuple[int, bool]:
+    """Append the unexplained sequences below one present sequence.
+
+    Returns
+    -------
+    tuple[int, bool]
+        The next sequence the caller continues from, and whether the list
+        reached ``MAX_GAP_SEQUENCES`` and was cut short.
+    """
+    while next_missing < present_sequence:
+        if next_missing not in explained:
+            if len(gaps) == MAX_GAP_SEQUENCES:
+                return next_missing, True
+            gaps.append(next_missing)
+        next_missing += 1
+    return next_missing, False

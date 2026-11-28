@@ -131,6 +131,15 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["unmeasured_entries"] == 1, "the unmeasured count is published"
     assert document["budget_bytes"] == 44, "the budget is published"
     assert document["cutoff"] == "2026-10-20T12:00:00Z", "the cutoff is published"
+
+
+def test_the_document_renders_the_integrity_and_state_fields() -> None:
+    """Failures, gaps, sidecars and the installed state keep their shapes."""
+    document = report_dict(_report())
+    empty = report_dict(
+        RunReport(status="unsettled", started_at=_NOW, finished_at=_NOW)
+    )
+
     assert document["failures"] == [{"sequence": 5, "reason": "corrupt"}], (
         "each failed sequence keeps its closed reason"
     )
