@@ -20,6 +20,7 @@ from outcome_archive_helpers import (
     layout,
     policy,
     refuse,
+    refuse_removal_without_unlinking,
     retain,
 )
 from outcome_sealed_helpers import sealed_source
@@ -31,6 +32,7 @@ from buildlimits.outcome_archive_verify import ArchiveFacts
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import (
     SEALED_TEMP_PREFIX,
+    removed_marker_name,
     sealed_marker_name,
     sealed_meta_name,
     segment_name,
@@ -238,6 +240,55 @@ def test_a_removal_that_completed_before_a_fault_is_recorded_as_a_deletion(
     floor = json.loads(layout(tmp_path).retention_file.read_text(encoding="utf-8"))
     assert floor["floor_sequence"] == 2, (
         "the floor advances over the sequence that was really removed"
+    )
+
+
+def test_a_failed_unlink_withdraws_the_marker_it_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source that survives its failed removal must not keep a marker.
+
+    The marker is published before the unlink, so a removal that stops there
+    would otherwise explain a later loss of the same sequence.
+    """
+    rows = (
+        attributed_record(observed_at=NOW - dt.timedelta(hours=1)),
+        attributed_record(observed_at=NOW),
+    )
+    sealed_source(tmp_path, 1, rows)
+
+    monkeypatch.setattr(
+        outcome_sealed_trim, "remove_sealed_files", refuse_removal_without_unlinking
+    )
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=1))
+
+    assert report.failures == ((1, "unreadable"),), "the fault is reported"
+    assert not (layout(tmp_path).archive_dir / removed_marker_name(1)).exists(), (
+        "the surviving source withdraws the marker"
+    )
+    assert (layout(tmp_path).sealed_dir / segment_name(1)).exists(), (
+        "the source itself is untouched"
+    )
+
+
+def test_a_marker_left_by_a_crash_before_its_unlink_is_withdrawn(
+    tmp_path: Path,
+) -> None:
+    """A restart reconciles a marker whose sequence is still present."""
+    from buildlimits.outcome_archive_fs import ensure_private_directory
+    from buildlimits.outcome_segment_removed import record_removal
+
+    sealed_source(tmp_path, 1, records_at(NOW - dt.timedelta(hours=1), 1))
+    files = layout(tmp_path)
+    ensure_private_directory(files.archive_dir)
+    record_removal(files.archive_dir, 1)
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=0))
+
+    assert report.status == "ok", "the reconciliation is not a failure"
+    assert not (files.archive_dir / removed_marker_name(1)).exists(), (
+        "the present source withdraws the marker on the next run"
     )
 
 

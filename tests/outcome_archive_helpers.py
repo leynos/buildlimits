@@ -115,6 +115,21 @@ def segment_bytes_for(rows: int) -> int:
     return len(header.encode()) + 1 + rows * (len(record.encode()) + 1)
 
 
+def refuse_removal_without_unlinking(*_args: object, **_kwargs: object) -> typ.NoReturn:
+    """Refuse one removal, leaving every file the caller named in place.
+
+    Both the sealed in-place rewrite and the whole-entry deletion publish a
+    removal marker before their unlink, so the fault they meet here is the one
+    that decides whether the marker must be withdrawn.
+
+    Raises
+    ------
+    OSError
+        Always, naming a removal the process may not perform.
+    """
+    raise OSError(errno.EACCES, "injected removal failure")
+
+
 def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
     """Raise the error an injected filesystem failure reports.
 

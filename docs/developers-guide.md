@@ -452,7 +452,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_retention_history`                                                        | Combining the closed-history inventory with the active snapshot into one retained view                                                                                                                 |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                                                              |
 | `outcome_segment_inventory`, `outcome_segment_scan`                                | Read-only, content-free inventory of sealed and archived segments, and the filesystem walk that lists them                                                                                             |
-| `outcome_segment_removed`                                                          | The durable removal marker a crash-safe deletion publishes before its unlink, and the floor-driven cleanup that retires it                                                                             |
+| `outcome_segment_removed`                                                          | The durable removal marker a crash-safe deletion publishes before its unlink, and the cleanup that retires or withdraws it                                                                             |
 | `outcome_sealed_scan`                                                              | Listing sealed sources and the writer metadata published beside them                                                                                                                                   |
 | `outcome_sealed_trim`                                                              | In-place plain rewrite of one sealed source under a prefix trim, including its marker protocol and metadata repair                                                                                     |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                                                                         |
@@ -1386,8 +1386,11 @@ between, the next inventory reads the marker: `retained_gaps` treats the
 sequence as intentionally removed rather than missing, and the floor derivation
 counts it as deleted once the store no longer holds it, so the sequence cannot
 become a permanent gap. Markers below a recorded floor are cleared once the
-floor explains them, and a marker whose sequence is still present is ignored,
-because a failed unlink would otherwise record a removal that did not happen.
+floor explains them. A marker whose sequence is still present is withdrawn
+instead: a removal whose unlink fails withdraws it as the fault propagates, and
+`clear_restored` reconciles one left by a process that stopped between the
+marker and its unlink. A survived sequence is therefore never excused by the
+record of a removal that did not happen.
 
 A firing's clock reading is guarded across runs. `outcome_archive_clock_guard`
 reads the wall clock and `CLOCK_BOOTTIME` together with the boot identity, and

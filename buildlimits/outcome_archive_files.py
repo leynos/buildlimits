@@ -23,7 +23,10 @@ from buildlimits.outcome_archive_encode import (
     read_source_facts,
     write_sidecar,
 )
-from buildlimits.outcome_archive_fs import publish_no_clobber, remove_private_files
+from buildlimits.outcome_archive_fs import (
+    publish_no_clobber,
+    remove_private_files,
+)
 from buildlimits.outcome_archive_replace import (
     begin_replacement,
     end_replacement,
@@ -35,7 +38,10 @@ from buildlimits.outcome_sealed_trim import (
     sealed_at_of,
     write_sealed_metadata,
 )
-from buildlimits.outcome_segment_removed import record_removal
+from buildlimits.outcome_segment_removed import (
+    record_removal,
+    withdraw_if_survived,
+)
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
@@ -239,18 +245,28 @@ def delete_archive(context: ArchiveContext, entry: SegmentEntry) -> None:
         The run's layout, policy and moment.
     entry : SegmentEntry
         The archive to remove.
+
+    Raises
+    ------
+    OSError
+        If a file cannot be removed. A marker whose entry survives the fault is
+        withdrawn first, so it cannot explain a later loss.
     """
     # The removal record is durable before any unlink, so a process that stops
     # before the run installs its floor still leaves evidence that retention
     # removed this sequence rather than losing it.
     record_removal(context.layout.archive_dir, entry.sequence)
-    remove_private_files(
-        context.layout.archive_dir,
-        [
-            outcome_segments.archive_name(entry.sequence),
-            outcome_segments.sidecar_name(entry.sequence),
-        ],
-    )
+    try:
+        remove_private_files(
+            context.layout.archive_dir,
+            [
+                outcome_segments.archive_name(entry.sequence),
+                outcome_segments.sidecar_name(entry.sequence),
+            ],
+        )
+    except OSError:
+        withdraw_if_survived(context.layout.archive_dir, entry.sequence, entry.path)
+        raise
     end_replacement(context.layout.archive_dir, entry.sequence)
 
 
@@ -273,9 +289,19 @@ def delete_source(context: ArchiveContext, entry: SegmentEntry) -> None:
         The run's layout, policy and moment.
     entry : SegmentEntry
         The sealed source to remove.
+
+    Raises
+    ------
+    OSError
+        If a file cannot be removed. A marker whose entry survives the fault is
+        withdrawn first, so it cannot explain a later loss.
     """
     record_removal(context.layout.archive_dir, entry.sequence)
-    _remove_sealed_source(context, entry.sequence)
+    try:
+        _remove_sealed_source(context, entry.sequence)
+    except OSError:
+        withdraw_if_survived(context.layout.archive_dir, entry.sequence, entry.path)
+        raise
 
 
 def release_source(context: ArchiveContext, entry: SegmentEntry) -> None:

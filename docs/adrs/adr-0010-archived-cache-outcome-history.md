@@ -602,7 +602,10 @@ that case.
   sequence that every later scan reports as a gap. The gap scan treats a marker
   as evidence of an intentional removal, while the floor derivation counts the
   sequence as deleted only when the store no longer holds it, so a marker left
-  by a failed unlink excuses nothing. The retain operation, the marker protocol
+  by a failed unlink excuses nothing. That failed unlink withdraws its marker,
+  and the next maintenance run withdraws any marker whose sequence still has a
+  source or an archive, so a crash between the marker and its unlink cannot
+  make a later loss look intentional. The retain operation, the marker protocol
   and the clock guard are described in the
   [developer's guide §9.1](../developers-guide.md#91-archived-cache-outcome-history).
 

@@ -308,6 +308,9 @@ def _prepare(context: ArchiveContext) -> None:
     outcome_archive_cleanup.remove_maintenance_files(
         layout.sealed_dir, outcome_segments.SEALED_TEMP_PREFIX
     )
+    # A process that stopped between a removal marker and its unlink leaves
+    # the sequence present; the marker must not explain a later loss of it.
+    outcome_segment_removed.clear_restored(layout)
     outcome_archive_lock.require_headroom(
         layout.archive_dir, context.policy.headroom_bytes
     )

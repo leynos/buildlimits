@@ -2757,6 +2757,27 @@ reason = "Each test defines one local refusal that names its fixture's own fault
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_archive_encode.py", "buildlimits/outcome_sealed_trim.py"]
 reason = "Both modules name the archive primitives they import; the shared lines are an import block, and a re-export shim would hide which module owns each function."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_archive_fs.py::is_proven_absent", "buildlimits/outcome_segment_removed.py::_is_held", "buildlimits/supervisor_outcome_setup.py::exists_or_unknown"]
+reason = "Each answers a different question about a path whose lookup failed: one proves absence, one proves presence, and one reports presence-or-unknown; merging them would erase the distinction their callers rely on."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_delete_faults.py", "tests/test_outcome_archive_run_faults.py"]
+reason = "Matching import lists: the deletion-fault suite and the run-fault suite name the same archive fixtures, because each drives a real run; a shared import module would hide which helper each test actually uses."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_delete_faults.py", "tests/test_outcome_retention_diagnostics.py"]
+reason = "Matching import lists: each suite names the archive fixtures and record builders its own run drives, and a re-export module would hide which helper each test uses."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_segment_removed.py", "tests/test_outcome_segment_removed.py"]
+reason = "Matching import lists: each suite names the archive fixtures and store builders its own scenario drives, and a re-export module would hide which helper each test uses."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_delete_faults.py", "tests/test_outcome_archive_settlement.py"]
+reason = "Matching type-checking preludes: the marker module and its unit tests name the symbols their own annotations need, and a shared prelude would publish names neither means."
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_archive_helpers.py::refuse_removal_without_unlinking", "tests/test_outcome_archive_clock_guard.py::refuse"]
+reason = "Each test defines one local refusal that names its fixture's own fault; the shared part is a one-line stub."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_retention_restart.py", "tests/test_outcome_sealed_trim_faults.py"]
+reason = "Both assert the same marker-existence contract from different failure paths: one after a crash before the floor write, one after a re-run reconciles a surviving source."
 [[tool.duplication_gate.unit]]
 unit = "tests/test_predict_dataset_cli_journal.py"
 reason = "The four report cases share only the one-record journal window they count; each asserts a different contract (a failed reading, a gate-only window, a truncated window, a complete window), so the shared call shape is the fixture, not the specification."

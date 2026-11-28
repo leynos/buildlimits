@@ -102,8 +102,29 @@ maintenance pass is repaired rather than trusted.
       §9.1 now describe the retain operation, the marker protocols, the clock
       guard and the internal interfaces, and repository-layout and ADR 010
       cross-reference them.
-- [ ] EP-6 (remaining): re-run every gate, push, reply to the review threads,
-      reconcile the pre-merge rows, readiness, merge.
+- [x] EP-6 (round 3 published): committed as 6be3b84 and pushed. Every gate
+      passes locally: `make check-fmt`, `make lint` (including DF12 pylint,
+      Ambrleaks, dead code, duplication and action validation), `make
+      typecheck`, `make markdownlint` (including spelling), `make nixie` and
+      `make test` (5,095 passed, 89 skipped). The duplication gate needed two
+      new module splits (`outcome_archive_allowance`,
+      `outcome_store_documents` owning the sealed-metadata builder) and fresh
+      allow entries for the enlarged prelude, naming, refusal-stub and
+      import-block families; four superseded entries were removed.
+- [x] EP-6 (local review): `coderabbit review --agent` found one minor
+      data-integrity concern: a removal marker written before an unlink that
+      failed could explain a later loss of a sequence the store still held.
+      Fixed by withdrawing the marker as the fault propagates
+      (`withdraw_if_survived`, keyed on proven absence) and by reconciling, at
+      the start of every locked run, any marker whose sequence still has a
+      source or an archive (`clear_restored`). Tests cover the failed unlink
+      for both the sealed trim and the whole-entry deletion, a crash between
+      marker and unlink, and the reconciliation of a surviving source or
+      archive. The splits pushed two more modules over the line, so the
+      deletion-fault suite moved to
+      `tests/test_outcome_archive_delete_faults.py`.
+- [ ] EP-6 (remaining): hosted CI green, CodeRabbit confirmation, readiness,
+      merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

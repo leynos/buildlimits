@@ -10,6 +10,7 @@ import datetime as dt
 import typing as typ
 from pathlib import Path
 
+import pytest
 from outcome_test_helpers import records_at
 from segment_test_helpers import document, store_layout, write_private
 
@@ -19,11 +20,17 @@ from buildlimits.outcome_archive_run import RunOutcome
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segment_removed import (
     clear_covered,
+    clear_restored,
     record_removal,
     removed_sequences,
+    withdraw_removal,
 )
 from buildlimits.outcome_segment_state import RetentionFloor
-from buildlimits.outcome_segments import removed_marker_name, segment_name
+from buildlimits.outcome_segments import (
+    archive_name,
+    removed_marker_name,
+    segment_name,
+)
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_segments import SegmentLayout
@@ -133,10 +140,11 @@ def test_a_completed_run_clears_only_the_markers_a_floor_explains(
 
 
 def test_clearing_a_missing_directory_does_nothing(tmp_path: Path) -> None:
-    """A store that never wrote a marker has none to clear."""
+    """A store that never wrote a marker has none to clear or withdraw."""
     files = store_layout(tmp_path)
 
     clear_covered(files.archive_dir, 2)
+    withdraw_removal(files.archive_dir, 2)
 
     assert removed_sequences(files.archive_dir) == frozenset(), (
         "an absent archive directory holds no markers"
@@ -162,3 +170,36 @@ def test_a_run_outcome_without_deletions_leaves_the_floor_alone(
     files = _private_archive(tmp_path)
 
     assert _recomputed_floor(files) == 1, "no deletion and no marker advance it"
+
+
+@pytest.mark.parametrize("survivor", ["source", "archive"])
+def test_a_marker_whose_sequence_survived_is_withdrawn(
+    tmp_path: Path, survivor: str
+) -> None:
+    """A failed unlink must not leave a marker that explains a later loss."""
+    files = _private_archive(tmp_path)
+    if survivor == "source":
+        _sealed_source(tmp_path, 1)
+    else:
+        write_private(files.archive_dir / archive_name(1), b"not read by this test")
+    record_removal(files.archive_dir, 1)
+
+    clear_restored(files)
+
+    assert removed_sequences(files.archive_dir) == frozenset(), (
+        f"the present {survivor} withdraws its marker"
+    )
+
+
+def test_a_marker_for_an_absent_sequence_survives_reconciliation(
+    tmp_path: Path,
+) -> None:
+    """The marker is the only record of a removal that completed."""
+    files = _private_archive(tmp_path)
+    record_removal(files.archive_dir, 3)
+
+    clear_restored(files)
+
+    assert removed_sequences(files.archive_dir) == frozenset({3}), (
+        "an absent sequence keeps the record of its removal"
+    )

@@ -12,23 +12,37 @@ present proves nothing: the unlink may have been the step that failed, and the
 floor derivation ignores it.
 """
 
+import contextlib
 import os
 import re
 import typing as typ
 
 from buildlimits.outcome_archive_dirs import open_private_chain_when_present
-from buildlimits.outcome_archive_fs import atomic_write_json, remove_private_files
-from buildlimits.outcome_segments import removed_marker_name
+from buildlimits.outcome_archive_fs import (
+    atomic_write_json,
+    is_proven_absent,
+    remove_private_files,
+)
+from buildlimits.outcome_segments import (
+    archive_name,
+    removed_marker_name,
+    segment_name,
+)
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+    from buildlimits.outcome_segments import SegmentLayout
 
 _REMOVED_RE = re.compile(r"^segment-(\d{12})\.jsonl\.removed$")
 
 __all__ = [
     "clear_covered",
+    "clear_restored",
     "record_removal",
     "removed_sequences",
+    "withdraw_if_survived",
+    "withdraw_removal",
 ]
 
 
@@ -115,3 +129,90 @@ def clear_covered(directory: Path, floor: int) -> None:
     except OSError:
         # The floor is the durable record; a marker left behind is harmless.
         pass
+
+
+def withdraw_removal(directory: Path, sequence: int) -> None:
+    """Withdraw one removal marker whose unlink did not happen.
+
+    A marker published before a failed unlink must not outlive the failure: it
+    would explain a later loss of a sequence the store still holds. A failure
+    to remove the marker is suppressed because the next maintenance run
+    reconciles it again.
+
+    Parameters
+    ----------
+    directory : Path
+        The private archive directory the marker lives in.
+    sequence : int
+        The sequence whose removal did not complete.
+    """
+    with contextlib.suppress(OSError):
+        # A marker left behind is reconciled by clear_restored.
+        remove_private_files(directory, [removed_marker_name(sequence)])
+
+
+def withdraw_if_survived(directory: Path, sequence: int, path: Path) -> None:
+    """Withdraw a marker when the entry survived the unlink that failed.
+
+    An entry the fault removed is proven absent, so its marker stays and the
+    deletion is still recorded. An entry that is still there, or whose
+    presence cannot be proven either way, withdraws the marker: a surviving
+    sequence must not be excused by the record of a removal that did not
+    happen.
+
+    Parameters
+    ----------
+    directory : Path
+        The private archive directory the marker lives in.
+    sequence : int
+        The sequence whose removal failed.
+    path : Path
+        The entry the removal was unlinking.
+    """
+    if not is_proven_absent(path):
+        withdraw_removal(directory, sequence)
+
+
+def clear_restored(layout: SegmentLayout) -> None:
+    """Withdraw the markers whose sequence the store still holds.
+
+    A process can stop after publishing a marker and before its unlink, and a
+    failed unlink leaves the same pair. The next maintenance run reconciles the
+    two: a sequence that still has a sealed source or an archive was not
+    removed, so its marker must not explain a later loss.
+
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The store whose markers are reconciled.
+
+    Notes
+    -----
+    A store that cannot be listed propagates ``OSError``; maintenance then
+    reports the fault rather than trusting a marker it could not check.
+    """
+    for sequence in sorted(removed_sequences(layout.archive_dir)):
+        held = (
+            _is_held(layout.sealed_dir / segment_name(sequence)),
+            _is_held(layout.archive_dir / archive_name(sequence)),
+        )
+        if any(held):
+            withdraw_removal(layout.archive_dir, sequence)
+
+
+def _is_held(path: Path) -> bool:
+    """Whether one file is proven to exist.
+
+    ``Path.exists`` answers ``False`` for every ``OSError``, so an entry the
+    process may not inspect must not be mistaken for an absent one.
+
+    Returns
+    -------
+    bool
+        True only when the file's metadata could be read.
+    """
+    try:
+        path.stat()
+    except OSError:
+        return False
+    return True

@@ -37,7 +37,10 @@ from buildlimits.outcome_archive_rows import (
 from buildlimits.outcome_archive_trim import Trim, TrimWalk
 from buildlimits.outcome_archive_verify import ArchiveFacts, OutputFaultError
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
-from buildlimits.outcome_segment_removed import record_removal
+from buildlimits.outcome_segment_removed import (
+    record_removal,
+    withdraw_if_survived,
+)
 from buildlimits.outcome_store_documents import (
     SealedRows,
     sealed_metadata_document,
@@ -250,6 +253,9 @@ def trim_sealed_source(
     ValueError
         If the entry is not a sealed source. An archive is recompressed by
         ``outcome_archive_files.recompress_archive``.
+    OSError
+        If a file cannot be written or removed. A removal marker whose source
+        survives the fault is withdrawn first.
     """
     if entry.state != "sealed":
         msg = "only a sealed source can be trimmed in place"
@@ -262,7 +268,13 @@ def trim_sealed_source(
             # stops before the run installs its floor leaves evidence that
             # retention removed the sequence rather than losing it.
             record_removal(context.layout.archive_dir, entry.sequence)
-            remove_sealed_files(context.layout.sealed_dir, entry.sequence)
+            try:
+                remove_sealed_files(context.layout.sealed_dir, entry.sequence)
+            except OSError:
+                withdraw_if_survived(
+                    context.layout.archive_dir, entry.sequence, entry.path
+                )
+                raise
             return ActionResult("deleted", entry.sequence)
         begin_sealed_replacement(context.layout.sealed_dir, entry.sequence)
         temporary.replace(entry.path)
