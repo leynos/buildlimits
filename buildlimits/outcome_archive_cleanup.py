@@ -5,6 +5,11 @@ in-place sealed rewrite, into the directory the writer also uses for its own
 seals. Cleanup therefore walks one validated directory descriptor and removes
 only the names a caller's predicate claims, so a concurrent writer's file is
 never touched.
+
+The annotations name ``Path`` and ``cabc`` from the type-checking block. The
+3.14 baseline evaluates annotations lazily (PEP 649), so importing this module
+never resolves them, and a caller that introspects them does so through
+``typing.get_type_hints``, which resolves the module's own imports.
 """
 
 import os

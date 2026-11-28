@@ -166,6 +166,9 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
         The run's report, whatever the store did.
     """
     started = context.now
+    # A fault raised after the lock is taken must report the clock decision the
+    # locked attempt used. Until then, only the pre-lock decision exists.
+    report_context = context
     try:
         if selected.dry_run:
             # A dry run mutates nothing, so it may plan without the lock and
@@ -178,6 +181,7 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
             # them; the pre-lock decision still describes a run that never
             # acquired the lock.
             locked = outcome_archive_firing.guarded(context, selected, started)
+            report_context = locked.context
             with outcome_archive_firing.record_on_failure(
                 locked.context.layout, locked.reading
             ):
@@ -185,16 +189,19 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
                     locked.context, started, locked.reading
                 )
     except outcome_archive_lock.ArchiveBusyError:
+        # Raised before the lock is held, so no locked decision exists.
         return unfinished_report(started, BUSY, context, dry_run=selected.dry_run)
     except outcome_archive_lock.NoHeadroomError:
         return unfinished_report(
-            started, NO_HEADROOM, context, dry_run=selected.dry_run
+            started, NO_HEADROOM, report_context, dry_run=selected.dry_run
         )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return unfinished_report(started, UNREADABLE, context, dry_run=selected.dry_run)
+        return unfinished_report(
+            started, UNREADABLE, report_context, dry_run=selected.dry_run
+        )
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
@@ -204,6 +211,6 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
         return unfinished_report(
             started,
             Unfinished(status, reason),
-            context,
+            report_context,
             dry_run=selected.dry_run,
         )

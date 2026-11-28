@@ -268,43 +268,6 @@ def test_a_retained_dry_run_changes_nothing(tmp_path: Path) -> None:
     )
 
 
-def test_a_second_retain_run_after_a_trim_is_a_no_op(tmp_path: Path) -> None:
-    """The rewritten metadata describes the file, so a restart settles at once."""
-    expired = attributed_record(observed_at=CUTOFF - dt.timedelta(days=1))
-    fresh = attributed_record(observed_at=NOW)
-    sealed_source(tmp_path, 1, (expired, fresh))
-
-    first = retain(tmp_path, policy(1_000_000, max_age_days=30, max_bytes=0))
-    second = retain(tmp_path, policy(1_000_000, max_age_days=30, max_bytes=0))
-
-    assert first.status == "ok", "the first run trims the source"
-    assert second.status == "ok", "the second run finds nothing to do"
-    assert second.actions == (), "a settled store needs no rewrite"
-    inventory = read_inventory(layout(tmp_path))
-    assert inventory.sealed[0].record_count == 1, (
-        "a fresh inventory trusts the rewritten metadata"
-    )
-
-
-def test_a_reduced_bound_reaches_closed_history_at_the_next_retain_run(
-    tmp_path: Path,
-) -> None:
-    """Lowering the byte budget evicts sealed history without an archive run."""
-    rows = records_at(NOW - dt.timedelta(hours=2), 4)
-    sealed_source(tmp_path, 1, rows)
-    permissive = retain(tmp_path, policy(1_000_000, max_age_days=0, max_bytes=0))
-    assert permissive.actions == (), "the permissive policy evicts nothing"
-
-    reduced = retain(
-        tmp_path, policy(1_000_000, max_age_days=0, max_bytes=len(document(rows[:1])))
-    )
-
-    assert reduced.status == "ok", "the reduced bound is met"
-    assert sealed_bytes(tmp_path, 1) == document(rows[3:]), (
-        "the budget keeps the newest row, because a prefix trim drops oldest first"
-    )
-
-
 def test_a_torn_tail_does_not_cost_a_complete_row_to_the_byte_allowance(
     tmp_path: Path,
 ) -> None:

@@ -35,6 +35,12 @@ cannot be compared with the boot time that follows: both clocks restarted.
 def system_boot_id() -> str | None:
     """Read the current boot's identifier.
 
+    None is the explicit "unknown" value, not a failure to report: the
+    archiver cannot compare two readings across a boot identity it does not
+    have, so the clock guard documents that it applies no guard and the report
+    records no skew. An operating-system read fault and an absent file are
+    the same unknown here because neither says whether the host rebooted.
+
     Returns
     -------
     str | None
@@ -48,6 +54,12 @@ def system_boot_id() -> str | None:
 
 def system_boottime() -> float | None:
     """Read ``CLOCK_BOOTTIME``, which keeps counting across suspend.
+
+    As with the boot identity, None is the explicit "unknown" value: without
+    a boot-clock reading the guard cannot tell a wall-clock jump from a
+    suspend, so it applies no guard and the report records no skew. A platform
+    without the clock and a failed read are indistinguishable for that
+    decision.
 
     Returns
     -------

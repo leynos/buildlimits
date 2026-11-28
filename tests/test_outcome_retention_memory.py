@@ -17,7 +17,7 @@ from segment_test_helpers import write_private
 
 from buildlimits.outcome_archive import RunOptions, run_retain
 from buildlimits.outcome_segments import SegmentLayout, sealed_meta_name, segment_name
-from buildlimits.outcome_store_sealing import sealed_metadata
+from buildlimits.outcome_store_documents import sealed_metadata
 
 # An in-place trim streams one row at a time and holds no encoder dictionary,
 # so its peak is this package's bookkeeping plus one row. Measured well below

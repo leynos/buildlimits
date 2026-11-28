@@ -49,6 +49,8 @@ __all__ = [
     "SEQUENCE_NAME",
     "SegmentLayout",
     "archive_name",
+    "maintenance_prefix",
+    "removed_marker_name",
     "replacing_name",
     "sealed_marker_name",
     "sealed_meta_name",
@@ -82,6 +84,26 @@ def _named(sequence: int, suffix: str) -> str:
         The zero-padded segment name with ``suffix`` appended.
     """
     return f"{segment_name(sequence)}{suffix}"
+
+
+def maintenance_prefix(sequence: int) -> str:
+    """Return the name prefix a maintenance rewrite gives its temporaries.
+
+    The prefix is distinct from the writer's own temporaries, so a concurrent
+    seal's metadata file can never be removed by the maintenance cleanup, and
+    an abandoned maintenance temporary stays identifiable for the next run.
+
+    Returns
+    -------
+    str
+        The maintenance prefix, carrying the sequence for diagnosis.
+
+    Examples
+    --------
+    >>> maintenance_prefix(7)
+    'retain-segment-000000000007.jsonl'
+    """
+    return f"{SEALED_TEMP_PREFIX}-{segment_name(sequence)}"
 
 
 def archive_name(sequence: int) -> str:
@@ -131,6 +153,27 @@ def sealed_meta_name(sequence: int) -> str:
         A zero-padded ``segment-<sequence>.jsonl.meta.json`` name.
     """
     return _named(sequence, ".meta.json")
+
+
+def removed_marker_name(sequence: int) -> str:
+    """Return the marker recording that retention removed one sequence.
+
+    The retention floor is written only after a run completes, so a process
+    that stops between an unlink and that write would leave the next firing
+    unable to tell an intentional removal from lost history. This marker is
+    published before the unlink and cleared once a floor covers it.
+
+    Returns
+    -------
+    str
+        A zero-padded ``segment-<sequence>.jsonl.removed`` name.
+
+    Examples
+    --------
+    >>> removed_marker_name(7)
+    'segment-000000000007.jsonl.removed'
+    """
+    return _named(sequence, ".removed")
 
 
 def sealed_marker_name(sequence: int) -> str:

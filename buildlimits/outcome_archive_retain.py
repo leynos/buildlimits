@@ -14,6 +14,7 @@ import typing as typ
 
 from buildlimits import outcome_archive_pending, outcome_segment_inventory
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_fs import is_proven_absent
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_plan import PlanInputs, PlanSummary, plan_run
 from buildlimits.outcome_archive_run import (
@@ -157,6 +158,7 @@ def _pending_work(
             blocked=outcome_archive_pending.failed_eviction(run, outcome),
             applied=applied,
             removed=removed,
+            proven_absent=_proven_absent(follow_up),
         ),
     )
     if outcome_archive_pending.has_work(narrowed):
@@ -166,6 +168,28 @@ def _pending_work(
     # retryable instead of claiming success over a budget it could not
     # measure, while a store with nothing pending reports settled.
     return narrowed if follow_up.retention_deferred else None
+
+
+def _proven_absent(plan: Plan) -> frozenset[int]:
+    """Probe the plan's entries for a confirmed absence.
+
+    The bookkeeping module decides which steps to keep; only the caller that
+    owns the store probes its files. A lookup that fails for any reason other
+    than absence leaves the step in place, so its failure is recorded.
+
+    Returns
+    -------
+    frozenset[int]
+        Sequences whose files are confirmed gone.
+    """
+    entries = [
+        *plan.sealed_repairs,
+        *(entry for entry, _trim in plan.trims),
+        *plan.deletes,
+    ]
+    return frozenset(
+        entry.sequence for entry in entries if is_proven_absent(entry.path)
+    )
 
 
 def _replan(run: ArchiveRun) -> Plan:

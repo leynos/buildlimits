@@ -53,6 +53,7 @@ def settled_report(
         ),
         operation=run.context.operation,
         clock_skew=run.context.clock_skew,
+        clock_baseline_unreadable=run.context.clock_baseline_unreadable,
         started_at=run.started_at,
         finished_at=run.context.clock(),
         **settled_fields(run, inventory, active, is_settled=settled.is_settled),

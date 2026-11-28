@@ -16,14 +16,14 @@ import contextlib
 import typing as typ
 
 from buildlimits import outcome_segments
-from buildlimits.outcome_archive_fs import atomic_write_json
+from buildlimits.outcome_archive_fs import atomic_write_json_prefixed
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
-def _begin(directory: Path, name: str, sequence: int) -> Path:
+def _begin(directory: Path, name: str, sequence: int, *, prefix: str) -> Path:
     """Record that one file is about to be replaced by a durable marker.
 
     Returns
@@ -32,7 +32,9 @@ def _begin(directory: Path, name: str, sequence: int) -> Path:
         The marker naming that sequence.
     """
     marker = directory / name
-    atomic_write_json(marker, {"schema": 1, "sequence": sequence})
+    atomic_write_json_prefixed(
+        marker, {"schema": 1, "sequence": sequence}, prefix=prefix
+    )
     return marker
 
 
@@ -66,7 +68,8 @@ def begin_replacement(archive_dir: Path, sequence: int) -> Path:
     Path
         The durable marker naming that sequence.
     """
-    return _begin(archive_dir, outcome_segments.replacing_name(sequence), sequence)
+    name = outcome_segments.replacing_name(sequence)
+    return _begin(archive_dir, name, sequence, prefix=name)
 
 
 def end_replacement(archive_dir: Path, sequence: int) -> None:
@@ -97,7 +100,14 @@ def begin_sealed_replacement(sealed_dir: Path, sequence: int) -> Path:
     Path
         The durable marker naming that sequence.
     """
-    return _begin(sealed_dir, outcome_segments.sealed_marker_name(sequence), sequence)
+    return _begin(
+        sealed_dir,
+        outcome_segments.sealed_marker_name(sequence),
+        sequence,
+        # The sealed directory is shared with the supervisor, so the marker's
+        # temporary must carry the maintenance prefix the cleanup looks for.
+        prefix=outcome_segments.maintenance_prefix(sequence),
+    )
 
 
 def end_sealed_replacement(sealed_dir: Path, sequence: int) -> None:

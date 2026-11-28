@@ -6,14 +6,23 @@ report that claims a baseline was written when it was not would send an
 operator looking for a file that does not exist.
 """
 
+import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
 
 from outcome_archive_helpers import NOW, layout, policy, refuse
 
-from buildlimits import outcome_archive_clock_guard, outcome_archive_firing
+from buildlimits import (
+    outcome_archive,
+    outcome_archive_clock_guard,
+    outcome_archive_clock_state,
+    outcome_archive_execute,
+    outcome_archive_firing,
+    outcome_archive_lock,
+)
 from buildlimits.outcome_archive import RunOptions, run_retain
+from buildlimits.outcome_archive_clock_state import BaselineRead
 from buildlimits.outcome_archive_report import Maintenance, RunReport
 
 if typ.TYPE_CHECKING:
@@ -54,7 +63,7 @@ def _failing_baseline(
     ClockReading
         The reading the recorder is asked to persist.
     """
-    monkeypatch.setattr(outcome_archive_clock_guard, "write_baseline", refuse)
+    monkeypatch.setattr(outcome_archive_clock_state, "write_baseline", refuse)
     return outcome_archive_clock_guard.observe(wall=NOW, boot_id="boot", boottime=1.0)
 
 
@@ -123,6 +132,73 @@ def test_the_persisted_report_names_a_failed_baseline_write(
     )
 
 
+def test_a_post_lock_fault_reports_the_locked_clock_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault after the lock reports the decision that attempt used.
+
+    Another firing can record a newer baseline while this one waits for the
+    lock, so the pre-lock decision may differ from the locked one. Reporting
+    the former would name a clock state the run never acted on.
+    """
+    store_layout = layout(tmp_path)
+    skewed = outcome_archive_clock_guard.ClockReading(
+        boot_id="boot",
+        wall=NOW - dt.timedelta(days=3),
+        boottime=100.0,
+    )
+    readings = iter([BaselineRead(None, "missing"), BaselineRead(skewed, "recorded")])
+
+    def read_baseline(_layout: object) -> BaselineRead:
+        """Return the pre-lock reading, then a baseline another firing wrote."""
+        return next(readings)
+
+    def out_of_space(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Fail as a full filesystem would once the lock is held."""
+        raise outcome_archive_lock.NoHeadroomError(28, "no space left")
+
+    monkeypatch.setattr(outcome_archive_clock_state, "read_baseline", read_baseline)
+    monkeypatch.setattr(outcome_archive_execute, "execute_locked", out_of_space)
+    options = RunOptions(now=NOW, boot_id=lambda: "boot", boottime=lambda: 100.0)
+
+    report = run_retain(store_layout, policy(1_000_000), options)
+
+    assert report.status == "no_headroom", "the fault keeps its closed status"
+    assert report.clock_skew is True, (
+        "the report carries the locked decision, not the pre-lock one"
+    )
+
+
+def test_a_busy_lock_reports_the_pre_lock_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that never took the lock reports the only decision it made."""
+    store_layout = layout(tmp_path)
+    reading = outcome_archive_clock_guard.ClockReading(
+        boot_id="boot", wall=NOW, boottime=100.0
+    )
+    monkeypatch.setattr(
+        outcome_archive_clock_state,
+        "read_baseline",
+        lambda _layout: BaselineRead(reading, "recorded"),
+    )
+
+    def busy(_lock: object) -> typ.NoReturn:
+        """Fail as a second firing that cannot take the lock would."""
+        raise outcome_archive_lock.ArchiveBusyError
+
+    monkeypatch.setattr(outcome_archive_lock.ArchiveLock, "__enter__", busy)
+
+    report = outcome_archive.run_archive(
+        store_layout,
+        policy(1_000_000),
+        options=RunOptions(now=NOW, boot_id=lambda: "boot", boottime=lambda: 100.0),
+    )
+
+    assert report.status == "busy", "the lock is still held by another firing"
+    assert report.clock_skew is False, "no locked decision exists to report"
+
+
 def test_a_reading_that_never_settles_reports_unsettled_and_records_the_baseline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,6 +219,6 @@ def test_a_reading_that_never_settles_reports_unsettled_and_records_the_baseline
 
     assert report.status == "unsettled", "the timer retries the firing"
     assert report.plan is None, "no plan is reported from a torn pair"
-    assert outcome_archive_clock_guard.read_baseline(store_layout) is not None, (
-        "the firing records its reading even when it plans nothing"
-    )
+    assert (
+        outcome_archive_clock_state.read_baseline(store_layout).reading is not None
+    ), "the firing records its reading even when it plans nothing"

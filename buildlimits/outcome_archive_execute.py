@@ -21,6 +21,7 @@ from buildlimits import (
     outcome_archive_settled,
     outcome_archive_state,
     outcome_segment_inventory,
+    outcome_segment_removed,
     outcome_segment_state,
     outcome_segments,
 )
@@ -39,6 +40,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_segment_inventory import Inventory
+    from buildlimits.outcome_segments import SegmentLayout
 
 __all__ = ["execute_locked", "inspect"]
 
@@ -112,6 +114,7 @@ def _install_state(context: ArchiveContext, floor: int, report: RunReport) -> Ru
         # not be replaced. The floor gets its own attempt, so completed
         # deletions are not reported as gaps later.
         outcome_archive_state.write_floor_after_failure(context.layout, floor, report)
+        _clear_removal_markers(context.layout)
         return dc.replace(
             report,
             status="failed",
@@ -122,7 +125,20 @@ def _install_state(context: ArchiveContext, floor: int, report: RunReport) -> Ru
                 reason="state_write_failed",
             ),
         )
+    _clear_removal_markers(context.layout)
     return report
+
+
+def _clear_removal_markers(layout: SegmentLayout) -> None:
+    """Remove the removal markers a recorded floor now explains.
+
+    The markers are read back from the store rather than assumed from the
+    attempted floor: when both floor writes failed, nothing records the
+    deletion, and the markers are the only evidence left.
+    """
+    recorded = outcome_segment_state.read_retention_floor(layout).sequence
+    if recorded is not None:
+        outcome_segment_removed.clear_covered(layout.archive_dir, recorded)
 
 
 def _plan(
@@ -216,10 +232,12 @@ def _execute(
     outcome = outcome_archive_run.RunOutcome()
     try:
         _perform(run, outcome)
+        layout = run.context.layout
         floor = outcome_archive_state.retention_floor(
-            outcome_segment_inventory.read_inventory(run.context.layout),
-            outcome_segment_state.read_retention_floor(run.context.layout),
+            outcome_segment_inventory.read_inventory(layout),
+            outcome_segment_state.read_retention_floor(layout),
             outcome,
+            outcome_segment_removed.removed_sequences(layout.archive_dir),
         )
         return floor, _report(run, outcome, floor)
     except UnknownActiveHistoryError:

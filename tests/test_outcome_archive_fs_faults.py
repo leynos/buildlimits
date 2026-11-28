@@ -12,8 +12,8 @@ import collections.abc as cabc
 import contextlib
 import errno
 import os
-import typing as typ
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from outcome_archive_helpers import refuse
@@ -98,16 +98,18 @@ def test_a_stale_temporary_that_cannot_be_removed_is_kept(
     stale = tmp_path / ".state.abcdef.tmp"
     stale.write_text("{}")
 
-    def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
-        """Refuse the removal as a held entry would."""
-        raise OSError(errno.EBUSY, "the entry is held")
-
+    refuse = mock.Mock(side_effect=OSError(errno.EBUSY, "the entry is held"))
     monkeypatch.setattr(outcome_archive_fs.os, "unlink", refuse)
 
     removed = remove_stale_temps(tmp_path)
 
     assert not removed, "a removal that failed is not reported as removed"
     assert stale.exists(), "the held entry survives"
+    # The removal is attempted by scanned name only, never by a re-resolved
+    # path that another account could have replaced since the scan.
+    assert [call.args for call in refuse.call_args_list] == [(stale.name,)], (
+        "the held entry is addressed by the name the scan returned"
+    )
 
 
 class _UnreadableEntry:

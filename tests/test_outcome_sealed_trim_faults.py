@@ -278,7 +278,7 @@ def test_a_trim_meeting_a_corrupt_source_quarantines_it(tmp_path: Path) -> None:
     """A row a planned trim cannot decode moves the source to quarantine."""
     import json
 
-    from buildlimits.outcome_store_sealing import sealed_metadata
+    from buildlimits.outcome_store_documents import sealed_metadata
 
     directory = layout(tmp_path).sealed_dir
     path = write_private(directory / segment_name(1), document(()) + b"{bad}\n{}\n")

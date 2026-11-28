@@ -117,6 +117,8 @@ def _write_clock(report: RunReport) -> None:
     this firing did not expire history by age. The next undisturbed firing
     applies the real bound.
     """
+    if report.clock_baseline_unreadable:
+        print("clock baseline: unreadable; no guard was applied")
     if not report.clock_skew:
         return
     if report.dry_run:

@@ -42,6 +42,7 @@ def report_dict(report: RunReport) -> dict[str, object]:
         "operation": report.operation,
         "status": report.status,
         "clock_skew": report.clock_skew,
+        "clock_baseline_unreadable": report.clock_baseline_unreadable,
         "dry_run": report.dry_run,
         "started_at": utc_text(report.started_at),
         "finished_at": utc_text(report.finished_at),

@@ -16,9 +16,10 @@ import hashlib
 import os
 import typing as typ
 
-from buildlimits import outcome_segment_sidecar, outcome_segments, outcome_store_sealing
+from buildlimits import outcome_segment_sidecar, outcome_segments
+from buildlimits.outcome_archive_allowance import composed_trim
 from buildlimits.outcome_archive_context import ActionResult
-from buildlimits.outcome_archive_encode import composed_trim, discard, read_source_facts
+from buildlimits.outcome_archive_encode import discard, read_source_facts
 from buildlimits.outcome_archive_fs import (
     open_private_regular,
     open_private_temp,
@@ -36,7 +37,12 @@ from buildlimits.outcome_archive_rows import (
 from buildlimits.outcome_archive_trim import Trim, TrimWalk
 from buildlimits.outcome_archive_verify import ArchiveFacts, OutputFaultError
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
-from buildlimits.outcome_store_documents import write_metadata
+from buildlimits.outcome_segment_removed import record_removal
+from buildlimits.outcome_store_documents import (
+    SealedRows,
+    sealed_metadata_document,
+    write_metadata,
+)
 from buildlimits.outcome_store_io import fsync_directory
 from buildlimits.utc_text import optional_utc_moment
 
@@ -49,27 +55,11 @@ if typ.TYPE_CHECKING:
 
 __all__ = [
     "build_sealed_temp",
-    "maintenance_prefix",
     "remove_sealed_files",
     "sealed_at_of",
     "trim_sealed_source",
     "write_sealed_metadata",
 ]
-
-
-def maintenance_prefix(sequence: int) -> str:
-    """Return the name prefix one sealed rewrite gives its temporary file.
-
-    The prefix is distinct from the writer's own temporaries, so a concurrent
-    seal's metadata file can never be removed by the maintenance cleanup.
-
-    Returns
-    -------
-    str
-        The maintenance prefix, carrying the sequence for diagnosis.
-    """
-    name = outcome_segments.segment_name(sequence)
-    return f"{outcome_segments.SEALED_TEMP_PREFIX}-{name}"
 
 
 def build_sealed_temp(
@@ -95,7 +85,8 @@ def build_sealed_temp(
         does not scan back is refused by ``_verified_facts``.
     """
     descriptor, temporary = open_private_temp(
-        context.layout.sealed_dir, prefix=maintenance_prefix(entry.sequence)
+        context.layout.sealed_dir,
+        prefix=outcome_segments.maintenance_prefix(entry.sequence),
     )
     try:
         written = _write_temp(entry.path, descriptor, trim)
@@ -160,10 +151,10 @@ def write_sealed_metadata(
         The moment the source was first sealed, preserved across a rewrite, or
         None to record the run's own moment.
     """
-    document = outcome_store_sealing.sealed_metadata_document(
+    document = sealed_metadata_document(
         sequence=sequence,
         salt_id=facts.salt_id,
-        rows=outcome_store_sealing.SealedRows(
+        rows=SealedRows(
             record_count=facts.record_count,
             first_observed_at=facts.first_observed_at,
             last_observed_at=facts.last_observed_at,
@@ -267,6 +258,10 @@ def trim_sealed_source(
     temporary, facts = build_sealed_temp(context, entry, trim)
     try:
         if facts.record_count == 0:
+            # The removal is recorded before the unlink, so a process that
+            # stops before the run installs its floor leaves evidence that
+            # retention removed the sequence rather than losing it.
+            record_removal(context.layout.archive_dir, entry.sequence)
             remove_sealed_files(context.layout.sealed_dir, entry.sequence)
             return ActionResult("deleted", entry.sequence)
         begin_sealed_replacement(context.layout.sealed_dir, entry.sequence)

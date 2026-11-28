@@ -87,8 +87,23 @@ maintenance pass is repaired rather than trusted.
       failure. Both are fixed, with tests for byte and record bounds under a
       withheld age bound, a restart sealed then trimmed by `retain`, and a
       whole-segment record eviction with the XZ entry points disabled.
-- [ ] EP-6 (remaining): hosted CI green, assessment confirmation, formal
-      review, readiness, merge.
+- [x] EP-6 (formal review round 3): all six inline findings and the minor
+      finding are addressed. The clock baseline read moved to a filesystem
+      adapter that names an environmental read failure separately from an
+      absent or damaged record; the locked attempt's clock decision is what a
+      post-lock fault reports; the sealed rewrite's marker temporary carries
+      the maintenance prefix; the byte allowance counts the newline a plain
+      rewrite restores; `sealed_metadata_document` documents its parameters and
+      the naive-timestamp refusal; the sealed fixture directory is created
+      `0700`; the cleanup fault test stubs `unlink` with a mock and asserts the
+      scanned name; and a retention deletion publishes a durable
+      `segment-NNNNNNNNNNNN.jsonl.removed` marker before unlinking, which the
+      gap scan and the next floor derivation read. The developer's guide §4 and
+      §9.1 now describe the retain operation, the marker protocols, the clock
+      guard and the internal interfaces, and repository-layout and ADR 010
+      cross-reference them.
+- [ ] EP-6 (remaining): re-run every gate, push, reply to the review threads,
+      reconcile the pre-merge rows, readiness, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

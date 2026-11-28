@@ -11,7 +11,12 @@ import contextlib
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_archive_clock_guard as clock_guard
+from buildlimits import (
+    outcome_archive_clock_guard as clock_guard,
+)
+from buildlimits import (
+    outcome_archive_clock_state as clock_state,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -62,13 +67,14 @@ def guarded(
         boot_id=selected.boot_id(),
         boottime=selected.boottime(),
     )
-    previous = clock_guard.read_baseline(context.layout)
-    skew = clock_guard.is_skewed(previous, reading)
+    baseline = clock_state.read_baseline(context.layout)
+    skew = clock_guard.is_skewed(baseline.reading, reading)
     return Guarded(
         context=dc.replace(
             context,
             clock_skew=skew,
             suppress_age=skew and not selected.dry_run,
+            clock_baseline_unreadable=baseline.state == "unreadable",
         ),
         reading=reading,
     )
@@ -93,7 +99,7 @@ def record(
         maintenance fault.
     """
     try:
-        clock_guard.write_baseline(layout, reading)
+        clock_state.write_baseline(layout, reading)
     except OSError:
         maintenance = dc.replace(report.maintenance, baseline_written=False)
         if report.reason is not None:
@@ -124,5 +130,5 @@ def record_on_failure(
         yield
     except BaseException:
         with contextlib.suppress(OSError):
-            clock_guard.write_baseline(layout, reading)
+            clock_state.write_baseline(layout, reading)
         raise

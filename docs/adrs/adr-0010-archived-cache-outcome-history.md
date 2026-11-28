@@ -594,6 +594,17 @@ that case.
   `last-retain.json` and publishes a `retention_run` metric record with the
   archive event's fields, so a dashboard can compare the two operations without
   learning a second vocabulary.
+- **D49, 2026-11-28.** A retention deletion is made crash-safe without a
+  transaction. Before any file of the sequence is unlinked, the run publishes
+  `segment-NNNNNNNNNNNN.jsonl.removed` in the archive directory, and the marker
+  is cleared once a recorded floor covers it. The floor is written after the
+  run, so a process that stops in between would otherwise leave a source-less
+  sequence that every later scan reports as a gap. The gap scan treats a marker
+  as evidence of an intentional removal, while the floor derivation counts the
+  sequence as deleted only when the store no longer holds it, so a marker left
+  by a failed unlink excuses nothing. The retain operation, the marker protocol
+  and the clock guard are described in the
+  [developer's guide §9.1](../developers-guide.md#91-archived-cache-outcome-history).
 
 ## References
 

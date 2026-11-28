@@ -72,12 +72,18 @@ class LifecycleModel:
     floor : int | None
         The floor the last completed run should have recorded, or None before
         any run has recorded one.
+    removed : set[int]
+        Sequences retention removed on purpose, whether or not the floor could
+        advance past them. A removal above an earlier hole is not a gap: the
+        store keeps a durable record of the removal, so the report names only
+        sequences without one.
     """
 
     groups: dict[int, list[OutcomeRecord]]
     active: list[OutcomeRecord]
     counter: int
     floor: int | None = None
+    removed: set[int] = dc.field(default_factory=set)
 
     @property
     def records(self) -> list[OutcomeRecord]:
@@ -100,8 +106,9 @@ class LifecycleModel:
         Only a sequence between the floor and the highest survivor is
         reportable: below the floor retention removed it on purpose, and above
         every survivor the store is indistinguishable from one that simply
-        ended there. An intentional deletion above an earlier gap is reported
-        too, because only a contiguous deleted prefix advances the floor.
+        ended there. A sequence retention removed above an earlier hole is not
+        a gap either, even though the floor cannot advance past it: the store
+        keeps a durable removal record the scan reads.
 
         Returns
         -------
@@ -117,7 +124,7 @@ class LifecycleModel:
         return tuple(
             sequence
             for sequence in range(lowest, highest)
-            if sequence not in self.groups
+            if sequence not in self.groups and sequence not in self.removed
         )
 
     def drop(self, sequence: int) -> None:
@@ -234,7 +241,8 @@ class LifecycleModel:
         it is known to have had: everything that survives this run plus
         everything it deleted. Only a contiguous deleted prefix then advances
         the floor, so a sequence that went missing for another reason keeps
-        being reported as a gap.
+        being reported as a gap. A deletion is remembered as intentional
+        whether or not the floor could advance past it.
 
         Parameters
         ----------
@@ -242,6 +250,7 @@ class LifecycleModel:
             The sequences this run deletes whole.
         """
         removed = set(deleted)
+        self.removed.update(removed)
         if self.floor is None:
             self.floor = min([*self.groups, *removed], default=0)
         while self.floor in removed:

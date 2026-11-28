@@ -85,6 +85,10 @@ class ArchiveContext:
         follow-up passes. This is the guard's effect, and it is separate from
         ``clock_skew`` so an inspection can report the decision without acting
         on it.
+    clock_baseline_unreadable : bool
+        Whether the persisted clock baseline could not be read for an
+        environmental reason. The guard applies no comparison, and the report
+        names the fault rather than presenting the baseline as absent.
     clock : Callable[[], datetime]
         The UTC clock read for the report's finish time, so a test can pin
         the whole report instead of only its start.
@@ -103,6 +107,7 @@ class ArchiveContext:
     operation: Operation = "archive"
     clock_skew: bool = False
     suppress_age: bool = False
+    clock_baseline_unreadable: bool = False
     clock: cabc.Callable[[], dt.datetime] = utc_now
     quarantine_token: cabc.Callable[[], str] = _required_token
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry

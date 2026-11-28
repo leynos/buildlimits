@@ -40,6 +40,7 @@ def retention_floor(
     inventory: Inventory,
     previous: outcome_segment_state.RetentionFloor,
     outcome: RunOutcome,
+    durable_removed: cabc.Iterable[int] = (),
 ) -> int:
     """Return the lowest sequence this history intentionally starts at.
 
@@ -61,6 +62,10 @@ def retention_floor(
         recorded one derives its baseline from the history it has.
     outcome : RunOutcome
         The actions this run performed.
+    durable_removed : Iterable[int]
+        Sequences a previous run recorded as removed before it stopped. Only a
+        sequence the inventory no longer holds counts, because a marker whose
+        unlink failed describes a removal that did not happen.
 
     Returns
     -------
@@ -68,9 +73,11 @@ def retention_floor(
         The retention floor to persist.
     """
     present = [entry.sequence for entry in inventory.effective]
+    held = set(present)
     deleted = {
         action.sequence for action in outcome.actions if action.action == "deleted"
     }
+    deleted.update(sequence for sequence in durable_removed if sequence not in held)
     floor = _floor_baseline(present, deleted, previous)
     # Only a contiguous deleted prefix advances the floor. A sequence that is
     # missing without a deletion may be a gap retention did not create, and

@@ -13,7 +13,7 @@ from segment_test_helpers import document, write_private
 from segment_test_helpers import store_layout as layout
 
 from buildlimits.outcome_segments import sealed_meta_name, segment_name
-from buildlimits.outcome_store_sealing import sealed_metadata
+from buildlimits.outcome_store_documents import sealed_metadata
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -57,6 +57,10 @@ def sealed_source(
         The source path.
     """
     directory = layout(root).sealed_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    # The archiver refuses a directory shared with another account, so a
+    # fixture built on a permissive umask must still describe a real store.
+    directory.chmod(0o700)
     path = write_private(directory / segment_name(sequence), document(tuple(rows)))
     metadata = sealed_metadata(list(rows), sequence, "salt-1", sealed_at)
     (directory / sealed_meta_name(sequence)).write_text(

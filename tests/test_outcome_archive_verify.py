@@ -11,13 +11,17 @@ import hashlib
 import io
 import json
 import lzma
+from pathlib import Path
 
 import pytest
 from outcome_test_helpers import records_around_a_cutoff, records_at
 from segment_test_helpers import document as encode_document
 
 from buildlimits import outcome_record_encode
-from buildlimits.outcome_archive_encode import policy_dropped_bytes
+from buildlimits.outcome_archive_allowance import (
+    composed_trim,
+    policy_dropped_bytes,
+)
 from buildlimits.outcome_archive_trim import Trim
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
@@ -319,6 +323,37 @@ def test_an_unterminated_tail_is_not_written_into_the_archive() -> None:
         "the archive holds only complete rows"
     )
     assert facts.had_torn_tail, "the source's tear is reported on the archive"
+
+
+def test_an_unterminated_final_row_costs_the_newline_its_rewrite_restores(
+    tmp_path: Path,
+) -> None:
+    """A decodable final row is written terminated, so it grows by one byte.
+
+    Measuring the allowance against the shorter on-disk size would accept a
+    suffix the written document then exceeds by that newline. Normalizing the
+    source size drops the oldest row instead.
+    """
+    document = encode_document(records_at(NOW, 2))
+    source = tmp_path / "segment.jsonl"
+    source.write_bytes(document[:-1])
+
+    trim = composed_trim(
+        source,
+        Trim(allowed_bytes=len(document) - 1, source_bytes=len(document) - 1),
+        is_compressed=False,
+    )
+    facts, archived = _write(document, trim)
+
+    assert trim.source_bytes == len(document), (
+        "the restored newline is part of the document the rewrite emits"
+    )
+    assert archived == _row(document, 0) + _row(document, 2), (
+        "the oldest row leaves so the written suffix fits"
+    )
+    assert facts.logical_bytes <= len(document) - 1, (
+        "the written document is not one byte over the allowance"
+    )
 
 
 def test_fact_matching_ignores_the_observation_span() -> None:

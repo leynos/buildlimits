@@ -17,7 +17,7 @@ from buildlimits.outcome_archive_encode import (
     read_source_facts,
     write_sidecar,
 )
-from buildlimits.outcome_archive_files import archive_source, delete_source
+from buildlimits.outcome_archive_files import archive_source, release_source
 from buildlimits.outcome_archive_fs import remove_private_files
 from buildlimits.outcome_archive_quarantine import (
     quarantine_and_remove_sidecar,
@@ -89,7 +89,7 @@ def reconcile_duplicate(
         # which the verified archive's facts can be recorded before the source
         # that could regenerate them is removed. The sidecar is authoritative.
         write_sidecar(context, archived.sequence, existing)
-    delete_source(context, sealed)
+    release_source(context, sealed)
     return ActionResult(
         "reconciled",
         sealed.sequence,

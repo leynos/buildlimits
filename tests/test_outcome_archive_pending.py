@@ -20,8 +20,6 @@ from buildlimits.outcome_segment_inventory import SegmentEntry
 from buildlimits.outcome_segments import segment_name
 
 if typ.TYPE_CHECKING:
-    import pytest
-
     from buildlimits.outcome_archive_trim import Trim
 
 
@@ -121,7 +119,11 @@ def test_a_failure_without_its_deletion_still_blocks_newer_work(
     )
 
 
-def _narrowed(root: Path, plan: Plan) -> Plan:
+def _narrowed(
+    root: Path,
+    plan: Plan,
+    proven_absent: frozenset[int] = frozenset(),
+) -> Plan:
     """Narrow one plan with no completed or failed work behind it.
 
     Returns
@@ -133,37 +135,36 @@ def _narrowed(root: Path, plan: Plan) -> Plan:
     return outcome_archive_pending.narrow(
         run.plan,
         outcome_archive_pending.Done(
-            failed=set(), blocked=None, applied={}, removed=set()
+            failed=set(),
+            blocked=None,
+            applied={},
+            removed=set(),
+            proven_absent=proven_absent,
         ),
     )
 
 
-def test_an_uninspectable_entry_is_not_treated_as_absent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Only a proven absence drops a step; an inspection fault keeps it.
+def test_an_unproven_absence_is_not_treated_as_absent(tmp_path: Path) -> None:
+    """Only a proven absence drops a step; an unproven one keeps it.
 
     ``Path.exists`` reports ``False`` for every ``OSError``, so a directory the
-    process may no longer inspect would silently lose its planned deletion and
-    let a newer one run first.
+    process may no longer inspect must not silently lose its planned deletion
+    and let a newer one run first. The caller passes no absence here, exactly
+    as it would when its own probe could not establish one.
     """
     entry = _entry(tmp_path, 1)
-    # The path is left absent on purpose: a faulty ``Path.exists`` check would
-    # then drop the step, while "absence was not proven" must keep it.
-    monkeypatch.setattr(
-        outcome_archive_pending, "is_proven_absent", lambda _path: False
-    )
-
+    # The path is left absent on purpose: a bare existence check would drop the
+    # step, while "absence was not proven" must keep it.
     narrowed = _narrowed(tmp_path, Plan(deletes=(entry,)))
 
-    assert narrowed.deletes == (entry,), "the step survives an inspection fault"
+    assert narrowed.deletes == (entry,), "the step survives an unproven absence"
 
 
 def test_a_proven_absent_entry_is_dropped(tmp_path: Path) -> None:
     """An entry that is confirmed gone has no step left to perform."""
     entry = _entry(tmp_path, 1)
 
-    narrowed = _narrowed(tmp_path, Plan(deletes=(entry,)))
+    narrowed = _narrowed(tmp_path, Plan(deletes=(entry,)), frozenset({1}))
 
     assert narrowed.deletes == (), "a missing entry is not acted on again"
     assert not outcome_archive_pending.has_work(narrowed), "nothing remains"

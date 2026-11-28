@@ -12,8 +12,6 @@ import dataclasses as dc
 import operator
 import typing as typ
 
-from buildlimits.outcome_archive_fs import is_proven_absent
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -52,12 +50,17 @@ class Done:
         decided from.
     removed : set[int]
         Sequences this run removed whole.
+    proven_absent : frozenset[int]
+        Sequences whose files a caller has confirmed are gone. Only a proven
+        absence drops a planned step; an entry that cannot be inspected stays
+        so its failure is recorded.
     """
 
     failed: set[int]
     blocked: int | None
     applied: AppliedTrims
     removed: set[int]
+    proven_absent: frozenset[int] = frozenset()
 
 
 def narrow(follow_up: Plan, done: Done) -> Plan:
@@ -76,7 +79,9 @@ def narrow(follow_up: Plan, done: Done) -> Plan:
         ),
         reconcile=_unfailed_pairs(follow_up.reconcile, done.failed),
         heal=_unfailed(follow_up.heal, done.failed, operator.attrgetter("sequence")),
-        sealed_repairs=_repairable(follow_up.sealed_repairs, done.failed),
+        sealed_repairs=_repairable(
+            follow_up.sealed_repairs, done.failed, done.proven_absent
+        ),
         stale_sealed_markers=_unfailed(
             follow_up.stale_sealed_markers, done.failed, _itself
         ),
@@ -126,12 +131,14 @@ def _unfailed_pairs(
 
 
 def _repairable(
-    entries: cabc.Iterable[SegmentEntry], failed: set[int]
+    entries: cabc.Iterable[SegmentEntry],
+    failed: set[int],
+    proven_absent: frozenset[int],
 ) -> tuple[SegmentEntry, ...]:
     """Return the sealed sources a later pass may still repair.
 
-    An entry that is proven absent has nothing to repair, while one that cannot
-    be inspected must stay so its failure is recorded against it.
+    An entry the caller proved absent has nothing to repair, while one that
+    cannot be inspected must stay so its failure is recorded against it.
 
     Returns
     -------
@@ -141,7 +148,7 @@ def _repairable(
     return tuple(
         entry
         for entry in entries
-        if entry.sequence not in failed and not is_proven_absent(entry.path)
+        if entry.sequence not in failed and entry.sequence not in proven_absent
     )
 
 
@@ -168,14 +175,14 @@ def _eviction_steps(
         (entry, trim)
         for entry, trim in follow_up.trims
         if evictable(entry.sequence, done.removed, done.blocked)
-        and not is_proven_absent(entry.path)
+        and entry.sequence not in done.proven_absent
         and not already_applied(entry, trim, done.applied)
     )
     deletes = tuple(
         entry
         for entry in follow_up.deletes
         if evictable(entry.sequence, done.removed, done.blocked)
-        and not is_proven_absent(entry.path)
+        and entry.sequence not in done.proven_absent
     )
     return trims, deletes
 

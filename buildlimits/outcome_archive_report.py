@@ -147,6 +147,9 @@ class RunReport:
         Whether this firing's clock reading was judged to have jumped. A
         locked run withheld age eviction for it; an inspection only reports the
         decision.
+    clock_baseline_unreadable : bool
+        Whether the persisted baseline could not be read for an environmental
+        reason, so no comparison was possible.
     started_at : datetime
         When the run began.
     finished_at : datetime
@@ -208,6 +211,7 @@ class RunReport:
     finished_at: dt.datetime
     operation: Operation = "archive"
     clock_skew: bool = False
+    clock_baseline_unreadable: bool = False
     dry_run: bool = False
     active_bytes: int = 0
     retained_bytes: int = 0

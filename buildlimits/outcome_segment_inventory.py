@@ -13,6 +13,7 @@ import typing as typ
 
 from buildlimits.outcome_sealed_scan import scan_sealed
 from buildlimits.outcome_segment_gaps import retained_gaps
+from buildlimits.outcome_segment_removed import removed_sequences
 from buildlimits.outcome_segment_scan import (
     SegmentEntry,
     regular_files,
@@ -157,7 +158,12 @@ def read_inventory(
     sealed, sealed_meta, replacing = scan_sealed(layout.sealed_dir)
     archived, missing, corrupt, orphans = scan_archived(layout.archive_dir)
     with_meta = _with_sealed_metadata(sealed, sealed_meta)
-    gaps, gaps_truncated = retained_gaps(with_meta, archived, retention_floor)
+    gaps, gaps_truncated = retained_gaps(
+        with_meta,
+        archived,
+        retention_floor,
+        removed_sequences(layout.archive_dir),
+    )
     return Inventory(
         sealed=with_meta,
         archived=tuple(sorted(archived, key=lambda entry: entry.sequence)),

@@ -7,10 +7,12 @@ sequence, an empty seal claims nothing, the backlog is reported once per
 eight-entry step, and a failed seal is reported rather than hidden.
 """
 
+import datetime as dt
 import typing as typ
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from outcome_sealing_helpers import (
     active_of,
     layout_of,
@@ -29,7 +31,11 @@ from outcome_test_helpers import STORE_EPOCH as NOW
 from outcome_test_helpers import record_after
 from segment_test_helpers import document, history_policy, write_private
 
-from buildlimits import outcome_record_encode, outcome_store_sealing
+from buildlimits import (
+    outcome_record_encode,
+    outcome_store_documents,
+    outcome_store_sealing,
+)
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_segment_state import read_sequence
 from buildlimits.outcome_segments import segment_name
@@ -37,8 +43,6 @@ from buildlimits.outcome_store import StoreWriter
 from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
-    import pytest
-
     from buildlimits.outcome_ports import StoreResult
     from buildlimits.outcome_retention import RetentionPolicy
 
@@ -130,6 +134,18 @@ def test_a_fresh_store_keeps_its_first_row(tmp_path: Path) -> None:
     assert [record.observed_at for record in active_of(store).records] == [NOW], (
         "the first row is written rather than discarded"
     )
+
+
+def test_a_seal_time_without_an_offset_is_refused() -> None:
+    """A naive seal time would be stored as the host's local time."""
+    with pytest.raises(ValueError, match="must carry an offset"):
+        outcome_store_documents.sealed_metadata_document(
+            sequence=1,
+            salt_id="salt-1",
+            rows=outcome_store_documents.SealedRows(0, None, None),
+            # Deliberately naive: refusing it is the contract under test.
+            sealed_at=dt.datetime(2026, 11, 19),  # ruff: ignore[call-datetime-without-tzinfo] - deliberately naive; refusing it is the contract.
+        )
 
 
 def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:

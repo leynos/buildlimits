@@ -35,6 +35,7 @@ from buildlimits.outcome_sealed_trim import (
     sealed_at_of,
     write_sealed_metadata,
 )
+from buildlimits.outcome_segment_removed import record_removal
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
@@ -50,6 +51,7 @@ __all__ = [
     "delete_archive",
     "delete_source",
     "recompress_archive",
+    "release_source",
     "repair_sealed_metadata",
     "repair_sidecar",
 ]
@@ -238,6 +240,10 @@ def delete_archive(context: ArchiveContext, entry: SegmentEntry) -> None:
     entry : SegmentEntry
         The archive to remove.
     """
+    # The removal record is durable before any unlink, so a process that stops
+    # before the run installs its floor still leaves evidence that retention
+    # removed this sequence rather than losing it.
+    record_removal(context.layout.archive_dir, entry.sequence)
     remove_private_files(
         context.layout.archive_dir,
         [
@@ -256,12 +262,36 @@ def delete_source(context: ArchiveContext, entry: SegmentEntry) -> None:
     The writer's metadata goes with it, exactly as it does after archival, so
     no sidecar outlives the rows it described.
 
+    The removal record is published before the unlink, because the retention
+    floor is installed only after the run completes. A process that stops in
+    between would otherwise leave a sequence the next firing cannot tell from
+    one that was lost.
+
     Parameters
     ----------
     context : ArchiveContext
         The run's layout, policy and moment.
     entry : SegmentEntry
         The sealed source to remove.
+    """
+    record_removal(context.layout.archive_dir, entry.sequence)
+    _remove_sealed_source(context, entry.sequence)
+
+
+def release_source(context: ArchiveContext, entry: SegmentEntry) -> None:
+    """Remove one redundant sealed source whose archive is already durable.
+
+    The sequence still exists as an archive, so this is not a retention
+    removal and is not recorded as one. It exists so a reconciling pass can
+    release the redundant copy without publishing a removal record that the
+    floor would have to decode.
+
+    Parameters
+    ----------
+    context : ArchiveContext
+        The run's layout, policy and moment.
+    entry : SegmentEntry
+        The sealed source to release.
     """
     _remove_sealed_source(context, entry.sequence)
 

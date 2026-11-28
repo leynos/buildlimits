@@ -22,6 +22,7 @@ _EXPECTED_KEYS = {
     "operation",
     "status",
     "clock_skew",
+    "clock_baseline_unreadable",
     "dry_run",
     "started_at",
     "finished_at",
@@ -72,6 +73,7 @@ def _report() -> RunReport:
         status="corrupt",
         operation="retain",
         clock_skew=True,
+        clock_baseline_unreadable=True,
         started_at=_NOW,
         finished_at=_LATER,
         dry_run=True,
@@ -112,6 +114,9 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["operation"] == "retain", "the operation is published"
     assert document["status"] == "corrupt", "the closed status is published"
     assert document["clock_skew"] is True, "the clock decision is published"
+    assert document["clock_baseline_unreadable"] is True, (
+        "a baseline read failure is published too"
+    )
     assert document["dry_run"] is True, "the dry-run marker is published"
     assert document["started_at"] == "2026-11-19T12:00:00Z", "UTC text, not a value"
     assert document["finished_at"] == "2026-11-19T12:00:03Z", "UTC text, not a value"
@@ -168,6 +173,9 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     }, "a report built without state still says nothing failed"
     assert empty["operation"] == "archive", "the default operation is archival"
     assert empty["clock_skew"] is False, "a fresh report has no clock decision"
+    assert empty["clock_baseline_unreadable"] is False, (
+        "a fresh report has no baseline fault"
+    )
 
 
 def test_the_document_renders_the_plan_and_actions(

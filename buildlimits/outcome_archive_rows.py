@@ -96,6 +96,10 @@ class DocumentReader:
         Bytes of an undecodable unterminated fragment this reader dropped. A
         decodable unterminated row is yielded, not dropped, so it is not
         counted: a writer that terminates it keeps those bytes.
+    missing_final_newline : bool
+        Whether the last record row this reader yielded lacked its newline. A
+        rewrite terminates that row, so the written document is one byte
+        larger than the source even though no row was added.
     """
 
     def __init__(self, stream: LineStream) -> None:
@@ -105,6 +109,7 @@ class DocumentReader:
         self.had_torn_tail = False
         self.last_record_terminated = True
         self.dropped_tail_bytes = 0
+        self.missing_final_newline = False
 
     def __iter__(self) -> cabc.Iterator[DocumentRow]:
         """Iterate the header then typed rows in document order.
@@ -183,6 +188,7 @@ class DocumentReader:
         if not self._stream.is_terminated:
             self.had_torn_tail = True
             self.last_record_terminated = False
+            self.missing_final_newline = True
 
 
 def iter_records(reader: DocumentReader) -> cabc.Iterator[RecordRow]:

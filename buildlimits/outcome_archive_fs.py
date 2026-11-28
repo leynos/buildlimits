@@ -36,6 +36,7 @@ _FILE_MODE = 0o600
 __all__ = [
     "UnsafePathError",
     "atomic_write_json",
+    "atomic_write_json_prefixed",
     "ensure_private_directory",
     "open_private_regular",
     "open_private_temp",
@@ -160,6 +161,35 @@ def atomic_write_json(path: Path, document: cabc.Mapping[str, object]) -> None:
     document : collections.abc.Mapping[str, object]
         A JSON-compatible mapping.
 
+    Notes
+    -----
+    A temporary that cannot be written or published propagates as `OSError`
+    from `atomic_write_json_prefixed`, which this delegates to unchanged.
+    """
+    atomic_write_json_prefixed(path, document, prefix=path.name)
+
+
+def atomic_write_json_prefixed(
+    path: Path,
+    document: cabc.Mapping[str, object],
+    *,
+    prefix: str,
+) -> None:
+    """Write one JSON document durably through a named temporary.
+
+    A caller whose directory is shared with the supervisor names its temporary
+    with its own prefix, so a concurrent writer's file is never mistaken for
+    an abandoned one.
+
+    Parameters
+    ----------
+    path : Path
+        The destination file.
+    document : collections.abc.Mapping[str, object]
+        A JSON-compatible mapping.
+    prefix : str
+        The temporary file's name prefix.
+
     Raises
     ------
     OSError
@@ -168,7 +198,7 @@ def atomic_write_json(path: Path, document: cabc.Mapping[str, object]) -> None:
     encoded = json.dumps(
         document, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
-    descriptor, temporary = open_private_temp(path.parent, prefix=path.name)
+    descriptor, temporary = open_private_temp(path.parent, prefix=prefix)
     try:
         write_all(descriptor, encoded + b"\n")
         os.fsync(descriptor)

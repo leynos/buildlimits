@@ -2695,9 +2695,6 @@ reason = "Matching type-checking preludes: each module names the symbols its own
 members = ["tests/test_outcome_archive_report_settlement.py", "buildlimits/outcome_archive_execute.py", "tests/test_outcome_sealed_trim_faults.py", "buildlimits/groups.py", "tests/test_outcome_totality.py", "tests/test_predict_evaluation.py", "tests/test_sccache_outcome_observer.py"]
 reason = "Matching type-checking preludes: each module names the symbols its own annotations need, and a re-export module would hide every one of those dependencies behind a shared import."
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/outcome_segments.py::sealed_marker_name", "buildlimits/outcome_segments.py::replacing_name", "buildlimits/outcome_segments.py::archive_name", "buildlimits/outcome_segments.py::sidecar_name", "buildlimits/outcome_segments.py::sealed_meta_name"]
-reason = "The five naming helpers keep one public name each, because every caller names the file kind it means; their shared composition already lives in `_named`, and the remaining similarity is the suffix each documents."
-[[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_archive_clock_guard.py", "buildlimits/outcome_record_time.py", "buildlimits/predict/diagnostics_codec.py", "buildlimits/predict/journal_codec.py", "buildlimits/utc_format.py"]
 reason = "Each module refuses a boolean where it requires an integer, and the two-line guard reads clearer beside the value it validates than behind a shared helper that would have to name every caller's error message."
 [[tool.duplication_gate.allow]]
@@ -2719,9 +2716,6 @@ reason = "Both append a newline to one row and count it in their own sink and di
 members = ["buildlimits/outcome_archive_clock_guard.py", "buildlimits/outcome_record_key.py"]
 reason = "Each parses one optional value and refuses the wrong shape with its own closed message; the shared part is a two-line guard."
 [[tool.duplication_gate.allow]]
-unit = "buildlimits/outcome_archive_pending.py"
-reason = "Two adjacent comparisons inside one predicate: splitting them into a helper would separate the two eviction conditions the predicate exists to state together."
-[[tool.duplication_gate.allow]]
 members = ["tests/test_outcome_archive_repair.py", "tests/test_outcome_sealed_trim_faults.py"]
 reason = "One shared `write_private` call that seeds a private file under a temporary root; the surrounding assertions are each test's own."
 [[tool.duplication_gate.allow]]
@@ -2734,9 +2728,6 @@ reason = "Matching type-checking preludes: each module names the symbols its own
 members = ["tests/test_outcome_sealed_trim_guards.py::test_a_terminated_corrupt_row_is_quarantined", "tests/test_outcome_sealed_trim_faults.py::test_a_corrupt_unmeasured_source_is_quarantined"]
 reason = "Two tests prove the same quarantine contract reached from different corruption points (an invalid record and an invalid header); sharing the assertions would merge two pieces of evidence."
 [[tool.duplication_gate.allow]]
-members = ["tests/test_outcome_archive.py::refuse", "tests/test_predict_dataset.py::refuse", "tests/test_outcome_archive_clock_guard.py::read_text"]
-reason = "Each test defines one local refusal that names the fixture's own fault; the shared part is a one-line raise with a different message per fixture."
-[[tool.duplication_gate.allow]]
 members = ["tests/test_adapter_metrics.py::reject", "tests/test_exec_reader_ownership.py::fail", "tests/test_kache_guard.py::_vanish", "tests/test_outcome_archive_clock_guard.py"]
 reason = "Each test defines one local refusal that names the fixture's own fault; the shared part is a one-line raise with a different message per fixture."
 [[tool.duplication_gate.allow]]
@@ -2748,6 +2739,24 @@ reason = "Two one-line accessors over the same sealed-name convention: one reads
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_recorder_outputs.py", "buildlimits/supervisor_outcome_setup.py", "tests/archive_seal_helpers.py", "buildlimits/outcome_recorder_effects.py", "tests/modelcheck_cases.py", "buildlimits/outcome_shell_dependencies.py", "buildlimits/predict/dataset_report.py", "tests/outcome_store_helpers.py", "buildlimits/outcome_store.py", "buildlimits/outcome_store_state.py", "buildlimits/server_watch.py", "tests/modelcheck_service_cases.py", "buildlimits/cache_recovery.py", "buildlimits/outcome_archive_plan.py", "buildlimits/outcome_archive_report.py", "buildlimits/outcome_archive_report_builders.py", "buildlimits/outcome_archive_report_fields.py", "buildlimits/outcome_archive_retain.py", "buildlimits/outcome_archive_state.py", "buildlimits/predict/ensemble_runs.py", "buildlimits/predict/harness.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/test_outcome_archive_clock.py", "buildlimits/outcome_archive_files.py", "buildlimits/outcome_archive_firing.py", "buildlimits/outcome_archive_run.py", "buildlimits/predict/evaluation.py", "buildlimits/predict/report.py", "buildlimits/predict/scoring.py", "buildlimits/predict/snapshot_codec.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/outcome_append_helpers.py", "tests/outcome_sealing_helpers.py", "tests/test_cache_recovery_telemetry.py", "tests/test_outcome_archive_interleaving.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "buildlimits/outcome_archive_evict.py", "buildlimits/outcome_archive_retention_plan.py", "buildlimits/outcome_history_files.py", "buildlimits/outcome_record_format.py", "buildlimits/predict/report_codec.py", "buildlimits/predict/snapshot_diagnostics_join.py", "tests/differential_trace_test_helpers.py", "tests/outcome_store_fixture_helpers.py", "buildlimits/outcome_ports.py", "modelcheck/cli.py", "tests/test_kache_detached_events.py"]
 reason = "Matching type-checking preludes: each module names the symbols its own annotations need, and a re-export module would hide every one of those dependencies behind a shared import."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_segments.py::removed_marker_name", "buildlimits/outcome_segments.py::sealed_marker_name", "buildlimits/outcome_segments.py::replacing_name", "buildlimits/outcome_segments.py::archive_name", "buildlimits/outcome_segments.py::sidecar_name", "buildlimits/outcome_segments.py::sealed_meta_name"]
+reason = "The naming helpers keep one public name each, because every caller names the file kind it means; the maintenance marker joins the archive, sidecar and sealed-marker names it must sit beside."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_recorder_outputs.py", "buildlimits/supervisor_outcome_setup.py", "tests/archive_seal_helpers.py", "buildlimits/outcome_recorder_effects.py", "tests/modelcheck_cases.py", "buildlimits/outcome_shell_dependencies.py", "buildlimits/predict/dataset_report.py", "tests/outcome_store_helpers.py", "buildlimits/outcome_store.py", "buildlimits/outcome_store_state.py", "buildlimits/server_watch.py", "tests/modelcheck_service_cases.py", "tests/test_outcome_archive_report_settlement.py", "buildlimits/cache_recovery.py", "buildlimits/outcome_archive_plan.py", "buildlimits/outcome_archive_report.py", "buildlimits/outcome_archive_report_builders.py", "buildlimits/outcome_archive_report_fields.py", "buildlimits/outcome_archive_retain.py", "buildlimits/outcome_archive_state.py", "buildlimits/predict/ensemble_runs.py", "buildlimits/predict/harness.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/test_outcome_archive_clock.py", "buildlimits/groups.py", "buildlimits/outcome_archive_files.py", "buildlimits/outcome_archive_firing.py", "buildlimits/outcome_archive_run.py", "buildlimits/predict/evaluation.py", "buildlimits/predict/report.py", "buildlimits/predict/scoring.py", "buildlimits/predict/snapshot_codec.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/outcome_append_helpers.py", "tests/outcome_sealing_helpers.py", "tests/test_cache_recovery_telemetry.py", "tests/test_outcome_archive_interleaving.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "buildlimits/outcome_archive_encode.py", "buildlimits/outcome_archive_evict.py", "buildlimits/outcome_archive_retention_plan.py", "buildlimits/outcome_history_files.py", "buildlimits/outcome_record_format.py", "buildlimits/predict/report_codec.py", "buildlimits/predict/snapshot_diagnostics_join.py", "tests/differential_trace_test_helpers.py", "tests/outcome_archive_helpers.py", "tests/outcome_store_fixture_helpers.py", "tests/test_outcome_totality.py", "tests/test_predict_evaluation.py", "tests/test_sccache_outcome_observer.py", "buildlimits/outcome_ports.py", "modelcheck/cli.py", "tests/test_kache_detached_events.py"]
+reason = "Matching import and type-checking preludes: each module names the symbols its own signatures and call sites use, so a shared prelude module would publish names each one does not mean."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_archive_clock_state.py", "buildlimits/outcome_record_time.py", "buildlimits/predict/diagnostics_codec.py", "buildlimits/predict/journal_codec.py", "buildlimits/utc_format.py"]
+reason = "Each parses its own optional field and returns its own absent value; the shared part is a two-line null check whose callers differ in what follows it."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_adapter_metrics.py::reject", "tests/test_exec_reader_ownership.py::fail", "tests/test_kache_guard.py::_vanish", "tests/test_outcome_archive_clock_state.py::refuse"]
+reason = "Each test defines one local refusal that names its fixture's own fault; the shared part is a one-line stub."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive.py::refuse", "tests/test_outcome_archive_clock_state.py::read_text", "tests/test_predict_dataset.py::refuse"]
+reason = "Each test defines one local refusal that names its fixture's own fault; the shared part is a one-line stub."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_archive_encode.py", "buildlimits/outcome_sealed_trim.py"]
+reason = "Both modules name the archive primitives they import; the shared lines are an import block, and a re-export shim would hide which module owns each function."
 [[tool.duplication_gate.unit]]
 unit = "tests/test_predict_dataset_cli_journal.py"
 reason = "The four report cases share only the one-record journal window they count; each asserts a different contract (a failed reading, a gate-only window, a truncated window, a complete window), so the shared call shape is the fixture, not the specification."
