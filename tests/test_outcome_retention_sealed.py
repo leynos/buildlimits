@@ -373,3 +373,25 @@ def test_a_mismatched_duplicate_is_quarantined_and_the_source_kept(
     assert sealed_source_exists(tmp_path, 1), (
         "the sealed source is kept for a later plan"
     )
+
+
+def test_a_record_bound_evicts_a_whole_older_segment_without_compression(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cap removes the oldest segment whole and the newer one survives."""
+    older = records_at(NOW - dt.timedelta(hours=4), 2)
+    newer = records_at(NOW - dt.timedelta(hours=3), 2)
+    sealed_source(tmp_path, 1, older)
+    sealed_source(tmp_path, 2, newer)
+    refuse_compression(monkeypatch)
+
+    report = retain(tmp_path, policy(1_000_000, max_age_days=0, max_records=2))
+
+    assert report.status == "ok", "the cap is met"
+    assert not sealed_source_exists(tmp_path, 1), "the older segment is removed whole"
+    assert sealed_bytes(tmp_path, 2) == document(newer), (
+        "the newer segment keeps every row"
+    )
+    assert [(action.action, action.reason) for action in report.actions] == [
+        ("deleted", "records")
+    ], "the removal names the record bound"

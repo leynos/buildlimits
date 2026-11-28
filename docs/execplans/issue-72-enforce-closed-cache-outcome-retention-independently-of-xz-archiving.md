@@ -81,7 +81,14 @@ maintenance pass is repaired rather than trusted.
       were cleared by extracting the cleanup walk, the sealed scan, the shared
       per-entry dispatch, the retention decision maps and the age straddler
       predicate, and by splitting the boot-time guard and the pending filters.
-- [ ] EP-6 (remaining): hosted CI green, formal review, readiness, merge.
+- [x] EP-6 (assessment round 1): CodeRabbit's original-issue assessment found
+      a capacity-accounting defect in the guarded follow-up scan and a
+      misleading `truncated_xz` reason for a plain-output verification
+      failure. Both are fixed, with tests for byte and record bounds under a
+      withheld age bound, a restart sealed then trimmed by `retain`, and a
+      whole-segment record eviction with the XZ entry points disabled.
+- [ ] EP-6 (remaining): hosted CI green, assessment confirmation, formal
+      review, readiness, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

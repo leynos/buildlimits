@@ -126,7 +126,7 @@ def _verified_facts(temporary: Path, written: ArchiveFacts) -> ArchiveFacts:
         # The source was read to its end to write this temporary, so a
         # temporary that will not decode is this process's own output.
         discard(temporary)
-        raise OutputFaultError("truncated_xz") from fault
+        raise OutputFaultError("unverified_plain") from fault
     except BaseException:
         discard(temporary)
         raise
@@ -135,7 +135,7 @@ def _verified_facts(temporary: Path, written: ArchiveFacts) -> ArchiveFacts:
         # different count, size or digest means the temporary is not what this
         # process wrote.
         discard(temporary)
-        raise OutputFaultError("truncated_xz")
+        raise OutputFaultError("unverified_plain")
     return scanned
 
 

@@ -22,6 +22,7 @@ type FaultReason = typ.Literal[
     "corrupt",
     "version_mismatch",
     "truncated_xz",
+    "unverified_plain",
     "trailing_data",
     "bad_xz",
     "line_too_long",

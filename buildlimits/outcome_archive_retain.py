@@ -191,9 +191,16 @@ def _replan(run: ArchiveRun) -> Plan:
     """
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
+    # A firing whose age bound is withheld counts every committed active row,
+    # exactly as its initial plan and final report do. Applying the cutoff here
+    # would make a capacity bound plan against a smaller active total and leave
+    # the store over its byte or record bound.
+    cutoff = (
+        None if run.context.suppress_age else run.context.policy.cutoff(run.context.now)
+    )
     active = active_history(
         layout.active,
-        cutoff=run.context.policy.cutoff(run.context.now),
+        cutoff=cutoff,
         on_retry=run.context.on_retry,
     )
     if outcome_segment_inventory.read_inventory(layout) != inventory:

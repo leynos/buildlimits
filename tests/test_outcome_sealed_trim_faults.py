@@ -119,7 +119,7 @@ def test_a_verification_failure_keeps_the_source_and_removes_the_temporary(
 
     report = retain(tmp_path, age_policy())
 
-    assert report.failures == ((1, "truncated_xz"),), (
+    assert report.failures == ((1, "unverified_plain"),), (
         "the output fault is named, not the readable source"
     )
     assert (layout(tmp_path).sealed_dir / segment_name(1)).read_bytes() == document((
@@ -312,7 +312,7 @@ def test_a_temporary_that_cannot_be_scanned_is_the_runs_own_fault(
 
     report = retain(tmp_path, age_policy())
 
-    assert report.failures == ((1, "truncated_xz"),), (
+    assert report.failures == ((1, "unverified_plain"),), (
         "the output fault is named, not the readable source"
     )
     assert source.read_bytes() == document((expired, fresh)), "the source is untouched"

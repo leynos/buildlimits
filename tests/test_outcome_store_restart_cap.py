@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from outcome_archive_helpers import policy as archive_policy
+from outcome_archive_helpers import retain as retain_run
 from outcome_archive_helpers import run as archive_run
 from outcome_store_helpers import (
     append_and_wait,
@@ -118,12 +119,15 @@ def test_a_reduced_cap_seals_an_idle_segmented_store_at_restart(
     assert decoded_store(store).records == (), "the active file restarts empty"
 
 
-def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> None:
-    """A sealed over-cap file reaches the cap once the archiver has run.
+def _restarted_sealed_store(
+    tmp_path: Path,
+) -> tuple[SegmentLayout, tuple[StoreRecord, ...]]:
+    """Seed three rows, then restart under a two-row cap so they seal.
 
-    A restart can only seal the rows the writer holds; the archiver applies the
-    cap to closed history. Run both in sequence and assert that the archived
-    segment keeps the two later rows, so the enforced end state meets the cap.
+    Returns
+    -------
+    tuple[SegmentLayout, tuple[StoreRecord, ...]]
+        The store layout and the rows in append order.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     layout = SegmentLayout.beside(store)
@@ -134,6 +138,17 @@ def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> N
     )
     _seed_store(store, rows, _segmented_policy(max_records=None))
     _restart_and_wait_for_seal(store, _segmented_policy(max_records=2))
+    return layout, rows
+
+
+def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> None:
+    """A sealed over-cap file reaches the cap once the archiver has run.
+
+    A restart can only seal the rows the writer holds; the archiver applies the
+    cap to closed history. Run both in sequence and assert that the archived
+    segment keeps the two later rows, so the enforced end state meets the cap.
+    """
+    layout, rows = _restarted_sealed_store(tmp_path)
 
     report = archive_run(tmp_path, archive_policy(1_000_000, max_records=2))
 
@@ -186,3 +201,20 @@ def test_a_restart_seal_that_cannot_reopen_keeps_the_row_after_repair(
     assert len(decoded_store(store).records) == 1, (
         "the append after the fault settles first and keeps its row"
     )
+
+
+def test_a_restart_seal_is_trimmed_by_a_retention_run(tmp_path: Path) -> None:
+    """The retention-only operation meets the reduced cap without archiving."""
+    layout, rows = _restarted_sealed_store(tmp_path)
+
+    report = retain_run(tmp_path, archive_policy(1_000_000, max_records=2))
+
+    assert report.status == "ok", "the retention run settles"
+    sealed = layout.sealed_dir / segment_name(1)
+    assert decoded_store(sealed).records == rows[1:], (
+        "the sealed source keeps the two later rows"
+    )
+    assert not list(layout.archive_dir.glob("*.xz")), (
+        "the retention run archives nothing"
+    )
+    assert report.retained_records == 2, "the settled store meets the reduced cap"
