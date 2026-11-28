@@ -3,11 +3,11 @@
 An ``archive`` run plans from a content-free inventory, takes the archive lock,
 compresses and verifies one sealed source at a time, then applies the age and
 logical byte budget by trimming or deleting the oldest closed history. A
-``retain`` run applies the same policy without compressing anything: a sealed
-straddler is rewritten in place and an existing archive is recompressed or
-removed. The active file is never opened for writing: only the writer seals it.
-Every failure is reported as a closed reason and an exit status a systemd timer
-can act on.
+``retain`` run applies the same policy without archiving sealed sources: a
+sealed straddler is rewritten in place, while an existing archive is
+recompressed or removed whole. The active file is never opened for writing:
+only the writer seals it. Every failure is reported as a closed reason and an
+exit status a systemd timer can act on.
 
 This module chooses the operation, decides whether its clock reading can be
 trusted, and maps every fault to a closed report. Planning and execution under
@@ -39,7 +39,6 @@ from buildlimits.outcome_archive_report import (
 from buildlimits.outcome_archive_report_builders import unfinished_report
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_archive_clock_guard import ClockReading
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segments import SegmentLayout
 
@@ -112,9 +111,10 @@ def run_retain(
     """Plan and optionally execute one retention-only run.
 
     The operation shares the policy, lock, settled snapshot, floor and exit
-    codes with an archive run. It never schedules archival, so a timer can
-    enforce the bounds on a host that does not want to spend CPU compressing
-    closed history.
+    codes with an archive run. It never archives a sealed source, so a timer
+    can enforce the bounds without paying to compress history that has not
+    been archived yet. An existing archive that straddles a bound is still
+    recompressed, because keeping it compressed is the published contract.
 
     Returns
     -------
@@ -149,7 +149,7 @@ def _run(
         quarantine_token=fresh_quarantine_token,
     )
     guarded = outcome_archive_firing.guarded(context, selected, started)
-    report = _attempt_run(guarded.context, selected, guarded.reading)
+    report = _attempt_run(guarded.context, selected)
     if not selected.dry_run:
         # An inspection is a query: it reads the store and reports, but it
         # does not publish an execution event.
@@ -157,11 +157,7 @@ def _run(
     return report
 
 
-def _attempt_run(
-    context: ArchiveContext,
-    selected: RunOptions,
-    reading: ClockReading,
-) -> RunReport:
+def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
     """Run or inspect the store, mapping every fault to a closed report.
 
     Returns
@@ -175,11 +171,19 @@ def _attempt_run(
             # A dry run mutates nothing, so it may plan without the lock and
             # records no clock baseline.
             return outcome_archive_execute.inspect(context, started)
-        with (
-            outcome_archive_lock.ArchiveLock(context.layout.lock_file),
-            outcome_archive_firing.record_on_failure(context.layout, reading),
-        ):
-            return outcome_archive_execute.execute_locked(context, started, reading)
+        with outcome_archive_lock.ArchiveLock(context.layout.lock_file):
+            # Another firing may have held the lock while this one waited, and
+            # recorded a newer baseline. The decision and the reading are
+            # therefore taken again now that the store cannot move underneath
+            # them; the pre-lock decision still describes a run that never
+            # acquired the lock.
+            locked = outcome_archive_firing.guarded(context, selected, started)
+            with outcome_archive_firing.record_on_failure(
+                locked.context.layout, locked.reading
+            ):
+                return outcome_archive_execute.execute_locked(
+                    locked.context, started, locked.reading
+                )
     except outcome_archive_lock.ArchiveBusyError:
         return unfinished_report(started, BUSY, context, dry_run=selected.dry_run)
     except outcome_archive_lock.NoHeadroomError:

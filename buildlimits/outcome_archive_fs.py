@@ -230,11 +230,6 @@ def remove_private_files(directory: Path, names: cabc.Iterable[str]) -> None:
 def remove_stale_temps(directory: Path) -> tuple[str, ...]:
     """Remove abandoned private temporary files under the archive lock.
 
-    Parameters
-    ----------
-    directory : Path
-        The directory whose ``.tmp`` entries are abandoned.
-
     Returns
     -------
     tuple[str, ...]
@@ -262,14 +257,13 @@ def _remove_matching(
     matches : Callable[[str], bool]
         Whether one file name is abandoned work.
     tolerate_failures : bool
-        Whether one file that cannot be removed is skipped. A cleanup that only
-        tidies abandoned work sets this; one whose result a caller relies on
-        lets the failure propagate.
+        Whether a file that cannot be inspected or removed is skipped, as a
+        best-effort cleanup allows.
 
     Returns
     -------
     tuple[str, ...]
-        Names that were removed; a listing, removal or sync failure propagates.
+        Names that were removed; a failure propagates when not tolerated.
     """
     descriptor = open_private_chain_when_present(directory)
     if descriptor is None:
@@ -310,7 +304,11 @@ def _remove_entry(
     """
     try:
         metadata = entry.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
     except OSError:
+        if not tolerate_failures:
+            raise
         return False
     if not stat.S_ISREG(metadata.st_mode):
         return False

@@ -49,7 +49,16 @@ maintenance pass is repaired rather than trusted.
       repository-layout entry.
 - [x] EP-5: no-XZ enforcement, accounting, restart, clock, fault, memory and
       documentation-example tests.
-- [ ] EP-6: full gates, review and merge.
+- [x] EP-6 (review round 1): CodeRabbit's 17 findings were all valid and are
+      fixed. The clock decision is re-evaluated under the lock, a failed
+      baseline write preserves the report's state flags and is persisted, an
+      unrepresentable baseline number is refused, `narrow` distinguishes proven
+      absence from an inspection fault with `is_proven_absent`, a completed
+      removal is not an eviction barrier, strict cleanup propagates inspection
+      errors, reports say whether a baseline was written, a preview detects a
+      jump without claiming withholding, and the guide's output examples are
+      marked and exercised.
+- [ ] EP-6 (remaining): second review, ready for review, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

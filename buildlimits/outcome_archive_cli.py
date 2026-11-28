@@ -1,11 +1,12 @@
 """The timer-friendly command that maintains closed cache-outcome history.
 
 ``run`` archives sealed history and then applies the configured retention
-policy. ``retain`` applies the same policy to the same history without
-compressing anything, so a timer can enforce the bounds without paying for XZ.
-``inspect`` reports the archive plan without changing a file. No command prints
-a filesystem path or a raw exception, so a timer's journal stays free of
-host-specific detail.
+policy. ``retain`` applies the same policy without archiving sealed sources,
+so a timer can enforce the bounds without paying to compress history that has
+not been archived yet; an existing archive that straddles a bound is still
+recompressed. ``inspect`` reports the archive plan without changing a file.
+No command prints a filesystem path or a raw exception, so a timer's journal
+stays free of host-specific detail.
 """
 
 import argparse

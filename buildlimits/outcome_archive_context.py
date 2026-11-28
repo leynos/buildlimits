@@ -32,9 +32,10 @@ type Operation = typ.Literal["archive", "retain"]
 """The maintenance operation one command performs.
 
 ``archive`` compresses sealed sources and then applies retention; ``retain``
-applies the same retention policy to closed history without compressing
-anything. Both share the policy, lock, floor and report vocabulary, so a timer
-can run either without learning a second set of rules.
+applies the same retention policy without archiving sealed sources, rewriting a
+straddler in place instead. An existing archive is recompressed either way.
+Both share the policy, lock, floor and report vocabulary, so a timer can run
+either without learning a second set of rules.
 """
 
 __all__ = [

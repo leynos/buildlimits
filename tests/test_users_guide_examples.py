@@ -1,16 +1,24 @@
 """The user's guide's tested examples must name what the code reads."""
 
 import datetime as dt
+import typing as typ
 from pathlib import Path
 
 from outcome_retention_helpers import ROHGA_MAX_BYTES
 
 from buildlimits import config, outcome_archive_cli
 from buildlimits.journal_policy import ROUTINE_LINES_VARIABLE
+from buildlimits.outcome_archive_render import write_report
+from buildlimits.outcome_archive_report import RunReport
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.predict import benchmark_cli, dataset_cli
+
+if typ.TYPE_CHECKING:
+    import pytest
+
+_NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
 GUIDE = Path(__file__).parents[1] / "docs" / "users-guide.md"
 DROP_IN = "buildlimits-routine-lines-drop-in"
@@ -23,6 +31,9 @@ RETAIN_SERVICE = "buildlimits-outcome-retain-service"
 RETAIN_TIMER = "buildlimits-outcome-retain-timer"
 RETAIN_ENABLE = "buildlimits-outcome-retain-enable"
 RETAIN_COMMANDS = "buildlimits-outcome-retain-commands"
+RETAIN_REPORT = "buildlimits-outcome-retain-report"
+RETAIN_CLOCK_SKEW = "buildlimits-outcome-retain-clock-skew"
+RETAIN_UNFINISHED_TRIM = "buildlimits-outcome-retain-unfinished-trim"
 RETENTION_EXAMPLE = "buildlimits-cache-outcomes-retention"
 
 
@@ -248,7 +259,7 @@ def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> No
 def test_the_retain_service_runs_the_operation_the_command_accepts() -> None:
     """The unit's ExecStart is the retention subcommand, not archival."""
     _assert_oneshot_service(
-        RETAIN_SERVICE, memory="256M", timeout="1h", operation="retain"
+        RETAIN_SERVICE, memory="512M", timeout="1h", operation="retain"
     )
 
 
@@ -269,3 +280,70 @@ def test_the_retain_command_example_uses_subcommands_the_parser_accepts() -> Non
     _assert_parser_accepts_every(
         RETAIN_COMMANDS, [("retain", "--dry-run"), ("retain",)]
     )
+
+
+def _rendered(capsys: pytest.CaptureFixture[str], report: RunReport) -> list[str]:
+    """Render one report and return its lines.
+
+    Returns
+    -------
+    list[str]
+        The plain report's lines, without their trailing newlines.
+    """
+    write_report(report, as_json=False)
+    return capsys.readouterr().out.splitlines()
+
+
+def test_the_guide_shows_the_retention_report_lines(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The documented opening lines are the renderer's opening lines."""
+    report = RunReport(
+        status="ok",
+        operation="retain",
+        started_at=_NOW,
+        finished_at=_NOW,
+    )
+    lines = _rendered(capsys, report)
+    documented = _marked_example(RETAIN_REPORT, "text").splitlines()
+
+    assert lines[: len(documented)] == documented, (
+        "the report labels the operation exactly as documented"
+    )
+
+
+def test_the_guide_shows_the_clock_skew_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The documented withholding line is what a skewed execution prints."""
+    report = RunReport(
+        status="ok",
+        operation="retain",
+        clock_skew=True,
+        cutoff=None,
+        started_at=_NOW,
+        finished_at=_NOW,
+    )
+    lines = _rendered(capsys, report)
+    documented = _marked_example(RETAIN_CLOCK_SKEW, "text").strip()
+
+    assert documented in lines, "the withholding line is printed verbatim"
+    assert "cutoff: withheld by clock skew" in lines, (
+        "the cutoff line names the guard rather than disabled age eviction"
+    )
+
+
+def test_the_guide_shows_the_unfinished_sealed_trim_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An inventory with a marked rewrite prints the documented diagnostic."""
+    report = RunReport(
+        status="ok",
+        sealed_replacing=(3,),
+        started_at=_NOW,
+        finished_at=_NOW,
+    )
+    lines = _rendered(capsys, report)
+    documented = _marked_example(RETAIN_UNFINISHED_TRIM, "text").strip()
+
+    assert documented in lines, "the diagnostic is printed verbatim"

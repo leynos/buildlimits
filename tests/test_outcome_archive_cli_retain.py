@@ -164,3 +164,24 @@ def test_a_skewed_report_labels_the_withheld_age_bound(
     assert "cutoff: withheld by clock skew" in output, (
         "the withheld bound is not reported as disabled"
     )
+
+
+def test_a_preview_detects_a_clock_jump_without_claiming_a_withheld_bound(
+    capsys: pytest.CaptureFixture[str],
+    snapshot: SnapshotAssertion,
+) -> None:
+    """A preview applies the age bound, so it names detection, not withholding."""
+    report = RunReport(
+        status="ok",
+        operation="retain",
+        clock_skew=True,
+        dry_run=True,
+        cutoff=NOW + dt.timedelta(days=1),
+        started_at=NOW,
+        finished_at=NOW,
+    )
+
+    write_report(report, as_json=False)
+    output = capsys.readouterr().out
+
+    assert output == snapshot, "the preview's lines are a stable contract"

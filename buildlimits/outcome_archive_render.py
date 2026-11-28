@@ -117,8 +117,14 @@ def _write_clock(report: RunReport) -> None:
     this firing did not expire history by age. The next undisturbed firing
     applies the real bound.
     """
-    if report.clock_skew:
-        print("clock skew: age eviction withheld")
+    if not report.clock_skew:
+        return
+    if report.dry_run:
+        # An inspection reports the decision but does not act on it, so its
+        # plan still applies the age bound.
+        print("clock skew: suspect reading; a run would withhold age eviction")
+        return
+    print("clock skew: age eviction withheld")
 
 
 def _elapsed(report: RunReport) -> str:
@@ -158,7 +164,7 @@ def _cutoff_text(report: RunReport) -> str:
         when age eviction is disabled.
     """
     if report.cutoff is None:
-        if report.clock_skew:
+        if report.clock_skew and not report.dry_run:
             return "withheld by clock skew"
         return "age eviction disabled"
     return report.cutoff.isoformat()

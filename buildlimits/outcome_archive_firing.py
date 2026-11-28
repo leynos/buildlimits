@@ -12,13 +12,13 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits import outcome_archive_clock_guard as clock_guard
-from buildlimits.outcome_archive_report import Maintenance, RunOptions, RunReport
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_archive_context import ArchiveContext
+    from buildlimits.outcome_archive_report import RunOptions, RunReport
     from buildlimits.outcome_segments import SegmentLayout
 
 __all__ = ["Guarded", "guarded", "record", "record_on_failure"]
@@ -95,15 +95,17 @@ def record(
     try:
         clock_guard.write_baseline(layout, reading)
     except OSError:
+        maintenance = dc.replace(report.maintenance, baseline_written=False)
         if report.reason is not None:
-            return report
+            # The fault that stopped the run is the more useful reason, and the
+            # state flag belongs to that fault; only the baseline marker is
+            # added.
+            return dc.replace(report, maintenance=maintenance)
         return dc.replace(
             report,
             status="failed",
             reason="clock_baseline_failed",
-            maintenance=dc.replace(
-                Maintenance(), baseline_written=False, reason="clock_baseline_failed"
-            ),
+            maintenance=dc.replace(maintenance, reason="clock_baseline_failed"),
         )
     return report
 

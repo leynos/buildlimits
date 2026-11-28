@@ -107,6 +107,44 @@ def test_a_damaged_baseline_is_treated_as_absent(tmp_path: Path) -> None:
     assert read_baseline(store_layout) is None, "the damaged record is refused"
 
 
+def test_a_baseline_with_an_unrepresentable_boot_time_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A huge integer or an infinite exponent is damage, not an exception."""
+    store_layout = layout(tmp_path)
+    store_layout.archive_dir.mkdir(parents=True)
+    for boottime in ("1e400", "9" * 400):
+        (store_layout.archive_dir / CLOCK_BASELINE_NAME).write_text(
+            '{"schema":1,"boot_id":"boot",'
+            '"wall":"2026-11-19T00:00:00Z","boottime":' + boottime + "}",
+            encoding="utf-8",
+        )
+
+        assert read_baseline(store_layout) is None, (
+            f"the unrepresentable reading {boottime[:8]}... is refused"
+        )
+
+
+def test_a_damaged_boot_time_does_not_stop_a_firing(tmp_path: Path) -> None:
+    """A firing reads a damaged baseline as absent instead of failing."""
+    store_layout = layout(tmp_path)
+    store_layout.archive_dir.mkdir(parents=True)
+    (store_layout.archive_dir / CLOCK_BASELINE_NAME).write_text(
+        '{"schema":1,"boot_id":"boot","wall":"2026-11-19T00:00:00Z","boottime":1e400}',
+        encoding="utf-8",
+    )
+    sealed_source(tmp_path, 1, (FRESH,))
+
+    report = retain(tmp_path, no_age(), reading=reading(dt.timedelta(0), BOOTTIME))
+
+    assert report.status == "ok", "the damaged record applies no guard"
+    assert report.clock_skew is False, "a record that cannot be read is not a jump"
+    recorded = read_baseline(store_layout)
+    assert recorded is not None and recorded.boottime == BOOTTIME, (
+        "the firing replaces the damaged record"
+    )
+
+
 def retain(
     root: Path,
     retention: RetentionPolicy,
@@ -177,8 +215,11 @@ def test_a_skewed_firing_withholds_age_eviction_and_keeps_capacity_bounds(
     third = retain(
         tmp_path,
         no_age(retention_bytes=len(document((FRESH,)))),
-        reading=reading(dt.timedelta(days=2), BOOTTIME + 0.5 * DAY + 3_600.0),
+        # Another forward jump: the capacity bound is asserted while the age
+        # bound is still withheld, not on a firing that no longer meets a skew.
+        reading=reading(dt.timedelta(days=4), BOOTTIME + 0.5 * DAY + 3_600.0),
     )
+    assert third.clock_skew is True, "the capacity bound runs on a skewed firing"
     assert third.status == "ok", "the capacity bound still runs on a skewed firing"
     assert not sealed_source_exists(tmp_path, 1), (
         "the byte bound evicted the oldest source despite the clock guard"

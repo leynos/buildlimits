@@ -69,6 +69,10 @@ def _measure_retain(root: Path, count: int) -> int:
     finally:
         tracemalloc.stop()
     assert report.status == "ok", "the in-place trim completes"
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("trimmed", 1)
+    ], "the measured run rewrote the source rather than finding nothing to do"
+    assert report.retained_records == count, "half the rows survive the trim"
     return peak
 
 

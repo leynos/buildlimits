@@ -22,6 +22,7 @@ undisturbed next firing resumes age eviction.
 
 import dataclasses as dc
 import json
+import math
 import typing as typ
 
 from buildlimits.outcome_archive_fs import atomic_write_json, ensure_private_directory
@@ -245,14 +246,24 @@ def _boottime(value: object) -> float | None:
     Raises
     ------
     TypeError
-        If the value is neither a number nor null.
+        If the value is neither a finite number nor null. A JSON integer can
+        exceed the float range, and a JSON exponent can name infinity, so both
+        are refused rather than allowed to escape as an unhandled conversion.
     """
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = "a baseline boot time must be a number"
         raise TypeError(msg)
-    return float(value)
+    try:
+        reading = float(value)
+    except OverflowError:
+        msg = "a baseline boot time is out of range"
+        raise TypeError(msg) from None
+    if not math.isfinite(reading):
+        msg = "a baseline boot time must be finite"
+        raise TypeError(msg)
+    return reading
 
 
 def _wall(value: object) -> dt.datetime:

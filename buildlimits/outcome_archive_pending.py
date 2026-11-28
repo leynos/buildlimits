@@ -11,6 +11,8 @@ as the order it enforces.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_archive_fs import is_proven_absent
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -24,7 +26,6 @@ if typ.TYPE_CHECKING:
     type AppliedTrims = dict[int, tuple[Trim, int, int | None]]
 
 __all__ = [
-    "AppliedTrims",
     "Done",
     "applied_trims",
     "failed_eviction",
@@ -84,7 +85,7 @@ def narrow(follow_up: Plan, done: Done) -> Plan:
         sealed_repairs=tuple(
             entry
             for entry in follow_up.sealed_repairs
-            if entry.sequence not in done.failed and entry.path.exists()
+            if entry.sequence not in done.failed and not is_proven_absent(entry.path)
         ),
         stale_sealed_markers=tuple(
             sequence
@@ -98,14 +99,14 @@ def narrow(follow_up: Plan, done: Done) -> Plan:
             (entry, trim)
             for entry, trim in follow_up.trims
             if evictable(entry.sequence, done.removed, done.blocked)
-            and entry.path.exists()
+            and not is_proven_absent(entry.path)
             and not already_applied(entry, trim, done.applied)
         ),
         deletes=tuple(
             entry
             for entry in follow_up.deletes
             if evictable(entry.sequence, done.removed, done.blocked)
-            and entry.path.exists()
+            and not is_proven_absent(entry.path)
         ),
     )
 
@@ -175,9 +176,22 @@ def failed_eviction(run: ArchiveRun, outcome: RunOutcome) -> int | None:
         The barrier sequence, or None when no eviction step failed.
     """
     failed = {sequence for sequence, _reason in outcome.failures}
+    removed = {
+        action.sequence for action in outcome.actions if action.action == "deleted"
+    }
     planned = [entry.sequence for entry, _trim in run.plan.trims]
     planned.extend(entry.sequence for entry in run.plan.deletes)
-    return min((sequence for sequence in planned if sequence in failed), default=None)
+    # A removal that completed before a later step failed is recorded as both a
+    # failure and a deletion. The older entry is gone, so it is no barrier to
+    # the newer steps the same plan ordered after it.
+    return min(
+        (
+            sequence
+            for sequence in planned
+            if sequence in failed and sequence not in removed
+        ),
+        default=None,
+    )
 
 
 def applied_trims(run: ArchiveRun, outcome: RunOutcome) -> AppliedTrims:

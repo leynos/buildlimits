@@ -67,7 +67,7 @@ def dry_report(
         finished_at=clock(),
         dry_run=True,
         **settled_fields(run, inventory, active),
-        maintenance=Maintenance(state_written=False),
+        maintenance=Maintenance(state_written=False, baseline_written=False),
         # The reason the active file could not be counted is the reason the
         # inspection reports ``corrupt``; leaving it out would name the status
         # without the closed fault behind it.
@@ -105,7 +105,11 @@ def unsettled_report(
         dry_run=dry_run,
         budget_bytes=limits.max_bytes,
         limits=limits,
-        maintenance=Maintenance(state_written=False, reason="unsettled"),
+        maintenance=Maintenance(
+            state_written=False,
+            baseline_written=not dry_run,
+            reason="unsettled",
+        ),
     )
 
 
@@ -138,7 +142,11 @@ def unfinished_report(
         dry_run=dry_run,
         budget_bytes=limits.max_bytes,
         limits=limits,
-        maintenance=Maintenance(state_written=False, reason=fault.reason),
+        maintenance=Maintenance(
+            state_written=False,
+            baseline_written=False,
+            reason=fault.reason,
+        ),
         reason=fault.reason,
     )
 

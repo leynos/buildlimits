@@ -439,6 +439,7 @@ The metadata keeps the source's original seal time, so a rewrite does not make
 the history look younger. A host with an aborted rewrite reports it on its own
 line:
 
+<!-- tested-example: buildlimits-outcome-retain-unfinished-trim -->
 ```text
 unfinished sealed trim: 3
 ```
@@ -450,8 +451,11 @@ segment, and a filesystem that fills while it works reports `no_headroom` at
 exit 75 so the timer retries.
 
 Schedule it as its own oneshot service and daily timer, as the same user that
-runs the supervisor. A retention firing holds no encoder, so its memory bound
-can be much smaller than the archive command's:
+runs the supervisor. A firing that only rewrites sealed history holds no
+encoder, but one that trims an existing archive recompresses it with the same
+encoder the archive command uses. The unit below therefore allows the same
+memory as the archive command's; a host whose closed history is entirely sealed
+may lower `MemoryMax`, while one that keeps archives should not.
 
 <!-- tested-example: buildlimits-outcome-retain-service -->
 ```ini
@@ -462,7 +466,7 @@ Description=Enforce buildlimits cache-outcome retention
 [Service]
 Type=oneshot
 ExecStart=%h/.local/bin/build-limits-outcome-archive retain
-MemoryMax=256M
+MemoryMax=512M
 TimeoutStartSec=1h
 ```
 
@@ -505,6 +509,7 @@ build-limits-outcome-archive retain
 
 The plain report labels the operation and what it does not do:
 
+<!-- tested-example: buildlimits-outcome-retain-report -->
 ```text
 operation: retain
 status: ok
@@ -526,6 +531,7 @@ exactly as the writer treats one inside a process. Each locked firing records
 two clocks disagree by more than a day, that firing withholds the age bound,
 still applies the byte and record bounds, and reports:
 
+<!-- tested-example: buildlimits-outcome-retain-clock-skew -->
 ```text
 clock skew: age eviction withheld
 ```

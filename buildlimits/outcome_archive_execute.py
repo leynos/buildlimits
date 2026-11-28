@@ -26,7 +26,6 @@ from buildlimits import (
 from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_history import SettledStore
 from buildlimits.outcome_archive_plan import PlanInputs, PlanSummary, plan_run
-from buildlimits.outcome_archive_report import Maintenance, RunReport
 from buildlimits.outcome_archive_report_builders import dry_report, unsettled_report
 from buildlimits.outcome_archive_unmeasured import unmeasured_after_work
 
@@ -37,6 +36,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_archive_plan import Plan
+    from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_segment_inventory import Inventory
 
 __all__ = ["execute_locked", "inspect"]
@@ -88,9 +88,12 @@ def execute_locked(
             context.layout, reading, unsettled_report(started, context)
         )
     floor, report = _execute(_archive_run(context, plan))
-    if floor is not None:
-        report = _install_state(context, floor, report)
-    return outcome_archive_firing.record(context.layout, reading, report)
+    # The baseline is recorded before the report that describes it, so the
+    # persisted report never claims a baseline write that failed afterwards.
+    report = outcome_archive_firing.record(context.layout, reading, report)
+    if floor is None:
+        return report
+    return _install_state(context, floor, report)
 
 
 def _install_state(context: ArchiveContext, floor: int, report: RunReport) -> RunReport:
@@ -112,7 +115,11 @@ def _install_state(context: ArchiveContext, floor: int, report: RunReport) -> Ru
             report,
             status="failed",
             reason="state_write_failed",
-            maintenance=Maintenance(state_written=False, reason="state_write_failed"),
+            maintenance=dc.replace(
+                report.maintenance,
+                state_written=False,
+                reason="state_write_failed",
+            ),
         )
     return report
 
