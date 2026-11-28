@@ -69,19 +69,33 @@ def _sealed_documents(
         Sealed entries and metadata keyed by sequence; marked sources are
         withheld.
     """
-    entries: list[SegmentEntry] = []
+    entries = [
+        _sealed_entry(path, size, int(match.group(1)))
+        for path, size in files
+        if (match := _SEALED_RE.fullmatch(path.name)) is not None
+    ]
+    return entries, _sealed_metadata(files, marked)
+
+
+def _sealed_metadata(
+    files: list[tuple[Path, int]], marked: set[int]
+) -> dict[int, dict[str, object]]:
+    """Read the metadata a scan may trust, skipping every marked source.
+
+    Returns
+    -------
+    dict[int, dict[str, object]]
+        The metadata documents a marker does not make stale, by sequence.
+    """
     metadata: dict[int, dict[str, object]] = {}
-    for path, size in files:
-        matched = _SEALED_RE.fullmatch(path.name)
-        if matched is not None:
-            entries.append(_sealed_entry(path, size, int(matched.group(1))))
-            continue
+    for path, _size in files:
         meta_match = _SEALED_META_RE.fullmatch(path.name)
-        if meta_match is not None and int(meta_match.group(1)) not in marked:
-            document = read_mapping(path)
-            if document is not None:
-                metadata[int(meta_match.group(1))] = document
-    return entries, metadata
+        if meta_match is None or int(meta_match.group(1)) in marked:
+            continue
+        document = read_mapping(path)
+        if document is not None:
+            metadata[int(meta_match.group(1))] = document
+    return metadata
 
 
 def _sealed_entry(path: Path, size: int, sequence: int) -> SegmentEntry:

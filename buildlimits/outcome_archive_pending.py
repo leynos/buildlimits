@@ -9,6 +9,7 @@ as the order it enforces.
 """
 
 import dataclasses as dc
+import operator
 import typing as typ
 
 from buildlimits.outcome_archive_fs import is_proven_absent
@@ -70,30 +71,45 @@ def narrow(follow_up: Plan, done: Done) -> Plan:
     trims, deletes = _eviction_steps(follow_up, done)
     return dc.replace(
         follow_up,
-        archive=_unfailed(follow_up.archive, done.failed),
-        reconcile=_unfailed_pairs(follow_up.reconcile, done.failed),
-        heal=_unfailed(follow_up.heal, done.failed),
-        sealed_repairs=_repairable(follow_up.sealed_repairs, done.failed),
-        stale_sealed_markers=_unfailed_sequences(
-            follow_up.stale_sealed_markers, done.failed
+        archive=_unfailed(
+            follow_up.archive, done.failed, operator.attrgetter("sequence")
         ),
-        orphans=_unfailed_sequences(follow_up.orphans, done.failed),
+        reconcile=_unfailed_pairs(follow_up.reconcile, done.failed),
+        heal=_unfailed(follow_up.heal, done.failed, operator.attrgetter("sequence")),
+        sealed_repairs=_repairable(follow_up.sealed_repairs, done.failed),
+        stale_sealed_markers=_unfailed(
+            follow_up.stale_sealed_markers, done.failed, _itself
+        ),
+        orphans=_unfailed(follow_up.orphans, done.failed, _itself),
         trims=trims,
         deletes=deletes,
     )
 
 
-def _unfailed(
-    entries: cabc.Iterable[SegmentEntry], failed: set[int]
-) -> tuple[SegmentEntry, ...]:
-    """Return the entries whose step has not failed.
+def _itself(sequence: int) -> int:
+    """Return a sequence unchanged, for callers that already hold one.
 
     Returns
     -------
-    tuple[SegmentEntry, ...]
-        The entries a later pass may act on.
+    int
+        The same sequence.
     """
-    return tuple(entry for entry in entries if entry.sequence not in failed)
+    return sequence
+
+
+def _unfailed[Item](
+    items: cabc.Iterable[Item],
+    failed: set[int],
+    sequence_of: cabc.Callable[[Item], int],
+) -> tuple[Item, ...]:
+    """Return the items whose step has not failed.
+
+    Returns
+    -------
+    tuple[Item, ...]
+        The items a later pass may act on.
+    """
+    return tuple(item for item in items if sequence_of(item) not in failed)
 
 
 def _unfailed_pairs(
@@ -127,19 +143,6 @@ def _repairable(
         for entry in entries
         if entry.sequence not in failed and not is_proven_absent(entry.path)
     )
-
-
-def _unfailed_sequences(
-    sequences: cabc.Iterable[int], failed: set[int]
-) -> tuple[int, ...]:
-    """Return the sequences whose step has not failed.
-
-    Returns
-    -------
-    tuple[int, ...]
-        The sequences a later pass may act on.
-    """
-    return tuple(sequence for sequence in sequences if sequence not in failed)
 
 
 def _eviction_steps(

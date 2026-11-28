@@ -148,16 +148,30 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
     decide the age, byte and record bounds for sealed history.
     """
     first_action = len(outcome.actions)
+    # The actors are built here, at call time, so a caller that replaces one of
+    # the per-entry operations sees its replacement used.
+    repair = _EntryActor(
+        outcome_archive_files.repair_sealed_metadata,
+        outcome_archive_quarantine.quarantine_source,
+    )
+    archive = _EntryActor(
+        outcome_archive_files.archive_source,
+        outcome_archive_quarantine.quarantine_source,
+    )
+    heal = _EntryActor(
+        outcome_archive_files.repair_sidecar,
+        outcome_archive_quarantine.quarantine_archive,
+    )
     for sealed, archived in run.plan.reconcile:
         _reconcile_one(run, sealed, archived, outcome)
     for sequence in run.plan.stale_sealed_markers:
         _clear_stale_marker(run, sequence, outcome)
     for entry in run.plan.sealed_repairs:
-        _repair_one(run, entry, outcome)
+        _per_entry(run, entry, outcome, repair)
     for entry in run.plan.archive:
-        _archive_one(run, entry, outcome)
+        _per_entry(run, entry, outcome, archive)
     for entry in run.plan.heal:
-        _heal_one(run, entry, outcome)
+        _per_entry(run, entry, outcome, heal)
     for sequence in run.plan.orphans:
         _quarantine_orphan(run, sequence, outcome)
     if quarantined_history(outcome, first_action):
@@ -243,45 +257,6 @@ def _clear_stale_marker(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> 
         outcome.failures.append((sequence, outcome_archive_evict.failure_reason(error)))
         return
     outcome.actions.append(ActionResult("repaired", sequence, reason="stale_marker"))
-
-
-def _repair_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Re-derive one sealed source's metadata, quarantining an invalid one."""
-    _per_entry(
-        run,
-        entry,
-        outcome,
-        _EntryActor(
-            outcome_archive_files.repair_sealed_metadata,
-            outcome_archive_quarantine.quarantine_source,
-        ),
-    )
-
-
-def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Archive one sealed source, quarantining it when it is invalid."""
-    _per_entry(
-        run,
-        entry,
-        outcome,
-        _EntryActor(
-            outcome_archive_files.archive_source,
-            outcome_archive_quarantine.quarantine_source,
-        ),
-    )
-
-
-def _heal_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Rebuild one sidecar, quarantining an archive that will not verify."""
-    _per_entry(
-        run,
-        entry,
-        outcome,
-        _EntryActor(
-            outcome_archive_files.repair_sidecar,
-            outcome_archive_quarantine.quarantine_archive,
-        ),
-    )
 
 
 def _per_entry(
