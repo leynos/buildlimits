@@ -205,26 +205,35 @@ def _skewed_pair(root: Path) -> tuple[RunReport, RunReport]:
 def test_a_skewed_firing_withholds_age_eviction_and_keeps_capacity_bounds(
     tmp_path: Path,
 ) -> None:
-    """Expired rows survive the jump; the byte bound still applies."""
+    """A configured age bound is withheld; the byte bound still applies."""
     sealed_source(tmp_path, 1, (EXPIRED,))
-    sealed_source(tmp_path, 2, (FRESH,))
+    sealed_source(tmp_path, 2, (EXPIRED,))
     _baseline, second = _skewed_pair(tmp_path)
 
     assert second.actions == (), "no age eviction is attempted"
     assert sealed_source_exists(tmp_path, 1), "the expired source survives the guard"
     third = retain(
         tmp_path,
-        no_age(retention_bytes=len(document((FRESH,)))),
+        # Both bounds are configured. The byte bound fits one source, so the
+        # oldest goes and the remaining expired source stays only because the
+        # age bound is withheld.
+        policy(
+            1_000_000,
+            max_age_days=30,
+            max_bytes=len(document((EXPIRED,))),
+        ),
         # Another forward jump: the capacity bound is asserted while the age
         # bound is still withheld, not on a firing that no longer meets a skew.
         reading=reading(dt.timedelta(days=4), BOOTTIME + 0.5 * DAY + 3_600.0),
     )
     assert third.clock_skew is True, "the capacity bound runs on a skewed firing"
-    assert third.status == "ok", "the capacity bound still runs on a skewed firing"
+    assert third.status == "ok", "the byte bound still runs on a skewed firing"
     assert not sealed_source_exists(tmp_path, 1), (
         "the byte bound evicted the oldest source despite the clock guard"
     )
-    assert sealed_source_exists(tmp_path, 2), "the retained source keeps its rows"
+    assert sealed_source_exists(tmp_path, 2), (
+        "the remaining expired source stays because the age bound was withheld"
+    )
 
 
 def test_the_next_undisturbed_firing_resumes_age_eviction(tmp_path: Path) -> None:

@@ -58,7 +58,14 @@ maintenance pass is repaired rather than trusted.
       errors, reports say whether a baseline was written, a preview detects a
       jump without claiming withholding, and the guide's output examples are
       marked and exercised.
-- [ ] EP-6 (remaining): second review, ready for review, merge.
+- [x] EP-6 (review round 2): the five follow-up findings are fixed. The
+      guide distinguishes a failed first baseline write from a failed update,
+      and marks the preview command rather than the mutating one; the clock
+      test configures both bounds so the byte bound is asserted while the age
+      bound is withheld; the pending test leaves its path absent so a faulty
+      `Path.exists` check would fail it; the single-file duplication exception
+      keeps the shape the installed gate emits and accepts.
+- [ ] EP-6 (remaining): third review, ready for review, merge.
 
 Gate evidence at this point: `make check-fmt`, `make lint-python`,
 `make typecheck`, `make lint` (including dead code and duplication) and

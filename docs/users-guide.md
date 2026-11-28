@@ -498,8 +498,10 @@ because they take the same non-blocking lock; a firing that finds it held exits
 75 and leaves the work to the next one. Running both is safe but redundant:
 `run` already applies retention after archiving.
 
-Use `--dry-run` to preview a firing. A preview takes no lock, changes no file
-and records no report, so it is safe to run at any time:
+The first command below is a preview: it takes no lock, changes no file and
+records no report, so it is safe to run at any time. The second applies the
+configured retention bounds and does change files. Copy only the first command
+to preview a firing:
 
 <!-- tested-example: buildlimits-outcome-retain-commands -->
 ```bash

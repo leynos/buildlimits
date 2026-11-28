@@ -10,8 +10,6 @@ import typing as typ
 from pathlib import Path
 
 from outcome_archive_helpers import NOW, layout, policy
-from outcome_test_helpers import records_at
-from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_pending
 from buildlimits.outcome_archive_context import ActionResult
@@ -150,7 +148,8 @@ def test_an_uninspectable_entry_is_not_treated_as_absent(
     let a newer one run first.
     """
     entry = _entry(tmp_path, 1)
-    write_private(entry.path, document(records_at(NOW, 1)))
+    # The path is left absent on purpose: a faulty ``Path.exists`` check would
+    # then drop the step, while "absence was not proven" must keep it.
     monkeypatch.setattr(
         outcome_archive_pending, "is_proven_absent", lambda _path: False
     )
